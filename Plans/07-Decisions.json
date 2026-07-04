@@ -1,0 +1,140 @@
+{
+  "version": 2,
+  "date": "2026-07-03",
+  "corrections_2026_07_03b": {
+    "storage": "NO HEVC anywhere. Imported media stores processed depth directly: custom binary (quantized UInt16 depth planes + LZ4, mmap); format finalized at import phase. depth.mov/color.mov removed.",
+    "default_setup": "front TrueDepth + back LiDAR live = the default pinout: default shape pushed forward + stem arms connecting pins to the Z-origin wall; no-signal pins rest at Z origin; normal timing",
+    "navigation": "swipe left on right edge of PLAY -> node view; swipe right on left edge of node view -> PLAY",
+    "import_view": "contextual only - opens from tapping the source, not a destination",
+    "node_inspector": "bottom settings bar in node view is PERMANENT, not collapsible",
+    "mvp": "build MVP first: TrueDepth + LiDAR live pinout on-device (30k default / 307200 max), screens visible even if non-functional; node engine after"
+  },
+  "source": "25 AskUserQuestion rounds + research workflows w7lv877px (TDLidar survey), wktdws96b (models/deployment/storage/engine/topology)",
+  "decisions": {
+    "platform": {
+      "devices": "iPhone A17 Pro and newer only",
+      "os_min": "iOS 26",
+      "ipad": "runs scaled iPhone layout v1; native layout fast-follow",
+      "price": "free",
+      "sharing": "graph-only share codes (text/QR), no media payload",
+      "name": "Points (working title)",
+      "orientation": "portrait locked",
+      "fps": "user-selectable 30/60/120; editor UI 120 on ProMotion",
+      "thermal": "auto ladder LOD->count->fps with HUD notice + Marathon mode pre-cap (100k/30fps); recording resolution locked mid-file"
+    },
+    "sources": {
+      "live": ["front TrueDepth (default)", "back LiDAR (Pro)"],
+      "live_ml": "none - raw sensor depth only",
+      "media_import": "RGB video/photo -> one-time on-device ML bake -> stored depth, looped playback",
+      "video_model_primary": "Metric-Video-Depth-Anything-Small (Apache-2.0), self-converted to CoreML",
+      "video_model_fast": "Depth Anything V2 metric ViT-S indoor/outdoor (already converted, 47MB)",
+      "photo_model": "MoGe-2 ViT-B Normal (MIT) - already converted at /Users/ari/Downloads/MoGe2_ViTB_Normal_504.mlpackage (202MB)",
+      "da3": "rejected by user",
+      "model_delivery": "bundle everything in app binary",
+      "model_warmup": "compile on first import (Preparing engine state)",
+      "domain_selection": "always ask indoor/outdoor at import",
+      "bake_polish": "always-on: inverse-depth scale/shift alignment + motion-gated EMA + scene-cut resets, baked into stored depth",
+      "bake_ux": "foreground + BGContinuedProcessingTask continuation + ActivityKit Live Activity ring in Dynamic Island",
+      "partial_playback": "no - bake completes first",
+      "bake_specs": "model-native resolution, min(source,30)fps",
+      "clip_limits": "soft cap ~5min with size/ETA warning; per-project size meter; excluded from iCloud backup",
+      "bad_bakes": "no preview gate - import lands, user judges in editor",
+      "intrinsics": "EXIF -> MoGe-2 FOV estimate -> 60 deg default; fov param on Source node"
+    },
+    "storage": {
+      "format": "lossy HEVC only (user: files too big for lossless)",
+      "depth": "depth.mov HEVC Main10 GOP-compressed, log-encoded luma, blue-noise dither, ~10-15MB/min",
+      "color": "color.mov 960p HEVC re-encode (self-contained bundle)",
+      "pose_bake": "none v1",
+      "sidecar": "depth.json {near,far,curve,fps,frameCount,resolution,model,domain,fov,schemaVersion}"
+    },
+    "playback": {
+      "engine": "simple sequential looper (VTDecompressionSession ring, no AVPlayer)",
+      "fps": "max 30fps, no frame interpolation",
+      "transport": "play/pause/speed 0.25-2x/loop-range/restart trigger on Source node",
+      "source_node": "one switchable Source node (front/back/media), identical ports, graceful fallback chain LiDAR->TrueDepth->demo clip"
+    },
+    "render": {
+      "geometry": "GPU instancing + LOD (2-3 tiers)",
+      "shapes": ["sphere", "cube", "tube", "slab", "cone", "ring", "disc", "spike"],
+      "shape_selection": "per-pin field",
+      "shape_morph": "vertex-corresponded LOD meshes, per-pin lerp",
+      "stem": "full system: per-pin on/off, profile (match/cylinder/blade), thickness+taper fields, color gradient",
+      "rotation": "per-pin rotation field (quat)",
+      "z_semantics": "Z=0 wall; near pulls toward camera; holes retract to 0; gain/curve via nodes",
+      "shading": "node-editable: unlit/lit/matcap; 2 Light nodes full params (drivable positions incl. head/hand follow); 1 cheap shadow map on light 1",
+      "depth_blend": "depth buffer opaque-first default + ghost mode via RenderSettings node",
+      "background": "Background node (color/gradient/vignette, drivable, NDI-alpha aware)",
+      "post": ["bloom", "grain", "vignette"],
+      "camera": "fixed; Camera node = presets (Front/3-4L/3-4R/High/Low/Side) + FOV + dolly + drivable +/-15deg offsets, spring-smoothed, never gesture-driven",
+      "pin_budget": "default 30k all sources; ceiling 307200"
+    },
+    "grid": {
+      "abstraction": "Domain node (single, per-project v1)",
+      "base_grid": "200x150=30k rect default, corners pinned to 3:4; max 307200 (=480x640)",
+      "topologies": ["rect", "hex", "radial", "spiral", "scatter", "perspective"],
+      "morphing": "same-count position blend + hard switch, triggerable by gestures/audio/midi/osc/lighting/any driver",
+      "perspective_wobble": "xyStabilize param: off/filtered/latch/quantize",
+      "anti_wobble": "layered filter stack AS NODES (deadband + adaptive EMA + optional Z quantize); XY fixed by construction",
+      "upsampling": "bicubic + neighbor weights, edge-aware",
+      "holes": "retract to Z=0 default; node-selectable policy (retract/hold/hide/fill)"
+    },
+    "engine": {
+      "graph_model": "data-flow DAG, dirty-flagged, per-frame",
+      "runtime": "hybrid compile: per-pin chains -> generated Metal kernels; control nodes CPU-interpreted",
+      "zero_stutter": "resident interpreter kernel (next-frame edits) + async specialized kernels + MTLBinaryArchive cache (Dolphin hybrid pattern)",
+      "typing": "typed ports + auto-adapt",
+      "granularity": "fields AND operator families, own names (no TOPS/CHOPS)",
+      "v1_restriction": "per-pin ops only - no neighbor/blur/propagation (analytic radial allowed)",
+      "state": "state-slot allocator, preallocated pool ~32 floats x 307k, UI memory meter, pending-reset discipline",
+      "node_count": "~110 at launch, balanced spread",
+      "effects_as": "openable macros built from primitives"
+    },
+    "tracking": {
+      "stack": "Vision 2D on RGB frames (body 19 joints, hands 21x2, face 76 landmarks + pose); no ARKit face session",
+      "regions": "GPU region-mask field + raw Joint nodes (both)",
+      "gestures": "6 core (pinch/palm/fist/point/peace/thumbsUp) + continuous pinch-distance/openness"
+    },
+    "io": {
+      "midi": "USB + Network + BLE v1; clock v2",
+      "osc": "receive + send nodes",
+      "audio": "ported TDLidar analyzer (bass/mid/high, 3 onsets, burst, 20-band FFT, RMS) + mic/USB picker",
+      "clock": "global BPM transport + tap tempo; sync divisions on time nodes",
+      "recording": "one-tap -> auto Photos; GPU-direct HEVC up to 2880x3840@60; live editing while recording",
+      "ndi": "clean 3:4 feed, 810x1080/1080x1440/1620x2160 @30/60, optional alpha-key"
+    },
+    "node_editor": {
+      "views": "PLAY <-> PATCH via PATCH button + swipe; patch fullscreen over live output",
+      "bg_blend": "focus-driven (selected solid, unselected ~40%) + persistent dim slider + tap-empty peek",
+      "wiring": "drag + magnetic snap, tap-tap fallback",
+      "params": "tap node -> bottom inspector; collapsed strip + scrub-anywhere",
+      "canvas": "free pan/zoom + minimap + double-tap frame-all",
+      "add_node": "double-tap -> palette at point (search + family tabs + recents); drag-wire-to-empty prefiltered",
+      "macros": "v1: collapse to macro, exposed ports, user library, 2-level nesting",
+      "undo": "full history + param coalescing; 2-finger undo / 3-finger redo",
+      "wires": "reroute dots + wireless Send/Receive pairs + tap-to-highlight",
+      "organize": "lasso + frames + align + stickies",
+      "docs": "long-press card + live mini-preview",
+      "driver_assign": "wires + quick-map overlay (incl. MIDI learn); inserts real nodes behind the scenes",
+      "envelopes": "AR envelope + slew + spring value nodes as motion vocabulary",
+      "meters": "ports pulse + tap wire -> mini-scope",
+      "random": "seeded family (Random/Wander/S&H/Chance) + reseed trigger"
+    },
+    "ui": {
+      "theme": "dual gray Blender-like: dark #474646 / light #BCBCBC; family colors + 1px outlines on nodes and wires",
+      "node_look": "solid header+body when selected/focused; translucent when not (Blender focus model)",
+      "font": "decide later - shortlist Inter / Space Grotesk / Archivo, chosen in HTML mockup",
+      "accordion": "top-right vertical pill stack (NDI/Record/SwitchCam/Settings), status dots collapsed",
+      "deck": "5 control types (knob/fader/pad/xy/picker), 4x2 swipeable pages, long-press rearrange",
+      "bar": "transport strip (PATCH/source badge/BPM/page dots) + deck",
+      "starter_deck": "Pin Count / Pin Size / Depth Gain / Shape Morph / Palette / Bloom",
+      "viewport_touch": "node input only (3-slot Touch node), never camera",
+      "browser": "square grid + live thumbnails + templates shelf",
+      "template_semantics": "copy-on-edit fork"
+    },
+    "templates": {
+      "structure": "5 tiers x 4 (Basics/Motion/Body/Music/Wild)",
+      "teaching": "3-5 annotated stickies per template + openable factory macros"
+    }
+  }
+}

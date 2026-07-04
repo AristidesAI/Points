@@ -1,0 +1,6076 @@
+{
+ "version": 1,
+ "portTypes": [
+  "signal",
+  "vec2",
+  "vec3",
+  "color",
+  "trigger",
+  "field.float",
+  "field.vec3",
+  "field.color",
+  "domain",
+  "source"
+ ],
+ "families": [
+  {
+   "id": "SOURCE",
+   "label": "Source",
+   "color_role": "cyan",
+   "subfamilies": []
+  },
+  {
+   "id": "GRID",
+   "label": "Grid",
+   "color_role": "slate",
+   "subfamilies": []
+  },
+  {
+   "id": "SHAPE",
+   "label": "Shape",
+   "color_role": "orange",
+   "subfamilies": []
+  },
+  {
+   "id": "MOVE",
+   "label": "Move",
+   "color_role": "green",
+   "subfamilies": []
+  },
+  {
+   "id": "COLOR",
+   "label": "Color",
+   "color_role": "pink",
+   "subfamilies": []
+  },
+  {
+   "id": "SIGNAL",
+   "label": "Signal",
+   "color_role": "yellow",
+   "subfamilies": [
+    "Math",
+    "Modulate",
+    "Audio",
+    "MIDI",
+    "OSC"
+   ]
+  },
+  {
+   "id": "BODY",
+   "label": "Body",
+   "color_role": "violet",
+   "subfamilies": []
+  },
+  {
+   "id": "TIME",
+   "label": "Time",
+   "color_role": "blue",
+   "subfamilies": []
+  },
+  {
+   "id": "STAGE",
+   "label": "Stage",
+   "color_role": "red",
+   "subfamilies": []
+  },
+  {
+   "id": "TOOLS",
+   "label": "Tools",
+   "color_role": "gray",
+   "subfamilies": []
+  }
+ ],
+ "nodes": [
+  {
+   "id": "source",
+   "name": "Source",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "auto",
+      "trueDepth",
+      "lidar",
+      "media",
+      "still"
+     ],
+     "default": "auto",
+     "modSafe": false
+    },
+    {
+     "name": "mirror",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "The one live input: TrueDepth front camera, LiDAR back camera, an imported depth+color clip, or a still. Auto mode picks the best available and falls back gracefully.",
+   "exampleUse": "Set mode to trueDepth and feed Depth into Depth Drive so your face pushes pins out of the wall."
+  },
+  {
+   "id": "clip-transport",
+   "name": "Clip Transport",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "source",
+     "type": "source"
+    },
+    {
+     "name": "speed",
+     "type": "signal",
+     "default": 1
+    },
+    {
+     "name": "restart",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "source",
+     "type": "source"
+    },
+    {
+     "name": "position",
+     "type": "signal"
+    },
+    {
+     "name": "looped",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "playing",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    },
+    {
+     "name": "loop",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    },
+    {
+     "name": "loopStart",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "loopEnd",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Play, pause, speed and loop-range control for imported 30fps depth+color clips. Position output reports the playhead 0-1; looped fires each wrap.",
+   "exampleUse": "Drive speed from an LFO between 0.25 and 2 so a baked dance clip breathes in slow motion."
+  },
+  {
+   "id": "still-image",
+   "name": "Still Image",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "params": [
+    {
+     "name": "fitMode",
+     "type": "enum",
+     "range": [
+      "fill",
+      "fit"
+     ],
+     "default": "fill",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "An imported photo (with its baked depth map if available) as a static source. Great for portraits that you animate with Move nodes instead of live motion.",
+   "exampleUse": "Load a portrait, sample Depth and Video Color, then add Ripple displacement so the frozen face shimmers."
+  },
+  {
+   "id": "depth",
+   "name": "Depth",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "depth",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "near",
+     "type": "float",
+     "range": [
+      0.1,
+      5
+     ],
+     "default": 0.3,
+     "modSafe": true
+    },
+    {
+     "name": "far",
+     "type": "float",
+     "range": [
+      0.2,
+      8
+     ],
+     "default": 2.5,
+     "modSafe": true
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Samples raw sensor depth at each pin and remaps the near-far range to 0 (far) through 1 (near). No ML, just the sensor.",
+   "exampleUse": "Depth into Depth Drive is the core patch: the closer you lean in, the further pins push toward the camera."
+  },
+  {
+   "id": "video-color",
+   "name": "Video Color",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "saturation",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "exposure",
+     "type": "float",
+     "range": [
+      -2,
+      2
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Samples the source's color video at each pin, turning the pin wall into a living mosaic of the camera image.",
+   "exampleUse": "Video Color into Pin Color gives an instant camera-mirror; add Posterize for a print-poster look."
+  },
+  {
+   "id": "confidence",
+   "name": "Confidence",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "confidence",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "floor",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Per-pin sensor confidence, 0-1. Use it to fade or hide pins where the depth data is noisy, like hair edges and glass.",
+   "exampleUse": "Multiply Depth by Confidence before Depth Drive so flickery edge pins stay calm."
+  },
+  {
+   "id": "proximity",
+   "name": "Proximity",
+   "family": "SOURCE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "nearness",
+     "type": "signal"
+    },
+    {
+     "name": "entered",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "nearest",
+      "average"
+     ],
+     "default": "nearest",
+     "modSafe": true
+    },
+    {
+     "name": "triggerDistance",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.7,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "One control signal for how close the nearest (or average) subject is, 0 far to 1 touching. Fires a trigger when someone crosses the threshold.",
+   "exampleUse": "Wire entered to a Shockwave so walking up to the screen detonates a ring of pins."
+  },
+  {
+   "id": "domain",
+   "name": "Domain",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "morph",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "count",
+     "type": "int",
+     "range": [
+      64,
+      307200
+     ],
+     "default": 30000,
+     "modSafe": false
+    },
+    {
+     "name": "topologyA",
+     "type": "enum",
+     "range": [
+      "rect",
+      "hex",
+      "radial",
+      "spiral",
+      "scatter",
+      "perspective"
+     ],
+     "default": "rect",
+     "modSafe": false
+    },
+    {
+     "name": "topologyB",
+     "type": "enum",
+     "range": [
+      "rect",
+      "hex",
+      "radial",
+      "spiral",
+      "scatter",
+      "perspective"
+     ],
+     "default": "radial",
+     "modSafe": false
+    },
+    {
+     "name": "morphAmount",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "seed",
+     "type": "int",
+     "range": [
+      0,
+      9999
+     ],
+     "default": 7,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "kernel-pass",
+   "description": "The pin lattice itself: up to 307,200 sites, corners pinned to the 3:4 view. Every topology is a warp of one canonical grid, so the morph input crossfades layouts per pin with no re-allocation.",
+   "exampleUse": "Set rect to spiral and sweep morph with a slow LFO so the whole wall coils and uncoils."
+  },
+  {
+   "id": "jitter",
+   "name": "Jitter",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "amount",
+     "type": "field.float",
+     "default": 0.2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "distribution",
+     "type": "enum",
+     "range": [
+      "uniform",
+      "gaussian"
+     ],
+     "default": "uniform",
+     "modSafe": true
+    },
+    {
+     "name": "seed",
+     "type": "int",
+     "range": [
+      0,
+      9999
+     ],
+     "default": 1,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Nudges each pin's home position by a seeded per-pin random offset, breaking machine-perfect regularity.",
+   "exampleUse": "A touch of gaussian jitter makes a rect grid read as hand-placed instead of printed."
+  },
+  {
+   "id": "region-rect",
+   "name": "Rect Region",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "center",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    },
+    {
+     "name": "size",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "mask",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "feather",
+     "type": "float",
+     "range": [
+      0,
+      0.5
+     ],
+     "default": 0.1,
+     "modSafe": true
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "A soft-edged rectangular mask in view space: 1 inside, 0 outside. Feed it anywhere a field goes to confine an effect to a zone.",
+   "exampleUse": "Multiply a Ripple by a Rect Region so waves only run across the bottom third of the wall."
+  },
+  {
+   "id": "region-ellipse",
+   "name": "Ellipse Region",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "center",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    },
+    {
+     "name": "size",
+     "type": "vec2",
+     "default": [
+      0.4,
+      0.4
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "mask",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "feather",
+     "type": "float",
+     "range": [
+      0,
+      0.5
+     ],
+     "default": 0.15,
+     "modSafe": true
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "A soft elliptical mask in view space, 1 inside fading to 0 at the edge. The go-to spotlight shape.",
+   "exampleUse": "Drive the ellipse center from Hand Position so a mask of raised pins follows your palm."
+  },
+  {
+   "id": "uv-transform",
+   "name": "UV Transform",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "offset",
+     "type": "vec2",
+     "default": [
+      0,
+      0
+     ]
+    },
+    {
+     "name": "scale",
+     "type": "vec2",
+     "default": [
+      1,
+      1
+     ]
+    },
+    {
+     "name": "rotate",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "wrap",
+     "type": "enum",
+     "range": [
+      "clamp",
+      "repeat",
+      "mirror"
+     ],
+     "default": "clamp",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Pans, zooms and rotates the UV that each pin uses to sample the Source, without moving the pins themselves.",
+   "exampleUse": "Slowly scroll offset.x so a still portrait drifts across the pin wall like a panning camera."
+  },
+  {
+   "id": "grid-info",
+   "name": "Grid Info",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "uv",
+     "type": "field.vec3"
+    },
+    {
+     "name": "index",
+     "type": "field.float"
+    },
+    {
+     "name": "centerDist",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Per-pin constants from the active Domain: grid UV (xy of a vec3), normalized index 0-1, and distance from view center. The raw material for gradients and sweeps.",
+   "exampleUse": "Send uv through Sine into Size for perfect vertical stripes that need no texture at all."
+  },
+  {
+   "id": "edge-policy",
+   "name": "Edge Policy",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "none",
+      "fade",
+      "clamp"
+     ],
+     "default": "fade",
+     "modSafe": true
+    },
+    {
+     "name": "margin",
+     "type": "float",
+     "range": [
+      0,
+      0.3
+     ],
+     "default": 0.05,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Decides what happens at the frame border when warps push pins outward: let them fly, fade their size to zero, or clamp them to the edge.",
+   "exampleUse": "Use fade with a wide margin so a spiral morph dissolves gracefully at the frame instead of stacking pins on the border."
+  },
+  {
+   "id": "shape",
+   "name": "Shape",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "type",
+     "type": "enum",
+     "range": [
+      "sphere",
+      "cube",
+      "tube",
+      "slab",
+      "cone",
+      "ring",
+      "disc",
+      "spike"
+     ],
+     "default": "sphere",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Sets the cap mesh for every pin: one of eight instanced 3D shapes with matched LOD meshes.",
+   "exampleUse": "Switch from sphere to spike and the same depth patch instantly reads as a bed of nails."
+  },
+  {
+   "id": "shape-morph",
+   "name": "Shape Morph",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "blend",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "typeA",
+     "type": "enum",
+     "range": [
+      "sphere",
+      "cube",
+      "tube",
+      "slab",
+      "cone",
+      "ring",
+      "disc",
+      "spike"
+     ],
+     "default": "sphere",
+     "modSafe": false
+    },
+    {
+     "name": "typeB",
+     "type": "enum",
+     "range": [
+      "sphere",
+      "cube",
+      "tube",
+      "slab",
+      "cone",
+      "ring",
+      "disc",
+      "spike"
+     ],
+     "default": "spike",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Per-pin crossfade between two cap shapes. Meshes are vertex-corresponded, so blend is a smooth geometric lerp, not a swap.",
+   "exampleUse": "Drive blend with a Body Region mask so pins over your torso are spikes while the background stays spheres."
+  },
+  {
+   "id": "size",
+   "name": "Size",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "size",
+     "type": "field.float",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "base",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "min",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "max",
+     "type": "float",
+     "range": [
+      0.1,
+      6
+     ],
+     "default": 3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Scales each pin's cap uniformly: final size is base times the size field, clamped between min and max. Size 0 hides a pin.",
+   "exampleUse": "Feed audio bass through Envelope into size so the whole wall swells on every kick."
+  },
+  {
+   "id": "stretch",
+   "name": "Stretch",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "scale",
+     "type": "field.vec3",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "uniformSafety",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Per-axis, per-pin scaling of the cap shape. Turns tubes into needles, slabs into louvers, discs into blades.",
+   "exampleUse": "Stretch slabs along Z by the Velocity field so fast-moving pins smear into motion streaks."
+  },
+  {
+   "id": "rotation",
+   "name": "Rotation",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "euler",
+     "type": "field.vec3",
+     "default": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "space",
+     "type": "enum",
+     "range": [
+      "local",
+      "view"
+     ],
+     "default": "local",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Sets each pin's orientation from a per-pin euler field (in turns). Static tilt patterns, not continuous spinning.",
+   "exampleUse": "Rotate cones by Grid Info uv so they fan outward from the center like a sunflower head."
+  },
+  {
+   "id": "spin",
+   "name": "Spin",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "rate",
+     "type": "field.float",
+     "default": 0.25
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "axis",
+     "type": "enum",
+     "range": [
+      "x",
+      "y",
+      "z"
+     ],
+     "default": "z",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 1,
+   "execution": "interpreter-op",
+   "description": "Continuously rotates each pin around one axis at a per-pin rate in turns per second. Each pin accumulates its own angle, so modulating rate never causes jumps.",
+   "exampleUse": "Spin rings at a rate driven by Pinch Amount: close your fingers and the whole wall whirs to a stop."
+  },
+  {
+   "id": "look-at",
+   "name": "Look At",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "target",
+     "type": "vec3",
+     "default": [
+      0.5,
+      0.5,
+      1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "amount",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Orients every pin to face a point in view space, computed analytically per pin. Amount blends between resting orientation and full aim.",
+   "exampleUse": "Point cones at Hand Position so ten thousand pins track your fingertip like iron filings."
+  },
+  {
+   "id": "stem",
+   "name": "Stem",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "thickness",
+     "type": "field.float",
+     "default": 0.3
+    },
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      0.8,
+      0.8,
+      0.8
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "enabled",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    },
+    {
+     "name": "profile",
+     "type": "enum",
+     "range": [
+      "round",
+      "square",
+      "blade"
+     ],
+     "default": "round",
+     "modSafe": false
+    },
+    {
+     "name": "taper",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "Extrudes a stem from the Z=0 wall up to each cap, with per-pin thickness and color fields. Taper thins the stem toward the cap.",
+   "exampleUse": "Blade-profile stems with thickness driven by Depth turn a face scan into a field of grass leaning out of the wall."
+  },
+  {
+   "id": "material",
+   "name": "Material",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "shading",
+     "type": "enum",
+     "range": [
+      "unlit",
+      "lit",
+      "matcap"
+     ],
+     "default": "lit",
+     "modSafe": false
+    },
+    {
+     "name": "matcapStyle",
+     "type": "enum",
+     "range": [
+      "chrome",
+      "clay",
+      "pearl",
+      "neon"
+     ],
+     "default": "chrome",
+     "modSafe": false
+    },
+    {
+     "name": "roughness",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    },
+    {
+     "name": "metallic",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "Chooses how pins are shaded: flat unlit color, lit by the Stage lights, or a matcap for instant studio looks.",
+   "exampleUse": "Matcap chrome plus a dark Background makes every depth patch look like liquid metal."
+  },
+  {
+   "id": "hide",
+   "name": "Hide",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "mask",
+     "type": "field.float",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "cutoff",
+      "fade"
+     ],
+     "default": "fade",
+     "modSafe": true
+    },
+    {
+     "name": "threshold",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Shows or hides pins by a mask field: hard cutoff at a threshold, or smooth fade where size follows the mask.",
+   "exampleUse": "Hide with the background Body Region so only the person remains, floating as pins in the dark."
+  },
+  {
+   "id": "displace",
+   "name": "Displace",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "offset",
+     "type": "field.vec3",
+     "default": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "amount",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Adds a per-pin XYZ offset to pin positions. The universal motion input: anything that makes a vec3 field can move the wall.",
+   "exampleUse": "Splat a Ripple into offset.z to roll rings of raised pins out from a touch point."
+  },
+  {
+   "id": "depth-drive",
+   "name": "Depth Drive",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "depth",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "gain",
+     "type": "float",
+     "range": [
+      0,
+      3
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "gamma",
+     "type": "float",
+     "range": [
+      0.25,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "clampHoles",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "The signature move: pulls pins off the flat wall toward the camera by the depth field (Z = depth to the gamma, times gain). Holes in the data retract flush to zero.",
+   "exampleUse": "Depth into Depth Drive at gain 1.5 makes your silhouette bulge out of the wall in true relief."
+  },
+  {
+   "id": "spring",
+   "name": "Spring",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "reset",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "stiffness",
+     "type": "float",
+     "range": [
+      0.1,
+      30
+     ],
+     "default": 6,
+     "modSafe": true
+    },
+    {
+     "name": "damping",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0.6,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 6,
+   "execution": "interpreter-op",
+   "description": "Physically springs each pin toward wherever the chain upstream says it should be. Six floats of state per pin (3D displacement plus velocity) give real overshoot and wobble.",
+   "exampleUse": "Put Spring after Depth Drive with low damping so every gesture leaves the wall jiggling like jelly."
+  },
+  {
+   "id": "lag",
+   "name": "Lag",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "halfLife",
+     "type": "float",
+     "range": [
+      0.01,
+      5
+     ],
+     "default": 0.2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 1,
+   "execution": "interpreter-op",
+   "description": "Exponentially smooths any per-pin float field over time with one float of state per pin. The cheapest way to calm a jittery field.",
+   "exampleUse": "Lag the raw Depth field before Depth Drive to melt sensor noise into syrupy motion."
+  },
+  {
+   "id": "trail",
+   "name": "Trail",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "decay",
+     "type": "float",
+     "range": [
+      0.05,
+      10
+     ],
+     "default": 1.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 2,
+   "execution": "interpreter-op",
+   "description": "Peak-hold with decay: the output snaps up instantly with the input but falls back slowly, leaving glowing trails where things moved. Two floats of state per pin.",
+   "exampleUse": "Trail on a Body Region mask leaves a fading afterimage of raised pins wherever you dance."
+  },
+  {
+   "id": "echo",
+   "name": "Echo",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "delay",
+     "type": "float",
+     "range": [
+      0.02,
+      2
+     ],
+     "default": 0.25,
+     "modSafe": true
+    },
+    {
+     "name": "feedback",
+     "type": "float",
+     "range": [
+      0,
+      0.95
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 2,
+   "execution": "interpreter-op",
+   "description": "A soft delayed copy of a field, approximated by two cascaded smoothers (2 floats per pin), with feedback for repeating ghosts. Not a true frame delay, but it sounds like one.",
+   "exampleUse": "Echo a hand-driven mask and Displace with both copies to get a ghost hand chasing the real one."
+  },
+  {
+   "id": "velocity",
+   "name": "Velocity",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "speed",
+     "type": "field.float"
+    },
+    {
+     "name": "signed",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 2,
+   "execution": "interpreter-op",
+   "description": "Measures how fast a per-pin field is changing (previous value plus smoothed rate, 2 floats per pin). Speed is absolute, signed keeps direction.",
+   "exampleUse": "Velocity of the Depth field into Velocity Color makes only the moving parts of a body burn hot."
+  },
+  {
+   "id": "radial-ripple",
+   "name": "Ripple",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "center",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    },
+    {
+     "name": "amplitude",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "height",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "wavelength",
+     "type": "float",
+     "range": [
+      0.02,
+      1
+     ],
+     "default": 0.15,
+     "modSafe": true
+    },
+    {
+     "name": "speed",
+     "type": "float",
+     "range": [
+      -4,
+      4
+     ],
+     "default": 0.5,
+     "modSafe": true
+    },
+    {
+     "name": "falloff",
+     "type": "float",
+     "range": [
+      0,
+      8
+     ],
+     "default": 2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Endless analytic rings radiating from a point: pure distance-from-center math evaluated per pin, so it costs nothing and never desyncs. Fully allowed in v1 because no neighbor reads happen.",
+   "exampleUse": "Center on Touch slot 1 and Displace Z by height so taps drop pebbles into the pin pond."
+  },
+  {
+   "id": "shockwave",
+   "name": "Shockwave",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "fire",
+     "type": "trigger"
+    },
+    {
+     "name": "center",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pulse",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "speed",
+     "type": "float",
+     "range": [
+      0.1,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "width",
+     "type": "float",
+     "range": [
+      0.02,
+      0.5
+     ],
+     "default": 0.08,
+     "modSafe": true
+    },
+    {
+     "name": "damping",
+     "type": "float",
+     "range": [
+      0,
+      8
+     ],
+     "default": 2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "A single expanding ring per trigger, computed analytically from the trigger time (up to 4 overlapping waves, zero per-pin state). Sharp, synchronized, and cheap.",
+   "exampleUse": "Fire from Beat and Displace Z by pulse so every kick drum detonates outward from the center."
+  },
+  {
+   "id": "scatter",
+   "name": "Scatter",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "amount",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "random",
+      "fromPoint"
+     ],
+     "default": "random",
+     "modSafe": true
+    },
+    {
+     "name": "seed",
+     "type": "int",
+     "range": [
+      0,
+      9999
+     ],
+     "default": 3,
+     "modSafe": false
+    },
+    {
+     "name": "depthBias",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Throws each pin along its own seeded random direction (or away from a point) by the amount field. Stateless: amount 0 always returns pins exactly home.",
+   "exampleUse": "Ramp amount with an Envelope on Burst so loud moments explode the image into confetti that reassembles."
+  },
+  {
+   "id": "twist",
+   "name": "Twist",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "angle",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "center",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "radiusFalloff",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Rotates pin positions around a center in the view plane, with the angle scaled by distance for whirlpool curls.",
+   "exampleUse": "Drive angle from Head Pose roll so tilting your head literally wrings the picture."
+  },
+  {
+   "id": "freeze",
+   "name": "Freeze",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "hold",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "blend",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 3,
+   "execution": "interpreter-op",
+   "description": "While hold is up, each pin keeps the position it had at the moment of capture (3 floats per pin). Blend crossfades between frozen and live.",
+   "exampleUse": "Gate hold from a fist gesture: clench to freeze a 3D statue of yourself, open to melt back to live."
+  },
+  {
+   "id": "palette",
+   "name": "Palette",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "t",
+     "type": "field.float",
+     "default": 0.5
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "map",
+     "type": "enum",
+     "range": [
+      "viridis",
+      "magma",
+      "inferno",
+      "plasma",
+      "turbo",
+      "ice",
+      "fire",
+      "ocean",
+      "forest",
+      "sunset",
+      "neon",
+      "candy",
+      "pastel",
+      "mono",
+      "rainbow"
+     ],
+     "default": "viridis",
+     "modSafe": false
+    },
+    {
+     "name": "reverse",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    },
+    {
+     "name": "shift",
+     "type": "float",
+     "range": [
+      -1,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Maps any 0-1 field through one of 15 built-in colormaps. Shift scrolls the map for easy animated cycling.",
+   "exampleUse": "Depth into Palette turbo is the classic thermal-camera relief; animate shift with a slow LFO to make it breathe."
+  },
+  {
+   "id": "pin-color",
+   "name": "Pin Color",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "opacity",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Binds a color field to the pin caps. The last Pin Color in the chain wins, so stack them with masks for layered looks.",
+   "exampleUse": "Video Color into Pin Color for a mirror; add a second Pin Color masked by a Body Region for a tinted subject."
+  },
+  {
+   "id": "tint",
+   "name": "Tint",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "tint",
+     "type": "color",
+     "default": [
+      1,
+      0.6,
+      0.2
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "amount",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Multiplies a color field by a single color, with an amount blend. Fast global mood control.",
+   "exampleUse": "Tint the whole Video Color feed amber and drop amount on beat triggers for flashbulb pops of true color."
+  },
+  {
+   "id": "depth-gradient",
+   "name": "Depth Gradient",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "depth",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "nearColor",
+     "type": "color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "farColor",
+     "type": "color",
+     "default": [
+      0.05,
+      0.05,
+      0.2
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "gamma",
+     "type": "float",
+     "range": [
+      0.25,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Blends between two colors by the depth field, so nearness paints itself. Simpler than a full Palette when you just want two poles.",
+   "exampleUse": "White near, deep blue far: your face emerges from darkness as you lean toward the phone."
+  },
+  {
+   "id": "hsv-shift",
+   "name": "HSV Shift",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "hue",
+     "type": "signal",
+     "default": 0
+    },
+    {
+     "name": "saturation",
+     "type": "signal",
+     "default": 0
+    },
+    {
+     "name": "value",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Offsets hue (in turns), saturation and value of a color field. Hue wraps, so a ramp input gives endless rainbow cycling.",
+   "exampleUse": "Feed hue from a 0.02 Hz LFO to slowly rotate the entire palette through the spectrum."
+  },
+  {
+   "id": "velocity-color",
+   "name": "Velocity Color",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      0.2,
+      0.2,
+      0.25
+     ]
+    },
+    {
+     "name": "speed",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "hotColor",
+     "type": "color",
+     "default": [
+      1,
+      0.3,
+      0.1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "sensitivity",
+     "type": "float",
+     "range": [
+      0.1,
+      20
+     ],
+     "default": 4,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Pushes a color field toward a hot color wherever the speed field is high. Pair with the Velocity node to paint motion.",
+   "exampleUse": "Cool gray base, ember-orange hot: only the parts of you that move catch fire."
+  },
+  {
+   "id": "color-mix",
+   "name": "Color Mix",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.color",
+     "default": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "b",
+     "type": "field.color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "mix",
+     "type": "field.float",
+     "default": 0.5
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "lerp",
+      "add",
+      "multiply"
+     ],
+     "default": "lerp",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Blends two color fields per pin by a third field: crossfade, additive glow, or multiply shadowing.",
+   "exampleUse": "Mix Video Color with a Palette by a Body Region mask so the person is photographic and the room is synthetic."
+  },
+  {
+   "id": "posterize",
+   "name": "Posterize",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "levels",
+     "type": "int",
+     "range": [
+      2,
+      16
+     ],
+     "default": 4,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Quantizes each color channel to a fixed number of steps for screen-print and riso looks.",
+   "exampleUse": "Posterize Video Color to 3 levels over a hex Domain for instant halftone poster art."
+  },
+  {
+   "id": "strobe-color",
+   "name": "Strobe",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "color",
+     "type": "field.color",
+     "default": [
+      0.1,
+      0.1,
+      0.1
+     ]
+    },
+    {
+     "name": "flash",
+     "type": "trigger"
+    },
+    {
+     "name": "flashColor",
+     "type": "color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "color",
+     "type": "field.color"
+    }
+   ],
+   "params": [
+    {
+     "name": "decay",
+     "type": "float",
+     "range": [
+      0.02,
+      2
+     ],
+     "default": 0.15,
+     "modSafe": true
+    },
+    {
+     "name": "amount",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Flashes the whole field to a strobe color on each trigger, decaying back over the set time. The envelope runs at control rate, so it costs no per-pin state.",
+   "exampleUse": "Flash from Beat high-band triggers for hi-hat driven white lightning across the wall."
+  },
+  {
+   "id": "add",
+   "name": "Add",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "a plus b. Accepts signals or fields on either side; signal inputs broadcast to every pin. Runs at control rate when both inputs are signals.",
+   "exampleUse": "Add a Ripple to the Depth field so waves ride on top of the live relief."
+  },
+  {
+   "id": "subtract",
+   "name": "Subtract",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "a minus b, per pin or per signal.",
+   "exampleUse": "Subtract a Lagged copy of Depth from raw Depth to isolate just the fresh motion."
+  },
+  {
+   "id": "multiply",
+   "name": "Multiply",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 1
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "a times b. The workhorse for masking: multiply any effect field by a 0-1 mask to confine it.",
+   "exampleUse": "Multiply a Shockwave by a Body Region so the blast only travels across the person."
+  },
+  {
+   "id": "divide",
+   "name": "Divide",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "a divided by b, guarded against divide-by-zero (near-zero denominators clamp).",
+   "exampleUse": "Divide a field by RMS loudness to make quiet passages exaggerate detail."
+  },
+  {
+   "id": "mix",
+   "name": "Mix",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 1
+    },
+    {
+     "name": "t",
+     "type": "field.float",
+     "default": 0.5
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Linear blend from a to b by t, per pin. The crossfader of the patch.",
+   "exampleUse": "Mix between two Size recipes with a MIDI fader for a hands-on A/B morph."
+  },
+  {
+   "id": "clamp",
+   "name": "Clamp",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "min",
+     "type": "float",
+     "range": [
+      -10,
+      10
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "max",
+     "type": "float",
+     "range": [
+      -10,
+      10
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Pins values into a min-max range. Cheap insurance before Size or Displace.",
+   "exampleUse": "Clamp a boosted audio field to 0-1 so bass drops cannot blow pins off screen."
+  },
+  {
+   "id": "remap",
+   "name": "Remap",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "inMin",
+     "type": "float",
+     "range": [
+      -10,
+      10
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "inMax",
+     "type": "float",
+     "range": [
+      -10,
+      10
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "outMin",
+     "type": "float",
+     "range": [
+      -10,
+      10
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "outMax",
+     "type": "float",
+     "range": [
+      -10,
+      10
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "clamp",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Rescales one range to another, optionally clamped. The universal unit converter between nodes.",
+   "exampleUse": "Remap Pinch Amount 0.2-0.8 to Size 0-2 so the usable finger range covers the full effect."
+  },
+  {
+   "id": "curve",
+   "name": "Curve",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "shape",
+     "type": "enum",
+     "range": [
+      "easeIn",
+      "easeOut",
+      "easeInOut",
+      "exponential",
+      "logarithmic",
+      "sCurve"
+     ],
+     "default": "easeInOut",
+     "modSafe": false
+    },
+    {
+     "name": "amount",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Reshapes a 0-1 value through a response curve. Amount blends between linear and the full curve.",
+   "exampleUse": "Exponential curve on Depth makes only the closest few centimeters really pop."
+  },
+  {
+   "id": "abs",
+   "name": "Abs",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Absolute value, per pin.",
+   "exampleUse": "Abs of a signed Velocity gives motion energy regardless of direction."
+  },
+  {
+   "id": "min",
+   "name": "Min",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "The smaller of a and b per pin. Min against a mask acts like an intersection.",
+   "exampleUse": "Min of two Ellipse Regions carves a lens-shaped active zone."
+  },
+  {
+   "id": "max",
+   "name": "Max",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "The larger of a and b per pin. Max of two masks acts like a union.",
+   "exampleUse": "Max the left-hand and right-hand Body Regions to treat both hands as one mask."
+  },
+  {
+   "id": "quantize",
+   "name": "Quantize",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "steps",
+     "type": "int",
+     "range": [
+      2,
+      64
+     ],
+     "default": 8,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Snaps a continuous field to a fixed number of levels for terraced, stepped looks.",
+   "exampleUse": "Quantize Depth to 6 steps before Depth Drive to turn a face into contour-line terraces."
+  },
+  {
+   "id": "threshold",
+   "name": "Threshold",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    },
+    {
+     "name": "rose",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "level",
+     "type": "float",
+     "range": [
+      -1,
+      2
+     ],
+     "default": 0.5,
+     "modSafe": true
+    },
+    {
+     "name": "hysteresis",
+     "type": "float",
+     "range": [
+      0,
+      0.5
+     ],
+     "default": 0.02,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Outputs 1 where the input exceeds the level, 0 elsewhere, with hysteresis to stop flicker. When fed a plain signal, the rose trigger fires on each upward crossing.",
+   "exampleUse": "Threshold the Depth field at 0.8 to isolate only whatever is nearly touching the screen."
+  },
+  {
+   "id": "compare",
+   "name": "Compare",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "op",
+     "type": "enum",
+     "range": [
+      ">",
+      "<",
+      ">=",
+      "<=",
+      "=",
+      "!="
+     ],
+     "default": ">",
+     "modSafe": true
+    },
+    {
+     "name": "tolerance",
+     "type": "float",
+     "range": [
+      0,
+      0.5
+     ],
+     "default": 0.001,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Compares two values per pin and outputs 1 or 0. Equality uses the tolerance window.",
+   "exampleUse": "Compare uv.x > 0.5 to split the wall into two halves running different colors."
+  },
+  {
+   "id": "switch",
+   "name": "Switch",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "a",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "b",
+     "type": "field.float",
+     "default": 1
+    },
+    {
+     "name": "select",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Passes a when select is below 0.5, b when above. Works per pin, so a mask can pick different sources in different zones.",
+   "exampleUse": "Switch between a calm and a chaotic Size field using a Toggle flipped by a fist gesture."
+  },
+  {
+   "id": "smoothstep",
+   "name": "Smoothstep",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "edge0",
+     "type": "float",
+     "range": [
+      -1,
+      2
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "edge1",
+     "type": "float",
+     "range": [
+      -1,
+      2
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "The classic soft step: 0 below edge0, 1 above edge1, silky in between. The nicest way to make masks from continuous fields.",
+   "exampleUse": "Smoothstep Depth between 0.6 and 0.9 for a feathered halo around whatever is close."
+  },
+  {
+   "id": "sine",
+   "name": "Sine",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "cycles",
+     "type": "float",
+     "range": [
+      0.1,
+      40
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "phase",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "unipolar",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Sine waveshaper: out = sin(in times cycles plus phase). Feed it a position field and you get stripes; feed it time and you get oscillation.",
+   "exampleUse": "Sine of Grid Info centerDist with animated phase paints concentric breathing rings with zero state."
+  },
+  {
+   "id": "power",
+   "name": "Power",
+   "family": "SIGNAL",
+   "subfamily": "Math",
+   "kind": "filter",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "field.float",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "exponent",
+     "type": "float",
+     "range": [
+      0.1,
+      8
+     ],
+     "default": 2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Raises the input to a power. Above 1 sharpens contrast, below 1 lifts shadows.",
+   "exampleUse": "Square a mask to tighten its soft edge into a crisper spotlight."
+  },
+  {
+   "id": "lfo",
+   "name": "LFO",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "retrig",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    },
+    {
+     "name": "cycle",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "shape",
+     "type": "enum",
+     "range": [
+      "sine",
+      "triangle",
+      "saw",
+      "square",
+      "sampleHold"
+     ],
+     "default": "sine",
+     "modSafe": false
+    },
+    {
+     "name": "sync",
+     "type": "bool",
+     "default": true,
+     "modSafe": false
+    },
+    {
+     "name": "division",
+     "type": "enum",
+     "range": [
+      "1/16",
+      "1/8",
+      "1/4",
+      "1/2",
+      "1/1",
+      "2/1",
+      "4/1"
+     ],
+     "default": "1/1",
+     "modSafe": true
+    },
+    {
+     "name": "hz",
+     "type": "float",
+     "range": [
+      0.01,
+      40
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "phase",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "min",
+     "type": "float",
+     "range": [
+      -4,
+      4
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "max",
+     "type": "float",
+     "range": [
+      -4,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "The everyday oscillator: five shapes, locked to the BPM transport by division or running free in Hz. Cycle fires once per period.",
+   "exampleUse": "A 4-bar sine LFO on Domain morph makes the lattice slowly tide between grid and spiral."
+  },
+  {
+   "id": "envelope",
+   "name": "Envelope",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "fire",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "attack",
+     "type": "float",
+     "range": [
+      0.001,
+      10
+     ],
+     "default": 0.02,
+     "modSafe": true
+    },
+    {
+     "name": "release",
+     "type": "float",
+     "range": [
+      0.001,
+      20
+     ],
+     "default": 0.4,
+     "modSafe": true
+    },
+    {
+     "name": "peak",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "curve",
+     "type": "enum",
+     "range": [
+      "linear",
+      "exponential"
+     ],
+     "default": "exponential",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Attack-release envelope: each trigger snaps it up over the attack time and lets it fall over the release. The glue between triggers and continuous parameters.",
+   "exampleUse": "Beat trigger into Envelope into Size gives the wall a heartbeat instead of a twitch."
+  },
+  {
+   "id": "slew",
+   "name": "Slew",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "rise",
+     "type": "float",
+     "range": [
+      0,
+      10
+     ],
+     "default": 0.1,
+     "modSafe": true
+    },
+    {
+     "name": "fall",
+     "type": "float",
+     "range": [
+      0,
+      10
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Limits how fast a control signal can rise and fall, with independent times each way. Tames stepped MIDI and jumpy sensors.",
+   "exampleUse": "Slew a 7-bit MIDI CC before Size so fader moves glide instead of zipper."
+  },
+  {
+   "id": "spring-value",
+   "name": "Spring Value",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "target",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    },
+    {
+     "name": "velocity",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "frequency",
+     "type": "float",
+     "range": [
+      0.1,
+      20
+     ],
+     "default": 3,
+     "modSafe": true
+    },
+    {
+     "name": "damping",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "A control-rate spring that chases its target with physical overshoot. Cheaper than the per-pin Spring when one bouncy number is all you need.",
+   "exampleUse": "Spring Value on Head Pose yaw makes the Twist angle wobble past where you look, then settle."
+  },
+  {
+   "id": "random",
+   "name": "Random",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "seed",
+     "type": "int",
+     "range": [
+      0,
+      9999
+     ],
+     "default": 0,
+     "modSafe": false
+    },
+    {
+     "name": "distribution",
+     "type": "enum",
+     "range": [
+      "uniform",
+      "gaussian"
+     ],
+     "default": "uniform",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "A stable per-pin random value, 0-1, hashed from the pin index and seed. Every pin gets its own number that never changes until you reseed.",
+   "exampleUse": "Random into Spin rate so every pin whirls at its own speed, forever, deterministically."
+  },
+  {
+   "id": "wander",
+   "name": "Wander",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "speed",
+     "type": "float",
+     "range": [
+      0.01,
+      10
+     ],
+     "default": 0.3,
+     "modSafe": true
+    },
+    {
+     "name": "seed",
+     "type": "int",
+     "range": [
+      0,
+      9999
+     ],
+     "default": 0,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Smooth seeded value-noise that drifts over time, independently per pin, computed analytically with zero state. Organic motion without physics.",
+   "exampleUse": "Wander into Displace Z at low amount gives the whole wall a gentle underwater shimmer."
+  },
+  {
+   "id": "sample-hold",
+   "name": "Sample & Hold",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "value",
+     "type": "field.float",
+     "default": 0
+    },
+    {
+     "name": "sample",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "held",
+     "type": "field.float"
+    }
+   ],
+   "params": [],
+   "statePerPin": 1,
+   "execution": "interpreter-op",
+   "description": "Freezes the input field at the instant of each trigger and holds it until the next one. One float of state per pin.",
+   "exampleUse": "Sample Wander on every bar so the wall snaps to a new random posture in strict musical time."
+  },
+  {
+   "id": "chance",
+   "name": "Chance",
+   "family": "SIGNAL",
+   "subfamily": "Modulate",
+   "kind": "state",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "roll",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "gate",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "probability",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    },
+    {
+     "name": "seed",
+     "type": "int",
+     "range": [
+      0,
+      9999
+     ],
+     "default": 0,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 1,
+   "execution": "interpreter-op",
+   "description": "On each trigger, every pin independently rerolls: 1 with the given probability, else 0, held until the next roll. One float per pin.",
+   "exampleUse": "Roll on each beat at 0.3 probability and multiply into Size so a random third of the pins punch out per beat."
+  },
+  {
+   "id": "audio-levels",
+   "name": "Audio Levels",
+   "family": "SIGNAL",
+   "subfamily": "Audio",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "bass",
+     "type": "signal"
+    },
+    {
+     "name": "mid",
+     "type": "signal"
+    },
+    {
+     "name": "high",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "gain",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Three smoothed 0-1 band levels from the microphone or playing audio: bass, mid, high. The fastest route from music to motion.",
+   "exampleUse": "Bass to Size, mid to Bloom amount, high to Grain: a full audio-reactive look in three cables."
+  },
+  {
+   "id": "beat-trigger",
+   "name": "Beat",
+   "family": "SIGNAL",
+   "subfamily": "Audio",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "onset",
+     "type": "trigger"
+    },
+    {
+     "name": "strength",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "band",
+     "type": "enum",
+     "range": [
+      "low",
+      "mid",
+      "high"
+     ],
+     "default": "low",
+     "modSafe": false
+    },
+    {
+     "name": "sensitivity",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Drum onset detector for one band: low catches kicks, mid catches snares, high catches hats. Strength reports how hard the hit was.",
+   "exampleUse": "Low-band onsets into Shockwave: every kick drum slams a ring through the pin wall."
+  },
+  {
+   "id": "fft-band",
+   "name": "FFT Band",
+   "family": "SIGNAL",
+   "subfamily": "Audio",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "level",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "band",
+     "type": "int",
+     "range": [
+      0,
+      19
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "gain",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "One of the 20 FFT analysis bands as a smoothed signal, for surgical frequency picking.",
+   "exampleUse": "Band 17 (air frequencies) into Vignette amount so cymbal shimmer opens up the frame."
+  },
+  {
+   "id": "rms",
+   "name": "Loudness",
+   "family": "SIGNAL",
+   "subfamily": "Audio",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "level",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "gain",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.4,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Overall RMS loudness as one smoothed 0-1 signal. The room-energy meter.",
+   "exampleUse": "Loudness into Palette shift so the entire color scheme heats up as the set gets louder."
+  },
+  {
+   "id": "burst",
+   "name": "Burst",
+   "family": "SIGNAL",
+   "subfamily": "Audio",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "burst",
+     "type": "trigger"
+    },
+    {
+     "name": "amount",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "sensitivity",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Fires on sudden broadband energy jumps: drops, shouts, claps. Amount reports the size of the surprise.",
+   "exampleUse": "Burst into Scatter via a fast Envelope so the drop literally blows the image apart."
+  },
+  {
+   "id": "spectrum-field",
+   "name": "Spectrum Field",
+   "family": "SIGNAL",
+   "subfamily": "Audio",
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "levels",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "axis",
+     "type": "enum",
+     "range": [
+      "x",
+      "y",
+      "index",
+      "radius"
+     ],
+     "default": "x",
+     "modSafe": true
+    },
+    {
+     "name": "gain",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Spreads the 20-band FFT across the pins along a chosen axis, so each column (or ring) of pins tracks its own slice of the spectrum. A per-pin lookup into a 20-value table, no neighbor reads.",
+   "exampleUse": "Axis x into Depth Drive turns the whole wall into a giant walk-in spectrum analyzer."
+  },
+  {
+   "id": "midi-cc",
+   "name": "MIDI CC",
+   "family": "SIGNAL",
+   "subfamily": "MIDI",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "channel",
+     "type": "int",
+     "range": [
+      0,
+      16
+     ],
+     "default": 0,
+     "modSafe": false
+    },
+    {
+     "name": "cc",
+     "type": "int",
+     "range": [
+      0,
+      127
+     ],
+     "default": 1,
+     "modSafe": false
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.1,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "One MIDI continuous controller as a 0-1 signal, over USB, network or Bluetooth. Channel 0 listens on all channels.",
+   "exampleUse": "Map a hardware fader to Depth Drive gain and mix the relief like a channel strip."
+  },
+  {
+   "id": "midi-note",
+   "name": "MIDI Note",
+   "family": "SIGNAL",
+   "subfamily": "MIDI",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "gate",
+     "type": "signal"
+    },
+    {
+     "name": "velocity",
+     "type": "signal"
+    },
+    {
+     "name": "noteOn",
+     "type": "trigger"
+    },
+    {
+     "name": "pitch",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "channel",
+     "type": "int",
+     "range": [
+      0,
+      16
+     ],
+     "default": 0,
+     "modSafe": false
+    },
+    {
+     "name": "note",
+     "type": "int",
+     "range": [
+      -1,
+      127
+     ],
+     "default": -1,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Listens for one note (or any note when set to -1): gate while held, velocity 0-1, a trigger per note-on, and normalized pitch when in any-note mode.",
+   "exampleUse": "Any-note pitch into Palette shift so playing up the keyboard sweeps the wall through the colormap."
+  },
+  {
+   "id": "midi-range",
+   "name": "MIDI Note Range",
+   "family": "SIGNAL",
+   "subfamily": "MIDI",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "position",
+     "type": "signal"
+    },
+    {
+     "name": "gate",
+     "type": "signal"
+    },
+    {
+     "name": "noteOn",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "low",
+     "type": "int",
+     "range": [
+      0,
+      127
+     ],
+     "default": 48,
+     "modSafe": false
+    },
+    {
+     "name": "high",
+     "type": "int",
+     "range": [
+      0,
+      127
+     ],
+     "default": 72,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Turns a keyboard span into a fader: the last note played inside the range maps to position 0-1, with a gate while any range note is held.",
+   "exampleUse": "Two octaves mapped to Twist angle: play chords low or high to throw the vortex left or right."
+  },
+  {
+   "id": "osc-in",
+   "name": "OSC In (Float)",
+   "family": "SIGNAL",
+   "subfamily": "OSC",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "slot",
+     "type": "int",
+     "range": [
+      1,
+      16
+     ],
+     "default": 1,
+     "modSafe": false
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Receives a float on OSC address /points/f/{slot} over the network. Custom address mapping lives in OSC settings.",
+   "exampleUse": "Send fader data from TouchOSC on a laptop into Bloom amount for remote front-of-house control."
+  },
+  {
+   "id": "osc-in-vec",
+   "name": "OSC In (Vec)",
+   "family": "SIGNAL",
+   "subfamily": "OSC",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "vec3"
+    }
+   ],
+   "params": [
+    {
+     "name": "slot",
+     "type": "int",
+     "range": [
+      1,
+      16
+     ],
+     "default": 1,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Receives 2 or 3 floats on /points/v/{slot} as a vec3 (z is 0 when only two arrive). Perfect for XY pads and tracker data.",
+   "exampleUse": "Stream an XY pad into the Ripple center so a remote performer steers the waves."
+  },
+  {
+   "id": "osc-trigger",
+   "name": "OSC Trigger",
+   "family": "SIGNAL",
+   "subfamily": "OSC",
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "fired",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "slot",
+     "type": "int",
+     "range": [
+      1,
+      16
+     ],
+     "default": 1,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Fires a trigger on any message to /points/t/{slot}. Bang-style events from lighting desks, Max patches or show control.",
+   "exampleUse": "Cue a Shockwave from the same OSC bang that fires the venue strobes."
+  },
+  {
+   "id": "osc-out",
+   "name": "OSC Out",
+   "family": "SIGNAL",
+   "subfamily": "OSC",
+   "kind": "output",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "value",
+     "type": "signal",
+     "default": 0
+    },
+    {
+     "name": "send",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "slot",
+     "type": "int",
+     "range": [
+      1,
+      16
+     ],
+     "default": 1,
+     "modSafe": false
+    },
+    {
+     "name": "maxRate",
+     "type": "float",
+     "range": [
+      1,
+      120
+     ],
+     "default": 30,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Broadcasts a signal to /points/out/{slot} at up to maxRate Hz, plus an instant message on each send trigger. Points as a controller for everything else in the room.",
+   "exampleUse": "Send Proximity nearness out to a lighting rig so house lights dim as people approach the screen."
+  },
+  {
+   "id": "body-region",
+   "name": "Body Region",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mask",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "region",
+     "type": "enum",
+     "range": [
+      "head",
+      "torso",
+      "leftArm",
+      "rightArm",
+      "leftHand",
+      "rightHand",
+      "legs",
+      "background"
+     ],
+     "default": "torso",
+     "modSafe": false
+    },
+    {
+     "name": "feather",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.2,
+     "modSafe": true
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "A soft-edged 0-1 mask over one body region, built from 2D body pose. Each pin samples the rasterized region map, no neighbor reads.",
+   "exampleUse": "Head region into Size so your head literally swells out of the wall while the room stays flat."
+  },
+  {
+   "id": "joint",
+   "name": "Joint",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "position",
+     "type": "vec2"
+    },
+    {
+     "name": "velocity",
+     "type": "vec2"
+    },
+    {
+     "name": "confidence",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "joint",
+     "type": "enum",
+     "range": [
+      "nose",
+      "leftEye",
+      "rightEye",
+      "leftEar",
+      "rightEar",
+      "neck",
+      "leftShoulder",
+      "rightShoulder",
+      "leftElbow",
+      "rightElbow",
+      "leftWrist",
+      "rightWrist",
+      "root",
+      "leftHip",
+      "rightHip",
+      "leftKnee",
+      "rightKnee",
+      "leftAnkle",
+      "rightAnkle"
+     ],
+     "default": "rightWrist",
+     "modSafe": false
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Raw access to any of the 19 body-pose joints: view-space position, velocity, and tracking confidence.",
+   "exampleUse": "Right wrist position into Shockwave center so punches detonate exactly where you strike."
+  },
+  {
+   "id": "hand-gesture",
+   "name": "Hand Gesture",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "began",
+     "type": "trigger"
+    },
+    {
+     "name": "held",
+     "type": "signal"
+    },
+    {
+     "name": "confidence",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "hand",
+     "type": "enum",
+     "range": [
+      "left",
+      "right",
+      "any"
+     ],
+     "default": "any",
+     "modSafe": false
+    },
+    {
+     "name": "gesture",
+     "type": "enum",
+     "range": [
+      "pinch",
+      "palm",
+      "fist",
+      "point",
+      "peace",
+      "thumbsUp"
+     ],
+     "default": "fist",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Recognizes one of six hand gestures: a trigger when it starts and a gate while it holds. Choose left, right, or either hand.",
+   "exampleUse": "Fist begins a Freeze; opening the hand releases the statue back into motion."
+  },
+  {
+   "id": "pinch-amount",
+   "name": "Pinch Amount",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "amount",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "hand",
+     "type": "enum",
+     "range": [
+      "left",
+      "right",
+      "any"
+     ],
+     "default": "any",
+     "modSafe": false
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Continuous thumb-to-index distance as a signal: 0 fingers apart, 1 touching. The most precise body fader in the app.",
+   "exampleUse": "Pinch into Domain morph: physically squeeze the lattice from grid to spiral between two fingers."
+  },
+  {
+   "id": "hand-openness",
+   "name": "Hand Openness",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "openness",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "hand",
+     "type": "enum",
+     "range": [
+      "left",
+      "right",
+      "any"
+     ],
+     "default": "any",
+     "modSafe": false
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "How open the hand is, 0 clenched fist to 1 spread palm, as a smooth continuous signal.",
+   "exampleUse": "Openness into Scatter amount: clench to gather the pins, open your hand to release them into a cloud."
+  },
+  {
+   "id": "hand-position",
+   "name": "Hand Position",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "position",
+     "type": "vec2"
+    },
+    {
+     "name": "present",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "hand",
+     "type": "enum",
+     "range": [
+      "left",
+      "right",
+      "any"
+     ],
+     "default": "any",
+     "modSafe": false
+    },
+    {
+     "name": "point",
+     "type": "enum",
+     "range": [
+      "palm",
+      "indexTip",
+      "thumbTip",
+      "wrist"
+     ],
+     "default": "palm",
+     "modSafe": false
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.25,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "View-space position of a chosen hand point from the 21-landmark hand skeleton, with a present gate while the hand is tracked.",
+   "exampleUse": "Index tip into Ellipse Region center: draw raised-pin circles in the air with one finger."
+  },
+  {
+   "id": "face-landmark",
+   "name": "Face Landmark",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "position",
+     "type": "vec2"
+    },
+    {
+     "name": "confidence",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "group",
+     "type": "enum",
+     "range": [
+      "jaw",
+      "leftBrow",
+      "rightBrow",
+      "leftEye",
+      "rightEye",
+      "nose",
+      "outerLips",
+      "innerLips"
+     ],
+     "default": "outerLips",
+     "modSafe": false
+    },
+    {
+     "name": "index",
+     "type": "int",
+     "range": [
+      -1,
+      20
+     ],
+     "default": -1,
+     "modSafe": false
+    },
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Position of any of the 76 face landmarks, addressed by group and index (index -1 gives the group centroid).",
+   "exampleUse": "Outer-lips centroid into Ripple center so waves pour out of your mouth as you speak."
+  },
+  {
+   "id": "head-pose",
+   "name": "Head Pose",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "yaw",
+     "type": "signal"
+    },
+    {
+     "name": "pitch",
+     "type": "signal"
+    },
+    {
+     "name": "roll",
+     "type": "signal"
+    },
+    {
+     "name": "position",
+     "type": "vec2"
+    }
+   ],
+   "params": [
+    {
+     "name": "smooth",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Head orientation as three normalized -1 to 1 signals plus view position. Your skull as a three-axis controller.",
+   "exampleUse": "Yaw into UV Transform offset.x so the sampled image slides opposite to your glance."
+  },
+  {
+   "id": "face-region",
+   "name": "Face Region",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mask",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "part",
+     "type": "enum",
+     "range": [
+      "face",
+      "mouth",
+      "eyes",
+      "brows"
+     ],
+     "default": "face",
+     "modSafe": false
+    },
+    {
+     "name": "feather",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.15,
+     "modSafe": true
+    },
+    {
+     "name": "invert",
+     "type": "bool",
+     "default": false,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "A soft mask over the face or a facial feature, rasterized from the 76 landmarks and sampled per pin.",
+   "exampleUse": "Mouth mask into Shape Morph blend so your lips are spikes while everything else stays smooth spheres."
+  },
+  {
+   "id": "person-present",
+   "name": "Person Present",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "entered",
+     "type": "trigger"
+    },
+    {
+     "name": "left",
+     "type": "trigger"
+    },
+    {
+     "name": "present",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "holdTime",
+     "type": "float",
+     "range": [
+      0,
+      5
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Fires when a person appears or leaves the frame, with a gate while anyone is tracked. Hold time debounces flicker.",
+   "exampleUse": "Entered fires a Shockwave and left fades Size to zero: an installation that wakes for each visitor."
+  },
+  {
+   "id": "transport",
+   "name": "Transport",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "tap",
+     "type": "trigger"
+    },
+    {
+     "name": "resync",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "beat",
+     "type": "trigger"
+    },
+    {
+     "name": "bar",
+     "type": "trigger"
+    },
+    {
+     "name": "phase",
+     "type": "signal"
+    },
+    {
+     "name": "bpm",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "bpm",
+     "type": "float",
+     "range": [
+      40,
+      240
+     ],
+     "default": 120,
+     "modSafe": true
+    },
+    {
+     "name": "run",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "The global BPM clock every synced node follows. Tap the tap input to set tempo by feel; resync snaps the downbeat to now.",
+   "exampleUse": "Tap tempo from a touch slot, then every LFO, Clock and Sequencer in the patch locks to the band."
+  },
+  {
+   "id": "clock",
+   "name": "Clock",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "tick",
+     "type": "trigger"
+    },
+    {
+     "name": "phase",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "division",
+     "type": "enum",
+     "range": [
+      "1/16",
+      "1/8",
+      "1/4",
+      "1/2",
+      "1/1",
+      "2/1",
+      "4/1",
+      "8/1"
+     ],
+     "default": "1/4",
+     "modSafe": true
+    },
+    {
+     "name": "swing",
+     "type": "float",
+     "range": [
+      0,
+      0.75
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "A divided pulse from the Transport, with swing. Tick fires each division; phase ramps 0-1 between ticks.",
+   "exampleUse": "1/16 ticks into Chance for a skittering, probabilistic hi-hat of pin flickers."
+  },
+  {
+   "id": "step-sequencer",
+   "name": "Step Sequencer",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "reset",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "signal"
+    },
+    {
+     "name": "step",
+     "type": "trigger"
+    },
+    {
+     "name": "index",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "steps",
+     "type": "int",
+     "range": [
+      1,
+      16
+     ],
+     "default": 16,
+     "modSafe": false
+    },
+    {
+     "name": "division",
+     "type": "enum",
+     "range": [
+      "1/16",
+      "1/8",
+      "1/4",
+      "1/2",
+      "1/1"
+     ],
+     "default": "1/8",
+     "modSafe": true
+    },
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "forward",
+      "backward",
+      "pingpong",
+      "random"
+     ],
+     "default": "forward",
+     "modSafe": true
+    },
+    {
+     "name": "glide",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "A 16-step value sequencer locked to the Transport; step levels are drawn directly on the node face. Glide slides between steps.",
+   "exampleUse": "Sequence Depth Drive gain in 1/8s so the relief pumps a rhythmic pattern even with a still subject."
+  },
+  {
+   "id": "counter",
+   "name": "Counter",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "count",
+     "type": "trigger"
+    },
+    {
+     "name": "reset",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "value",
+     "type": "signal"
+    },
+    {
+     "name": "wrapped",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "modulo",
+     "type": "int",
+     "range": [
+      0,
+      128
+     ],
+     "default": 8,
+     "modSafe": true
+    },
+    {
+     "name": "normalize",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Counts incoming triggers, wrapping at the modulo (0 counts forever). Normalized output divides by the modulo for a 0-1 staircase.",
+   "exampleUse": "Count bars and wrap at 4 to advance Palette shift every phrase, snapping a new color scheme each time round."
+  },
+  {
+   "id": "gate",
+   "name": "Gate",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "value",
+     "type": "signal",
+     "default": 0
+    },
+    {
+     "name": "open",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "mode",
+     "type": "enum",
+     "range": [
+      "zero",
+      "hold"
+     ],
+     "default": "zero",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Passes the value while open is high; otherwise outputs zero or holds the last value. A mute button for any control wire.",
+   "exampleUse": "Gate the audio bass feed with a Toggle so one tap silences all audio reactivity for a breakdown."
+  },
+  {
+   "id": "signal-delay",
+   "name": "Delay",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "signal",
+     "default": 0
+    },
+    {
+     "name": "trig",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    },
+    {
+     "name": "delayedTrig",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "time",
+     "type": "float",
+     "range": [
+      0,
+      4
+     ],
+     "default": 0.25,
+     "modSafe": true
+    },
+    {
+     "name": "sync",
+     "type": "bool",
+     "default": false,
+     "modSafe": false
+    },
+    {
+     "name": "division",
+     "type": "enum",
+     "range": [
+      "1/16",
+      "1/8",
+      "1/4",
+      "1/2",
+      "1/1"
+     ],
+     "default": "1/8",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Delays a control signal and any triggers by seconds or a beat division. Chain several for canon effects.",
+   "exampleUse": "Send the same Beat to two Shockwaves, one delayed a 1/8, for call-and-response rings."
+  },
+  {
+   "id": "toggle",
+   "name": "Toggle",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "state",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "flip",
+     "type": "trigger"
+    },
+    {
+     "name": "reset",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "state",
+     "type": "signal"
+    },
+    {
+     "name": "changed",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "initial",
+     "type": "bool",
+     "default": false,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Flips between 0 and 1 on each trigger. The patch's light switch; state is control-side, so no per-pin cost.",
+   "exampleUse": "Peace-sign gesture flips a Toggle that switches the whole wall between mirror mode and abstract mode."
+  },
+  {
+   "id": "on-start",
+   "name": "On Start",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "fired",
+     "type": "trigger"
+    }
+   ],
+   "params": [
+    {
+     "name": "delay",
+     "type": "float",
+     "range": [
+      0,
+      10
+     ],
+     "default": 0,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Fires exactly once when the patch loads (optionally after a delay). For arming envelopes, seeding counters and opening titles.",
+   "exampleUse": "On Start into a slow Envelope on Size so every set begins with the wall blooming from nothing."
+  },
+  {
+   "id": "camera",
+   "name": "Camera",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "sway",
+     "type": "vec2",
+     "default": [
+      0,
+      0
+     ]
+    },
+    {
+     "name": "push",
+     "type": "signal",
+     "default": 0
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "preset",
+     "type": "enum",
+     "range": [
+      "straight",
+      "low",
+      "high",
+      "close",
+      "wide"
+     ],
+     "default": "straight",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "The fixed viewpoint on the pin wall: choose a framing preset, then add only subtle sway and push offsets. The camera never flies; the pins do the moving.",
+   "exampleUse": "Feed a whisper of Wander into sway for handheld life without breaking the wall illusion."
+  },
+  {
+   "id": "light",
+   "name": "Light",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "position",
+     "type": "vec3",
+     "default": [
+      0.5,
+      0.5,
+      1.5
+     ]
+    },
+    {
+     "name": "color",
+     "type": "color",
+     "default": [
+      1,
+      1,
+      1
+     ]
+    },
+    {
+     "name": "intensity",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "type",
+     "type": "enum",
+     "range": [
+      "point",
+      "directional"
+     ],
+     "default": "point",
+     "modSafe": false
+    },
+    {
+     "name": "shadow",
+     "type": "bool",
+     "default": false,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "A scene light for lit materials; up to two Lights per patch and only one may cast the cheap shadow map. Position it in front of the wall and move it live.",
+   "exampleUse": "Drive the light position from Hand Position: hold the sun in your palm and rake shadows across the relief."
+  },
+  {
+   "id": "background",
+   "name": "Background",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "colorA",
+     "type": "color",
+     "default": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "colorB",
+     "type": "color",
+     "default": [
+      0.08,
+      0.08,
+      0.15
+     ]
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "style",
+     "type": "enum",
+     "range": [
+      "solid",
+      "gradient",
+      "videoBlur"
+     ],
+     "default": "solid",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "What sits behind the pins: a solid, a two-color vertical gradient, or a heavy blur of the source video for ambient context.",
+   "exampleUse": "videoBlur behind a sparse scattered Domain makes the pins feel like droplets floating over the real scene."
+  },
+  {
+   "id": "bloom",
+   "name": "Bloom",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "amount",
+     "type": "signal",
+     "default": 0.4
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "threshold",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "radius",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "Post-process glow on bright pins. Threshold picks what blooms; radius sets how far the halo spreads.",
+   "exampleUse": "Modulate amount with bass so the whole frame breathes light on each kick."
+  },
+  {
+   "id": "grain",
+   "name": "Grain",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "amount",
+     "type": "signal",
+     "default": 0.2
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "size",
+     "type": "float",
+     "range": [
+      0.5,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "animated",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "Film grain over the final frame, static or re-rolled every frame. Hides banding and adds analog warmth.",
+   "exampleUse": "A little animated grain over a mono Palette gives instant 16mm documentary texture."
+  },
+  {
+   "id": "vignette",
+   "name": "Vignette",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "amount",
+     "type": "signal",
+     "default": 0.3
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "roundness",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.8,
+     "modSafe": true
+    },
+    {
+     "name": "softness",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.6,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "Darkens the frame edges to pull the eye center-stage. Roundness morphs between rectangular and circular falloff.",
+   "exampleUse": "Snap amount up briefly on Burst triggers for a punch-in feeling without moving the camera."
+  },
+  {
+   "id": "render-settings",
+   "name": "Render Settings",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [],
+   "params": [
+    {
+     "name": "depthBlend",
+     "type": "enum",
+     "range": [
+      "opaque",
+      "additive",
+      "softAdditive"
+     ],
+     "default": "opaque",
+     "modSafe": false
+    },
+    {
+     "name": "exposure",
+     "type": "float",
+     "range": [
+      -2,
+      2
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "resolution",
+     "type": "enum",
+     "range": [
+      "auto",
+      "full",
+      "half"
+     ],
+     "default": "auto",
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "Global render choices: how overlapping pins blend in depth (solid, additive light-points, or soft glow), overall exposure, and resolution strategy.",
+   "exampleUse": "softAdditive with tiny sphere pins turns the wall into a volumetric particle hologram."
+  },
+  {
+   "id": "output",
+   "name": "Output",
+   "family": "STAGE",
+   "subfamily": null,
+   "kind": "output",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "outputs": [],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "render",
+   "description": "The end of every patch: connect your pin chain here and it renders. Exactly one Output per patch.",
+   "exampleUse": "Domain into Depth Drive into Pin Color into Output is the smallest complete patch in Points."
+  },
+  {
+   "id": "macro-container",
+   "name": "Macro",
+   "family": "TOOLS",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "A container that wraps part of your graph into one tidy node with the ports you choose to expose. Double-tap to open and edit the inside; all shipped signature effects are these.",
+   "exampleUse": "Collapse your favorite audio-to-size rig into a Macro and reuse it across every patch."
+  },
+  {
+   "id": "sticky-note",
+   "name": "Sticky Note",
+   "family": "TOOLS",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [],
+   "params": [
+    {
+     "name": "hue",
+     "type": "enum",
+     "range": [
+      "yellow",
+      "pink",
+      "blue",
+      "green"
+     ],
+     "default": "yellow",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "A text note pinned to the canvas. No ports, no cost; just words for future you.",
+   "exampleUse": "Label the performance controls: 'CC1 = intensity, fist = freeze' so stage-you remembers what studio-you built."
+  },
+  {
+   "id": "reroute",
+   "name": "Reroute",
+   "family": "TOOLS",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "signal"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    }
+   ],
+   "params": [],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "A pass-through dot for tidying cable runs. Adopts whatever port type is connected, fields included, and compiles to nothing.",
+   "exampleUse": "Drop reroutes along a long Depth cable so it hugs the layout instead of crossing forty nodes."
+  },
+  {
+   "id": "send",
+   "name": "Send",
+   "family": "TOOLS",
+   "subfamily": null,
+   "kind": "output",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "signal"
+    }
+   ],
+   "outputs": [],
+   "params": [
+    {
+     "name": "channel",
+     "type": "int",
+     "range": [
+      1,
+      32
+     ],
+     "default": 1,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Broadcasts its input to every Receive on the same channel, wirelessly across the canvas. Adopts the connected type, fields included.",
+   "exampleUse": "Send the master audio envelope on channel 1 and pick it up in five distant corners of the patch."
+  },
+  {
+   "id": "receive",
+   "name": "Receive",
+   "family": "TOOLS",
+   "subfamily": null,
+   "kind": "generator",
+   "rate": "control",
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "channel",
+     "type": "int",
+     "range": [
+      1,
+      32
+     ],
+     "default": 1,
+     "modSafe": false
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Outputs whatever the matching Send broadcasts, type and all. Outputs silence (zero) when no Send exists yet.",
+   "exampleUse": "Receive the beat envelope near your COLOR section without dragging a cable across the whole graph."
+  },
+  {
+   "id": "value-display",
+   "name": "Value Display",
+   "family": "TOOLS",
+   "subfamily": null,
+   "kind": "filter",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "in",
+     "type": "signal"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "out",
+     "type": "signal"
+    }
+   ],
+   "params": [
+    {
+     "name": "view",
+     "type": "enum",
+     "range": [
+      "number",
+      "meter",
+      "scope",
+      "histogram"
+     ],
+     "default": "meter",
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "An inline scope: shows a live number, meter or waveform for signals, and a histogram for fields. Passes its input straight through.",
+   "exampleUse": "Drop one after Pinch Amount to check your usable finger range before remapping it."
+  },
+  {
+   "id": "pulse-pins",
+   "name": "Pulse Pins",
+   "family": "SHAPE",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "intensity",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "band",
+     "type": "enum",
+     "range": [
+      "low",
+      "mid",
+      "high"
+     ],
+     "default": "low",
+     "modSafe": false
+    },
+    {
+     "name": "attack",
+     "type": "float",
+     "range": [
+      0.001,
+      1
+     ],
+     "default": 0.01,
+     "modSafe": true
+    },
+    {
+     "name": "release",
+     "type": "float",
+     "range": [
+      0.01,
+      4
+     ],
+     "default": 0.25,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Signature macro: pins puff with the music. Inside: Audio Levels -> Envelope -> Multiply -> Size, fully openable and rewireable.",
+   "exampleUse": "Drop it after Depth Drive and the live relief pumps on the kick with zero extra patching."
+  },
+  {
+   "id": "wave-field",
+   "name": "Wave Field",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "center",
+     "type": "vec2",
+     "default": [
+      0.5,
+      0.5
+     ]
+    },
+    {
+     "name": "amount",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "wavelength",
+     "type": "float",
+     "range": [
+      0.02,
+      1
+     ],
+     "default": 0.18,
+     "modSafe": true
+    },
+    {
+     "name": "speed",
+     "type": "float",
+     "range": [
+      -4,
+      4
+     ],
+     "default": 0.6,
+     "modSafe": true
+    },
+    {
+     "name": "colorize",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "interpreter-op",
+   "description": "Signature macro: an analytic ripple rig. Inside: Ripple -> Displace Z, plus an optional Palette tint by wave height. Pure per-pin math, no propagation simulation.",
+   "exampleUse": "Park it on a still portrait so slow lacquer waves roll forever across the frozen face."
+  },
+  {
+   "id": "body-glow",
+   "name": "Body Glow",
+   "family": "COLOR",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "glowColor",
+     "type": "color",
+     "default": [
+      0.4,
+      0.9,
+      1
+     ]
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "region",
+     "type": "enum",
+     "range": [
+      "head",
+      "torso",
+      "leftArm",
+      "rightArm",
+      "leftHand",
+      "rightHand",
+      "legs"
+     ],
+     "default": "torso",
+     "modSafe": false
+    },
+    {
+     "name": "strength",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "sizeLift",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.3,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 1,
+   "execution": "interpreter-op",
+   "description": "Signature macro: a chosen body region glows and swells. Inside: Body Region -> Lag -> Color Mix toward the glow color, plus a Size lift. One float of Lag state per pin.",
+   "exampleUse": "Torso glow in cyan over a dark mono palette makes a dancer read as a neon ghost in the pin wall."
+  },
+  {
+   "id": "beat-shatter",
+   "name": "Beat Shatter",
+   "family": "MOVE",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "onset",
+     "type": "trigger"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "force",
+     "type": "float",
+     "range": [
+      0,
+      3
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "probability",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.7,
+     "modSafe": true
+    },
+    {
+     "name": "stiffness",
+     "type": "float",
+     "range": [
+      0.1,
+      30
+     ],
+     "default": 5,
+     "modSafe": true
+    },
+    {
+     "name": "damping",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0.5,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 7,
+   "execution": "interpreter-op",
+   "description": "Signature macro: each hit blasts a random subset of pins outward and a spring pulls them home. Inside: Beat -> Envelope -> Chance -> Scatter, with Spring on the return (6 spring floats + 1 chance float per pin). Leave onset unwired to use the built-in low-band Beat.",
+   "exampleUse": "On a portrait patch, every snare tears a third of the face into fragments that snap back before the next bar."
+  },
+  {
+   "id": "time-stutter",
+   "name": "Time Stutter",
+   "family": "TIME",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "control",
+   "inputs": [
+    {
+     "name": "source",
+     "type": "source"
+    },
+    {
+     "name": "enable",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "source",
+     "type": "source"
+    }
+   ],
+   "params": [
+    {
+     "name": "division",
+     "type": "enum",
+     "range": [
+      "1/16",
+      "1/8",
+      "1/4",
+      "1/2"
+     ],
+     "default": "1/8",
+     "modSafe": true
+    },
+    {
+     "name": "freezeRatio",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.5,
+     "modSafe": true
+    },
+    {
+     "name": "catchUpSpeed",
+     "type": "float",
+     "range": [
+      1,
+      4
+     ],
+     "default": 2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 0,
+   "execution": "control",
+   "description": "Signature macro: rhythmically gates clip playback between frozen and fast-forward. Inside: Clock -> Toggle -> Gate driving Clip Transport speed between 0 and the catch-up speed.",
+   "exampleUse": "Stutter a baked dance clip in 1/8s and the dancer locks and lurches in perfect tempo with the track."
+  },
+  {
+   "id": "face-scatter",
+   "name": "Face Scatter",
+   "family": "BODY",
+   "subfamily": null,
+   "kind": "macro",
+   "rate": "pin",
+   "inputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    },
+    {
+     "name": "amount",
+     "type": "signal",
+     "default": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "pins",
+     "type": "domain"
+    }
+   ],
+   "params": [
+    {
+     "name": "noise",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0.6,
+     "modSafe": true
+    },
+    {
+     "name": "stiffness",
+     "type": "float",
+     "range": [
+      0.1,
+      30
+     ],
+     "default": 4,
+     "modSafe": true
+    },
+    {
+     "name": "damping",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0.4,
+     "modSafe": true
+    },
+    {
+     "name": "feather",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.2,
+     "modSafe": true
+    }
+   ],
+   "statePerPin": 6,
+   "execution": "interpreter-op",
+   "description": "Signature macro: pins over the face drift apart like a murmuration, then reform. Inside: Face Region -> Scatter driven by Wander noise, with Spring attracting every pin home (6 floats per pin). Purely per-pin home-attraction plus noise; no neighbor reads, so it flocks without a flocking sim.",
+   "exampleUse": "Raise amount with Loudness so your face dissolves into swirling birds at the chorus and reassembles in the quiet."
+  },
+  {
+   "id": "point-display",
+   "name": "Point Display",
+   "family": "GRID",
+   "subfamily": null,
+   "kind": "field",
+   "rate": "pin",
+   "execution": "interpreter-op",
+   "statePerPin": 0,
+   "inputs": [
+    {
+     "name": "depth",
+     "type": "field.float"
+    }
+   ],
+   "outputs": [
+    {
+     "name": "position",
+     "type": "field.vec3"
+    },
+    {
+     "name": "z",
+     "type": "field.float"
+    }
+   ],
+   "params": [
+    {
+     "name": "separation",
+     "type": "float",
+     "range": [
+      0.2,
+      3
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "volume",
+     "type": "float",
+     "range": [
+      0,
+      2
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "wobble",
+     "type": "float",
+     "range": [
+      0,
+      0.5
+     ],
+     "default": 0,
+     "modSafe": true
+    },
+    {
+     "name": "gain",
+     "type": "float",
+     "range": [
+      0,
+      3
+     ],
+     "default": 1.2,
+     "modSafe": true
+    },
+    {
+     "name": "gamma",
+     "type": "float",
+     "range": [
+      0.25,
+      4
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "zFlatten",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 1,
+     "modSafe": true
+    },
+    {
+     "name": "edgeLock",
+     "type": "bool",
+     "default": true,
+     "modSafe": true
+    },
+    {
+     "name": "stabilize",
+     "type": "float",
+     "range": [
+      0,
+      1
+     ],
+     "default": 0.7,
+     "modSafe": true
+    }
+   ],
+   "description": "Governs how pins hold together. SEPARATION bunches/spreads the grid; VOLUME opens pins outward with depth (point-cloud look); WOBBLE + STABILIZE trade a locked pinout for TDLidar-style sensor wobble (stabilize drives the depth EMA: low=raw/wobbly, high=locked); EDGE LOCK pins the outer ring to the 3:4 frame; GAIN/GAMMA/Z-FLATTEN shape the forward push. Emits pinFieldXY + pinFieldZ VM ops.",
+   "exampleUse": "VOLUME 1.5 + STABILIZE 0.15 + EDGE LOCK off = the TDLidar wobbling cloud; SEPARATION 1 + VOLUME 0 + EDGE LOCK on = the locked pin-screen."
+  }
+ ]
+}

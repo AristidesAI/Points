@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Points — Palette Picker</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#161616;color:#ddd;font-family:'SF Mono',ui-monospace,Menlo,monospace;display:flex;flex-direction:column;align-items:center;padding:24px;gap:18px}
+h1{font-size:15px;letter-spacing:2px;font-weight:600}
+.hint{font-size:11px;color:#888;max-width:420px;text-align:center}
+.wrap{display:flex;gap:28px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+/* preview phone */
+.phone{width:330px;height:716px;border:4px solid #000;background:var(--bg);display:flex;flex-direction:column;transition:background .2s;flex:none}
+.vp{width:100%;aspect-ratio:3/4;background:#000;position:relative;overflow:hidden}
+.pins{position:absolute;inset:0;background-image:radial-gradient(circle,var(--pin) 1.2px,transparent 1.7px);background-size:10px 10px;animation:p 3s ease-in-out infinite;-webkit-mask-image:radial-gradient(ellipse 44% 48% at 50% 44%,#000 40%,transparent 74%);mask-image:radial-gradient(ellipse 44% 48% at 50% 44%,#000 40%,transparent 74%)}
+@keyframes p{50%{background-size:11px 11px}}
+.menu{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:6px;align-items:center}
+.cbtn{width:34px;height:34px;border-radius:50%;background:color-mix(in srgb,var(--panel) 82%,transparent);border:1px solid var(--line);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:13px}
+.cbtn.on{border-color:var(--accent);color:var(--accent)}
+.sep{height:1px;background:var(--line);width:100%}
+.bar{flex:1;background:var(--bg);display:flex}
+.sl{flex:1;display:flex;flex-direction:column;align-items:center;padding:12px 0 14px;border-right:1px solid color-mix(in srgb,var(--line) 45%,transparent)}
+.sl:last-child{border-right:0}
+.sl .val{font-size:10px;color:var(--text);height:16px}
+.sl .track{flex:1;width:2px;background:var(--line);position:relative;margin:8px 0}
+.sl .hnd{position:absolute;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;border:2px solid var(--text);background:var(--bg)}
+.sl:nth-child(1) .hnd{top:32%}.sl:nth-child(2) .hnd{top:55%}.sl:nth-child(3) .hnd{top:44%}
+.sl:nth-child(4) .hnd{top:70%}.sl:nth-child(5) .hnd{top:25%}.sl:nth-child(6) .hnd{top:60%}
+.sl .lb{font-size:8px;letter-spacing:1px;color:var(--t2);writing-mode:vertical-rl;transform:rotate(180deg);height:58px;text-align:center}
+.sl.hot .hnd{border-color:var(--accent)}
+.sl.hot .val{color:var(--accent)}
+/* palette cards */
+.list{display:grid;grid-template-columns:repeat(2,190px);gap:10px}
+.card{border:1px solid #333;background:#1d1d1d;padding:10px;cursor:pointer;display:flex;flex-direction:column;gap:7px}
+.card.sel{border-color:#fff}
+.card .nm{font-size:11px;letter-spacing:1px}
+.sw{display:flex;height:26px}
+.sw i{flex:1}
+.hex{font-size:8px;color:#777;line-height:1.6}
+.code{width:100%;max-width:900px;background:#1d1d1d;border:1px solid #333;padding:14px;font-size:11px;line-height:1.7;color:#9fd8a5;white-space:pre;overflow-x:auto}
+</style>
+</head>
+<body>
+<h1>POINTS — THEME PALETTES</h1>
+<div class="hint">Tap a palette — the phone preview + Theme.swift snippet update. Pick one; I wire it into Theme.swift. Values: bg / panel / line / text / text2 / accent / pin.</div>
+<div class="wrap">
+  <div class="phone" id="ph">
+    <div class="vp">
+      <div class="pins"></div>
+      <div class="menu">
+        <div class="cbtn">≡</div><div class="cbtn on">◐</div><div class="cbtn">⟳</div><div class="cbtn">▦</div>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="bar">
+      <div class="sl hot"><span class="val">1.40</span><div class="track"><div class="hnd"></div></div><span class="lb">DEPTH</span></div>
+      <div class="sl"><span class="val">0.62</span><div class="track"><div class="hnd"></div></div><span class="lb">SIZE</span></div>
+      <div class="sl"><span class="val">0.35</span><div class="track"><div class="hnd"></div></div><span class="lb">MORPH</span></div>
+      <div class="sl"><span class="val">INK</span><div class="track"><div class="hnd"></div></div><span class="lb">PALETTE</span></div>
+      <div class="sl"><span class="val">0.10</span><div class="track"><div class="hnd"></div></div><span class="lb">SCATTER</span></div>
+      <div class="sl"><span class="val">0.35</span><div class="track"><div class="hnd"></div></div><span class="lb">BLOOM</span></div>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="list" id="list"></div>
+  </div>
+</div>
+<div class="code" id="code"></div>
+<script>
+const palettes = [
+ {n:"01 WORKBENCH (current)", bg:"#474646",panel:"#3A3939",line:"#5C5B5B",text:"#EDEDED",t2:"#A8A8A8",accent:"#35E0FF",pin:"#35E0FF"},
+ {n:"02 SIGNAL (near-black)", bg:"#0E0E0E",panel:"#181818",line:"#2E2E2E",text:"#F2F2F2",t2:"#8A8A8A",accent:"#FFFFFF",pin:"#DDDDDD"},
+ {n:"03 GRAPHITE CYAN", bg:"#1C1D1F",panel:"#26272A",line:"#3A3C40",text:"#E9EDEF",t2:"#8E959B",accent:"#3FE3FF",pin:"#5CE8FF"},
+ {n:"04 CARBON AMBER", bg:"#151412",panel:"#201E1A",line:"#3B3730",text:"#F0EBE2",t2:"#98917F",accent:"#FFB020",pin:"#FFC862"},
+ {n:"05 SLATE MAGENTA", bg:"#191A21",panel:"#22242E",line:"#383B49",text:"#EAECF4",t2:"#8F94A8",accent:"#FF4FC3",pin:"#FF7AD1"},
+ {n:"06 PHOSPHOR", bg:"#0D1210",panel:"#151D19",line:"#2A3830",text:"#E4F2E9",t2:"#7FA18C",accent:"#3BFF8E",pin:"#6DFFAC"},
+ {n:"07 COBALT ICE", bg:"#12161E",panel:"#1A2029",line:"#2E3745",text:"#E8EEF7",t2:"#8794A8",accent:"#5B8CFF",pin:"#84A9FF"},
+ {n:"08 MONO CHROME", bg:"#232323",panel:"#2C2C2C",line:"#454545",text:"#F0F0F0",t2:"#9A9A9A",accent:"#E8E8E8",pin:"#CFCFCF"},
+ {n:"09 DUST ROSE", bg:"#1B1618",panel:"#251E21",line:"#403439",text:"#F2E9EC",t2:"#A08B93",accent:"#FF6E7F",pin:"#FF97A4"},
+ {n:"10 ACID LAB", bg:"#141607",panel:"#1D2010",line:"#353B1E",text:"#EFF3DC",t2:"#9AA37A",accent:"#D8FF3E",pin:"#E4FF6E"},
+ {n:"11 EMBER (warm gray)", bg:"#2B2725",panel:"#353029",line:"#4E463D",text:"#F1EBE4",t2:"#A79C8E",accent:"#FF7A45",pin:"#FF9A6E"},
+ {n:"12 VIOLET HOUR", bg:"#171522",panel:"#201D2E",line:"#363146",text:"#ECE9F6",t2:"#948DAD",accent:"#A87FFF",pin:"#C3A6FF"},
+];
+const list=document.getElementById('list'),code=document.getElementById('code'),root=document.documentElement;
+function apply(p,el){
+  ['bg','panel','line','text','t2','accent','pin'].forEach(k=>root.style.setProperty('--'+k,p[k]));
+  document.querySelectorAll('.card').forEach(c=>c.classList.remove('sel'));
+  el&&el.classList.add('sel');
+  code.textContent=
+`// ${p.n}
+enum Theme {
+    static let bg     = Color(hex: 0x${p.bg.slice(1)})
+    static let panel  = Color(hex: 0x${p.panel.slice(1)})
+    static let line   = Color(hex: 0x${p.line.slice(1)})
+    static let text   = Color(hex: 0x${p.text.slice(1)})
+    static let text2  = Color(hex: 0x${p.t2.slice(1)})
+    static let accent = Color(hex: 0x${p.accent.slice(1)})
+    static let pin    = Color(hex: 0x${p.pin.slice(1)})   // neutral pin tint (color off)
+}`;
+}
+palettes.forEach((p,i)=>{
+  const c=document.createElement('div');c.className='card';
+  c.innerHTML=`<span class="nm">${p.n}</span><div class="sw">${['bg','panel','line','text','accent','pin'].map(k=>`<i style="background:${p[k]}"></i>`).join('')}</div><span class="hex">${p.bg} ${p.panel} ${p.line}<br>${p.text} ${p.accent} ${p.pin}</span>`;
+  c.onclick=()=>apply(p,c);
+  list.appendChild(c);
+  if(i===1)apply(p,c);   // default: SIGNAL — closest to the Signal Loss flat look
+});
+</script>
+</body>
+</html>

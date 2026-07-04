@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Points — UI Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============ THEME TOKENS (Plans/05 §1 Workbench Gray) ============ */
+:root{
+  --bg:#474646; --panel:#3a3939; --canvas:#404040; --raise:#525151;
+  --text:#ededed; --text2:#a8a8a8; --line:#5c5b5b;
+  --accent:#35e0ff; --danger:#ff453a; --stage:#000;
+  --f-source:#e06c60; --f-grid:#e0995f; --f-shape:#c3d05e; --f-move:#6fce7d;
+  --f-color:#d86fc0; --f-signal:#cfcfcf; --f-body:#5fd0cd; --f-time:#9d86e8;
+  --f-stage:#6f9fdd; --f-tools:#909090;
+}
+html[data-theme="light"]{
+  --bg:#bcbcbc; --panel:#c9c9c9; --canvas:#b4b4b4; --raise:#d4d4d4;
+  --text:#1e1e1e; --text2:#4a4a4a; --line:#8f8f8f;
+}
+html[data-font="inter"] body{font-family:'Inter',-apple-system,'Helvetica Neue',Arial,sans-serif}
+html[data-font="grotesk"] body{font-family:'Space Grotesk','Inter',Arial,sans-serif}
+html[data-font="archivo"] body{font-family:'Archivo','Inter',Arial,sans-serif}
+
+*{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+body{background:#222;color:var(--text);font-size:14px;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px;font-variant-numeric:tabular-nums}
+
+/* ============ MOCKUP CHROME (not part of the app) ============ */
+.mock-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;justify-content:center;align-items:center}
+.mock-bar .grp{display:flex;gap:4px;background:#333;border-radius:8px;padding:4px}
+.mock-bar button{background:transparent;color:#bbb;border:0;padding:6px 12px;border-radius:6px;font:inherit;font-size:12px;cursor:pointer}
+.mock-bar button.on{background:#555;color:#fff}
+.hint{color:#888;font-size:11px;margin-bottom:14px;text-align:center;max-width:420px}
+
+/* ============ PHONE FRAME ============ */
+.phone{width:393px;height:852px;background:var(--bg);border-radius:44px;border:6px solid #111;overflow:hidden;position:relative;display:flex;flex-direction:column;transition:background .25s}
+.screen{flex:1;display:none;flex-direction:column;overflow:hidden}
+.screen.on{display:flex}
+
+/* ============ SHARED ============ */
+.pill{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:999px;padding:6px 12px;font-size:11px;font-weight:600;letter-spacing:.4px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+h1,h2,h3{font-weight:600}
+
+/* ============ BROWSER ============ */
+.br-top{display:flex;justify-content:space-between;align-items:center;padding:54px 20px 12px}
+.br-top .mark{font-size:20px;font-weight:700;letter-spacing:1.5px}
+.br-top .gear{color:var(--text2);font-size:16px}
+.shelf-label{padding:6px 20px;font-size:11px;font-weight:600;letter-spacing:1.2px;color:var(--text2)}
+.shelf{display:flex;gap:10px;overflow-x:auto;padding:4px 20px 12px;scrollbar-width:none}
+.tcard{flex:0 0 108px;height:108px;border-radius:14px;background:var(--panel);border:1px solid var(--line);position:relative;overflow:hidden}
+.tcard .tier{position:absolute;top:6px;left:6px;font-size:8px;font-weight:700;letter-spacing:.8px;background:rgba(0,0,0,.45);color:#fff;border-radius:5px;padding:2px 6px}
+.tcard .nm{position:absolute;bottom:6px;left:8px;font-size:10px;font-weight:600;color:#fff;text-shadow:0 1px 3px #000}
+.tcard .viz{position:absolute;inset:0;background:#000}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:8px 20px 24px;overflow-y:auto}
+.pcard{aspect-ratio:1;border-radius:16px;background:var(--panel);border:1px solid var(--line);position:relative;overflow:hidden}
+.pcard .viz{position:absolute;inset:0;background:#000}
+.pcard.new{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;color:var(--text2)}
+.pcard.new .plus{font-size:34px;font-weight:300;color:var(--accent)}
+.pcard .meta{position:absolute;left:0;right:0;bottom:0;padding:8px 10px;background:linear-gradient(transparent,rgba(0,0,0,.75));color:#fff}
+.pcard .meta .n{font-size:12px;font-weight:600}
+.pcard .meta .t{font-size:9px;opacity:.7}
+
+/* pin-grid illusion */
+.pins{position:absolute;inset:0;background-image:radial-gradient(circle at center,var(--pc,#35e0ff) 1.1px,transparent 1.6px);background-size:9px 9px;opacity:.85;animation:puls 3.2s ease-in-out infinite}
+.pins.mask{-webkit-mask-image:radial-gradient(ellipse 42% 46% at 50% 42%,#000 38%,transparent 72%);mask-image:radial-gradient(ellipse 42% 46% at 50% 42%,#000 38%,transparent 72%)}
+@keyframes puls{0%,100%{background-size:9px 9px;opacity:.8}50%{background-size:10px 10px;opacity:1}}
+
+/* ============ PLAY ============ */
+.viewport{width:393px;height:524px;background:var(--stage);position:relative;flex:none}
+.vp-pills{position:absolute;top:52px;left:12px;display:flex;gap:6px}
+.vp-pills .pill{background:rgba(0,0,0,.55);border-color:rgba(255,255,255,.14);color:#ddd;font-size:9px;padding:4px 9px}
+.rec .dot{background:var(--danger);animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
+.ndi .dot{background:#3ad06f}
+/* accordion */
+.acc{position:absolute;top:52px;right:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.acc .head{display:flex;gap:5px;align-items:center;cursor:pointer;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.14)}
+.acc .item{display:none;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.14);color:#eee;cursor:pointer}
+.acc.open .item{display:block;animation:drop .18s ease-out}
+@keyframes drop{from{transform:translateY(-6px);opacity:0}}
+.acc .item.active{color:var(--accent);border-color:var(--accent)}
+/* transport strip */
+.strip{height:46px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--panel);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.strip .patchbtn{background:var(--accent);color:#00252c;font-weight:700;border:0;border-radius:9px;padding:8px 14px;font-size:12px;letter-spacing:.8px;cursor:pointer}
+.strip .src{font-size:10px}
+.strip .bpm{margin-left:auto;font-size:11px;color:var(--text2)}
+.strip .dots{display:flex;gap:4px}
+.strip .dots .dot{width:5px;height:5px;background:var(--line)}
+.strip .dots .dot.on{background:var(--accent)}
+/* deck */
+.deck{flex:1;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:10px;padding:12px 14px 26px;background:var(--bg)}
+.ctl{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;position:relative}
+.ctl .lb{font-size:8px;font-weight:600;letter-spacing:.6px;color:var(--text2)}
+.ctl .val{font-size:10px;color:var(--text)}
+.knob{width:40px;height:40px;border-radius:50%;border:2px solid var(--line);position:relative;background:var(--raise)}
+.knob::after{content:"";position:absolute;top:3px;left:50%;width:2px;height:11px;background:var(--accent);transform-origin:bottom;transform:translateX(-50%) rotate(35deg)}
+.fader{width:8px;height:52px;background:var(--raise);border-radius:4px;position:relative}
+.fader::after{content:"";position:absolute;left:-7px;top:30%;width:22px;height:11px;border-radius:5px;background:var(--accent)}
+.padc{width:46px;height:34px;border-radius:9px;background:var(--raise);border:1px solid var(--line)}
+.padc.lit{background:var(--accent);box-shadow:0 0 14px color-mix(in srgb,var(--accent) 55%,transparent)}
+.xy{grid-column:span 2;grid-row:span 1}
+.xy .surf{width:100%;height:56px;border-radius:8px;background:var(--raise);position:relative;margin:0 10px}
+.xy .surf::after{content:"";position:absolute;left:62%;top:38%;width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.picker .opts{display:flex;gap:4px}
+.picker .opts span{font-size:9px;padding:3px 7px;border-radius:6px;border:1px solid var(--line);color:var(--text2)}
+.picker .opts span.on{background:var(--accent);color:#00252c;border-color:var(--accent);font-weight:700}
+
+/* ============ PATCH ============ */
+.patch{position:relative;flex:1;overflow:hidden;background:var(--canvas)}
+.patch .video{position:absolute;inset:0;background:#000;opacity:var(--dim,.45)}
+.patch .video .pins{--pc:#35e0ff}
+.patch-top{position:absolute;top:0;left:0;right:0;height:88px;display:flex;align-items:flex-end;gap:8px;padding:0 12px 8px;z-index:5;background:linear-gradient(color-mix(in srgb,var(--bg) 88%,transparent),transparent)}
+.patch-top .pill{cursor:pointer}
+.patch-top .crumb{font-size:10px;color:var(--text2)}
+.minimap{position:absolute;top:96px;left:12px;width:74px;height:52px;border:1px solid var(--line);border-radius:6px;background:color-mix(in srgb,var(--panel) 80%,transparent);z-index:5}
+.minimap i{position:absolute;background:var(--text2);opacity:.7;border-radius:1px}
+.minimap .win{position:absolute;border:1px solid var(--accent);border-radius:2px;left:22%;top:18%;width:52%;height:58%;background:transparent}
+/* dim slider */
+.dimrail{position:absolute;right:8px;top:40%;height:150px;width:26px;z-index:6;display:flex;flex-direction:column;align-items:center;gap:6px}
+.dimrail .lb{font-size:7px;letter-spacing:.6px;color:var(--text2);writing-mode:vertical-rl}
+.dimrail input{writing-mode:vertical-lr;direction:rtl;width:16px;height:110px;accent-color:var(--accent)}
+/* nodes */
+.nodes{position:absolute;inset:0}
+.node{position:absolute;width:128px;border-radius:10px;border:1px solid var(--line);background:var(--panel);opacity:.42;transition:opacity .15s}
+.node.sel{opacity:1;box-shadow:0 6px 18px rgba(0,0,0,.35);border-color:var(--accent)}
+.node .hd{border-radius:9px 9px 0 0;padding:5px 9px;font-size:10px;font-weight:700;letter-spacing:.4px;color:#101010;display:flex;justify-content:space-between}
+.node .bd{padding:7px 9px;display:flex;flex-direction:column;gap:5px}
+.node .row{display:flex;align-items:center;gap:6px;font-size:9px;color:var(--text2)}
+.node .row b{color:var(--text);font-weight:500;margin-left:auto}
+.port{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--bg);flex:none}
+.p-field{background:#4fd8c6}.p-signal{background:#e8e8e8}.p-trigger{background:#ffc24d}
+.p-color{background:#e06fc8}.p-domain{background:#e0995f}.p-source{background:#e06c60}
+svg.wires{position:absolute;inset:0;pointer-events:none}
+svg.wires path{fill:none;stroke-width:1.6px;opacity:.9}
+svg.wires path.glow{stroke-width:5px;opacity:.22;animation:flow 1.6s linear infinite}
+@keyframes flow{0%,100%{opacity:.14}50%{opacity:.38}}
+/* inspector */
+.insp{position:absolute;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);border-radius:18px 18px 0 0;z-index:8;transition:transform .25s}
+.insp.collapsed{transform:translateY(calc(100% - 46px))}
+.insp .grab{width:44px;height:4px;border-radius:2px;background:var(--line);margin:7px auto 2px}
+.insp .head{display:flex;align-items:center;gap:8px;padding:4px 16px 8px}
+.insp .head .fam{width:10px;height:10px;border-radius:3px;background:var(--f-move)}
+.insp .head b{font-size:13px}
+.insp .head .scrub{margin-left:auto;font-size:9px;color:var(--text2)}
+.insp .params{padding:2px 16px 20px;display:flex;flex-direction:column;gap:11px}
+.prow{display:flex;align-items:center;gap:10px;font-size:11px}
+.prow .nm{width:78px;color:var(--text2)}
+.prow .track{flex:1;height:3px;border-radius:2px;background:var(--raise);position:relative}
+.prow .track::after{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--v,50%);background:var(--accent);border-radius:2px}
+.prow .vv{width:44px;text-align:right}
+.prow .map{font-size:8px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;color:var(--text2)}
+/* palette */
+.palette{position:absolute;left:50%;top:32%;transform:translate(-50%,-50%);width:270px;background:var(--panel);border:1px solid var(--line);border-radius:14px;z-index:9;box-shadow:0 12px 34px rgba(0,0,0,.45);display:none}
+.palette.open{display:block}
+.palette .search{margin:10px;padding:8px 12px;border-radius:8px;background:var(--raise);color:var(--text2);font-size:12px}
+.palette .tabs{display:flex;gap:4px;padding:0 10px;flex-wrap:wrap}
+.palette .tabs span{font-size:8px;font-weight:700;letter-spacing:.5px;padding:4px 7px;border-radius:6px;color:#101010}
+.palette ul{list-style:none;padding:8px 10px 12px;display:flex;flex-direction:column;gap:2px}
+.palette li{display:flex;gap:8px;align-items:center;font-size:12px;padding:7px 8px;border-radius:8px}
+.palette li.hov{background:var(--raise)}
+.palette li i{width:9px;height:9px;border-radius:3px}
+
+/* ============ IMPORT ============ */
+.imp{flex:1;display:flex;flex-direction:column;background:var(--bg);padding:54px 18px 24px;gap:14px;overflow-y:auto}
+.imp h2{font-size:17px}
+.imp .prev{height:180px;border-radius:14px;background:#000;position:relative;overflow:hidden}
+.imp .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.imp .seg span{flex:1;text-align:center;padding:9px;font-size:12px;color:var(--text2)}
+.imp .seg span.on{background:var(--accent);color:#00252c;font-weight:700}
+.imp .lbl{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--text2)}
+.imp .est{font-size:11px;color:var(--text2);line-height:1.5}
+.imp .start{margin-top:auto;background:var(--accent);border:0;color:#00252c;font-weight:700;font-size:14px;border-radius:12px;padding:14px;cursor:pointer}
+.imp .bake{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.imp .bake .bar{height:5px;border-radius:3px;background:var(--raise);position:relative;overflow:hidden}
+.imp .bake .bar::after{content:"";position:absolute;left:0;top:0;bottom:0;width:36%;background:var(--accent)}
+.imp .bake .row{display:flex;justify-content:space-between;font-size:11px;color:var(--text2)}
+.imp .thumbs{display:flex;gap:4px}
+.imp .thumbs i{flex:1;height:30px;border-radius:4px;background:#000;position:relative;overflow:hidden}
+.imp .di{align-self:center;margin-top:2px;background:#000;border-radius:20px;padding:7px 16px;display:flex;gap:9px;align-items:center;font-size:10px;color:#ddd}
+.ring{width:16px;height:16px;border-radius:50%;background:conic-gradient(var(--accent) 0 36%,#333 36% 100%)}
+
+/* family strip */
+.famstrip{display:flex;gap:6px;padding:12px 20px;flex-wrap:wrap}
+.famstrip span{font-size:8px;font-weight:700;letter-spacing:.5px;padding:4px 8px;border-radius:6px;color:#101010}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <div class="grp" id="tabs">
+    <button data-s="browser" class="on">BROWSER</button><button data-s="play">PLAY</button>
+    <button data-s="patch">PATCH</button><button data-s="import">IMPORT</button>
+  </div>
+  <div class="grp" id="themes"><button data-t="dark" class="on">Dark</button><button data-t="light">Light</button></div>
+  <div class="grp" id="fonts"><button data-f="inter" class="on">Inter</button><button data-f="grotesk">Grotesk</button><button data-f="archivo">Archivo</button></div>
+</div>
+<div class="hint">Points UI mockup — Plans/05 §5. Tap the accordion pill, PATCH nodes, the inspector grabber, dim slider, deck pads. Iterate here; nothing is final.</div>
+
+<div class="phone" id="phone">
+
+  <!-- ============ BROWSER ============ -->
+  <div class="screen on" data-s="browser">
+    <div class="br-top"><span class="mark">POINTS</span><span class="gear">⚙︎</span></div>
+    <div class="shelf-label">TEMPLATES</div>
+    <div class="shelf">
+      <div class="tcard"><div class="viz"><div class="pins mask" style="--pc:#6fce7d"></div></div><span class="tier">BASICS</span><span class="nm">Pure Pins</span></div>
+      <div class="tcard"><div class="viz"><div class="pins mask" style="--pc:#e0995f"></div></div><span class="tier">MOTION</span><span class="nm">Comet Trails</span></div>
+      <div class="tcard"><div class="viz"><div class="pins mask" style="--pc:#5fd0cd"></div></div><span class="tier">BODY</span><span class="nm">Arm Fire</span></div>
+      <div class="tcard"><div class="viz"><div class="pins mask" style="--pc:#d86fc0"></div></div><span class="tier">MUSIC</span><span class="nm">Beat Strobe</span></div>
+      <div class="tcard"><div class="viz"><div class="pins mask" style="--pc:#9d86e8"></div></div><span class="tier">WILD</span><span class="nm">Kick Shatter</span></div>
+    </div>
+    <div class="shelf-label">PROJECTS</div>
+    <div class="grid">
+      <div class="pcard new"><span class="plus">+</span><span style="font-size:11px">New Project</span></div>
+      <div class="pcard"><div class="viz"><div class="pins mask"></div></div><div class="meta"><div class="n">Face Study 3</div><div class="t">edited 2h ago · 30k pins</div></div></div>
+      <div class="pcard"><div class="viz"><div class="pins mask" style="--pc:#ffc24d"></div></div><div class="meta"><div class="n">My Beat Strobe</div><div class="t">edited yesterday</div></div></div>
+      <div class="pcard"><div class="viz"><div class="pins" style="--pc:#6f9fdd"></div></div><div class="meta"><div class="n">Imported: skate.mov</div><div class="t">media · 214 MB</div></div></div>
+    </div>
+  </div>
+
+  <!-- ============ PLAY ============ -->
+  <div class="screen" data-s="play">
+    <div class="viewport">
+      <div class="pins mask"></div>
+      <div class="vp-pills">
+        <span class="pill">60 · 30k</span>
+        <span class="pill rec"><span class="dot"></span> 02:41</span>
+        <span class="pill ndi"><span class="dot"></span> NDI 2</span>
+      </div>
+      <div class="acc" id="acc">
+        <span class="pill head">● ● ●</span>
+        <span class="pill item active">NDI ON</span>
+        <span class="pill item">● RECORD</span>
+        <span class="pill item">SWITCH CAM</span>
+        <span class="pill item">30 · 60 · 120</span>
+        <span class="pill item">SETTINGS</span>
+      </div>
+    </div>
+    <div class="strip">
+      <button class="patchbtn">PATCH</button>
+      <span class="pill src">FRONT DEPTH</span>
+      <span class="bpm">124.0 · TAP</span>
+      <span class="dots"><span class="dot on"></span><span class="dot"></span></span>
+    </div>
+    <div class="deck">
+      <div class="ctl"><div class="knob"></div><span class="lb">DEPTH GAIN</span><span class="val">1.40</span></div>
+      <div class="ctl"><div class="knob" style="transform:rotate(40deg)"></div><span class="lb">PIN SIZE</span><span class="val">0.62</span></div>
+      <div class="ctl"><div class="fader"></div><span class="lb">SHAPE MORPH</span><span class="val">cube→sphere</span></div>
+      <div class="ctl picker"><div class="opts"><span class="on">INK</span><span>NEON</span><span>HEAT</span></div><span class="lb">PALETTE</span></div>
+      <div class="ctl xy"><div class="surf"></div><span class="lb">SCATTER X/Y</span></div>
+      <div class="ctl"><div class="padc lit"></div><span class="lb">STROBE</span><span class="val">latched</span></div>
+      <div class="ctl"><div class="padc"></div><span class="lb">RESEED</span><span class="val">tap</span></div>
+    </div>
+  </div>
+
+  <!-- ============ PATCH ============ -->
+  <div class="screen" data-s="patch">
+    <div class="patch" id="patchsurf">
+      <div class="video"><div class="pins mask"></div></div>
+      <div class="patch-top">
+        <span class="pill">◂ PLAY</span><span class="crumb">root</span>
+        <span class="pill" style="margin-left:auto">↩︎</span><span class="pill">↪︎</span><span class="pill" id="palbtn">＋</span>
+      </div>
+      <div class="minimap"><i style="left:12%;top:24%;width:12px;height:5px"></i><i style="left:34%;top:40%;width:12px;height:5px"></i><i style="left:56%;top:28%;width:12px;height:5px"></i><i style="left:74%;top:52%;width:12px;height:5px"></i><div class="win"></div></div>
+      <div class="dimrail"><span class="lb">OUTPUT</span><input type="range" min="0" max="100" value="45" id="dim"></div>
+
+      <svg class="wires" width="393" height="700">
+        <path class="glow" d="M140,208 C180,208 165,262 205,262" stroke="#e06c60"/>
+        <path d="M140,208 C180,208 165,262 205,262" stroke="#e06c60"/>
+        <path class="glow" d="M138,320 C185,320 170,286 205,286" stroke="#4fd8c6"/>
+        <path d="M138,320 C185,320 170,286 205,286" stroke="#4fd8c6"/>
+        <path class="glow" d="M120,455 C220,455 160,310 205,310" stroke="#ffc24d"/>
+        <path d="M120,455 C220,455 160,310 205,310" stroke="#ffc24d"/>
+        <path class="glow" d="M333,286 C360,286 350,380 300,380" stroke="#4fd8c6"/>
+        <path d="M333,286 C360,286 350,380 300,380" stroke="#4fd8c6"/>
+      </svg>
+
+      <div class="nodes">
+        <div class="node" style="left:16px;top:170px"><div class="hd" style="background:var(--f-source)">Source <span>◉</span></div>
+          <div class="bd"><div class="row"><span class="port p-source"></span>front depth <b>LIVE</b></div></div></div>
+        <div class="node" style="left:14px;top:288px"><div class="hd" style="background:var(--f-source)">Depth</div>
+          <div class="bd"><div class="row"><span class="port p-field"></span>field <b>0.3–2.5m</b></div></div></div>
+        <div class="node" style="left:6px;top:410px"><div class="hd" style="background:var(--f-signal)">Beat Trigger</div>
+          <div class="bd"><div class="row"><span class="port p-trigger"></span>low <b>▮▯▯</b></div><div class="row"><span class="port p-signal"></span>bass <b>0.71</b></div></div></div>
+        <div class="node sel" style="left:205px;top:236px"><div class="hd" style="background:var(--f-move)">Spring</div>
+          <div class="bd">
+            <div class="row"><span class="port p-field"></span>target</div>
+            <div class="row"><span class="port p-trigger"></span>kick</div>
+            <div class="row"><span class="port p-field"></span>out <b>→</b></div>
+          </div></div>
+        <div class="node" style="left:236px;top:360px"><div class="hd" style="background:var(--f-stage)">Output</div>
+          <div class="bd"><div class="row"><span class="port p-field"></span>z drive <b>1.4×</b></div></div></div>
+        <div class="node" style="left:246px;top:120px"><div class="hd" style="background:var(--f-grid)">Domain</div>
+          <div class="bd"><div class="row"><span class="port p-domain"></span>rect→hex <b>0.0</b></div><div class="row"><span class="port p-signal"></span>count <b>30k</b></div></div></div>
+      </div>
+
+      <div class="palette" id="palette">
+        <div class="search">search 122 nodes…</div>
+        <div class="tabs">
+          <span style="background:var(--f-source)">SOURCE</span><span style="background:var(--f-grid)">GRID</span>
+          <span style="background:var(--f-shape)">SHAPE</span><span style="background:var(--f-move)">MOVE</span>
+          <span style="background:var(--f-color)">COLOR</span><span style="background:var(--f-signal)">SIGNAL</span>
+          <span style="background:var(--f-body)">BODY</span><span style="background:var(--f-time)">TIME</span>
+          <span style="background:var(--f-stage)">STAGE</span><span style="background:var(--f-tools)">TOOLS</span>
+        </div>
+        <ul>
+          <li class="hov"><i style="background:var(--f-move)"></i>Spring <span style="margin-left:auto;font-size:9px;color:var(--text2)">MOVE</span></li>
+          <li><i style="background:var(--f-move)"></i>Trail</li>
+          <li><i style="background:var(--f-signal)"></i>LFO</li>
+          <li><i style="background:var(--f-body)"></i>Hand Gesture</li>
+        </ul>
+      </div>
+
+      <div class="insp collapsed" id="insp">
+        <div class="grab"></div>
+        <div class="head"><span class="fam"></span><b>Spring</b><span style="font-size:10px;color:var(--text2)">MOVE · 4f/pin</span><span class="scrub">← drag anywhere to scrub →</span></div>
+        <div class="params">
+          <div class="prow"><span class="nm">stiffness</span><div class="track" style="--v:64%"></div><span class="vv">0.64</span><span class="map">MAP</span></div>
+          <div class="prow"><span class="nm">damping</span><div class="track" style="--v:38%"></div><span class="vv">0.38</span><span class="map">MAP</span></div>
+          <div class="prow"><span class="nm">kick gain</span><div class="track" style="--v:80%"></div><span class="vv">0.80</span><span class="map">MIDI 21</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ IMPORT ============ -->
+  <div class="screen" data-s="import">
+    <div class="imp">
+      <h2>Import — skate.mov</h2>
+      <div class="prev"><div class="pins" style="--pc:#6f9fdd"></div></div>
+      <span class="lbl">SCENE</span>
+      <div class="seg"><span class="on">INDOOR ≤20m</span><span>OUTDOOR ≤80m</span></div>
+      <span class="lbl">QUALITY</span>
+      <div class="seg"><span class="on">BEST · video-native</span><span>FAST · per-frame</span></div>
+      <div class="est">1:24 clip · ~2 min bake · ~85 MB in project<br>Depth is computed once on-device, then replays forever.</div>
+      <div class="bake">
+        <div class="row"><b style="color:var(--text)">Baking depth…</b><span>36% · 1:12 left</span></div>
+        <div class="bar"></div>
+        <div class="thumbs"><i><div class="pins"></div></i><i><div class="pins"></div></i><i><div class="pins"></div></i><i style="opacity:.35"></i><i style="opacity:.2"></i><i style="opacity:.1"></i></div>
+        <div class="row"><span>Keeps running if you leave the app</span><span>28 fps</span></div>
+      </div>
+      <div class="di"><span class="ring"></span> Dynamic Island — live ring while baking</div>
+      <button class="start">START BAKE</button>
+    </div>
+  </div>
+</div>
+
+<div class="famstrip">
+  <span style="background:var(--f-source)">SOURCE</span><span style="background:var(--f-grid)">GRID</span>
+  <span style="background:var(--f-shape)">SHAPE</span><span style="background:var(--f-move)">MOVE</span>
+  <span style="background:var(--f-color)">COLOR</span><span style="background:var(--f-signal)">SIGNAL</span>
+  <span style="background:var(--f-body)">BODY</span><span style="background:var(--f-time)">TIME</span>
+  <span style="background:var(--f-stage)">STAGE</span><span style="background:var(--f-tools)">TOOLS</span>
+</div>
+<div class="hint">Family palette — check distinction with a color-blindness simulator before locking.</div>
+
+<script>
+const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
+q('#tabs').onclick=e=>{if(!e.target.dataset.s)return;qa('#tabs button').forEach(b=>b.classList.toggle('on',b===e.target));qa('.screen').forEach(s=>s.classList.toggle('on',s.dataset.s===e.target.dataset.s));};
+q('#themes').onclick=e=>{if(!e.target.dataset.t)return;qa('#themes button').forEach(b=>b.classList.toggle('on',b===e.target));document.documentElement.dataset.theme=e.target.dataset.t;};
+q('#fonts').onclick=e=>{if(!e.target.dataset.f)return;qa('#fonts button').forEach(b=>b.classList.toggle('on',b===e.target));document.documentElement.dataset.font=e.target.dataset.f;};
+document.documentElement.dataset.font='inter';
+q('#acc .head').onclick=()=>q('#acc').classList.toggle('open');
+q('#insp .grab').onclick=q('#insp .head').onclick=()=>q('#insp').classList.toggle('collapsed');
+q('#palbtn').onclick=()=>q('#palette').classList.toggle('open');
+q('#dim').oninput=e=>q('#patchsurf').style.setProperty('--dim',e.target.value/100);
+qa('.node').forEach(n=>n.onclick=()=>{qa('.node').forEach(m=>m.classList.remove('sel'));n.classList.add('sel');});
+qa('.padc').forEach(p=>p.onclick=()=>p.classList.toggle('lit'));
+</script>
+</body>
+</html>

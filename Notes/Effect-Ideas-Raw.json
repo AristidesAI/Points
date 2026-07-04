@@ -1,0 +1,493 @@
+[
+ {
+  "name": "Feedback Tunnel (depth-domain video feedback zoom)",
+  "builds_on": "depthFeedbackRaster (Light Paint), BackLiDARShaders.metal:1235",
+  "drivers": [
+   "touch drag on change bar -> feedback center xy",
+   "MIDI-CC -> regen gain (the resonance knob; >0.95 self-oscillates)",
+   "gyro yaw rate -> rotation per frame",
+   "audio burst -> momentary zoom-rate kick"
+  ],
+  "algorithm": "Extend the Light Paint ping-pong into a camera-pointed-at-monitor loop. One dispatch at depth res: next[p] = combine(live[p], prev.sample(affine(p))) where affine = T(c) * R(dTheta) * S(1/zoom) * T(-c) around performable center c. combine keeps min-Z with generation push: if prevValid && prevZ + zPush < liveZ -> (prevZ + zPush, age+1) else (liveZ, 0). Survival dithered downstream as pow(regen, age) through the exact dust path Trails already uses in unprojectPointCloud (hash-vs-keep, cull bypass). Bilinear r32Float sampling is safe because the min-combine plus existing edgeThresh gate reject smeared edge depths. Standard parity flip + forceReset-seed-from-live branch (same discipline as metal:592-594).",
+  "state_cost": "2x rg32Float (z, age) at depth res: 786 KB back / 4.9 MB front. 1 dispatch (replaces or chains after the Light Paint slot).",
+  "params": [
+   "zoom 0.90..1.10 per frame (master)",
+   "regen 0..0.99",
+   "spin -3..3 deg/frame",
+   "zPush 0..0.05 m/frame",
+   "center x,y (touch)"
+  ],
+  "why": "Feedback zoom is the founding gesture of analog video synthesis; in the depth domain the copies unproject as nested 3D shells receding into a vortex the performer stands inside. Unbounded ghost generations from under 1 MB of state \u2014 the CPU/TCP era could never hold infinite regenerations resident."
+ },
+ {
+  "name": "Raster Rescan (Rutt-Etra scanline deflection)",
+  "drivers": [
+   "MIDI-CC -> lineCount sweep (the signature move: 192 -> 8 lines on a filter sweep)",
+   "audio bass -> Z-deflection gain",
+   "gyro roll -> scan-axis angle",
+   "drum-onset low -> interlace flip (odd/even rows swap deflection sign)"
+  ],
+  "algorithm": "Addressing mode folded into unprojectPointCloud (or one tiny pre-pass): quantize gid.y to lineCount scanlines (pitch H/lineCount); pixels off-scanline simply never atomic-append \u2014 per-point kill is free. Survivors displace unprojected Y by -gain*(refZ - z), the literal Rutt-Etra Z-to-Y deflection, with scan axis rotatable by theta (bilinear depth fetch at rotated coords). Brightness compensated by lineDensity so total luminance holds through the sweep; write |dz/dx| into the existing fxMod energy channel so silhouettes bloom like a scope beam accelerating.",
+  "state_cost": "Zero new textures (stateless readdressing); 0 extra dispatches if folded into unproject, else 1 at depth res. Point count drops with lineCount \u2014 a feature.",
+  "params": [
+   "lineCount 2..192 exponential (master)",
+   "deflectGain 0..2",
+   "scanAngle -45..45 deg",
+   "beamBloom 0..1",
+   "interlace toggle"
+  ],
+  "why": "The LiDAR depth map IS the luminance signal the original Rutt-Etra deflected, but physically true. Instantly legible as analog heritage, and dropping 95% of points on low line counts costs nothing on GPU \u2014 impossible under fixed-count TCP delivery."
+ },
+ {
+  "name": "Slit-Scan Time Slab",
+  "drivers": [
+   "touch angle on change bar -> time-gradient direction",
+   "MIDI-CC -> slab depth (delay range 0..2 s)",
+   "drum-onset mid -> stutter (delay quantized to 8-frame steps for 250 ms)",
+   "face jawOpen (front mode) -> delay amount",
+   "LFO -> slow gradient rotation for ambient"
+  ],
+  "algorithm": "texture2DArray of K depth slices at native res. Pass A (blit-class): copy cleaned depth into slice[frame % K]. Pass B (gather, feeds JBU/unproject): delay(p) = K * g(p) where g = dot(dir, p_norm) linear, |p-c| radial, or luma(p); out[p] = slab[(frame - delay) mod K][p]. Freeze mode stops Pass A so the slab becomes a scannable loop record; stutter mode posterizes delay. Different screen columns are different moments, so motion unprojects as solid helical volumes.",
+  "state_cost": "K=120 r32Float slices back: 23.6 MB; front capped K=32: 39 MB. 2 dispatches (copy + gather). Honest but comfortably resident on an iPhone Pro.",
+  "params": [
+   "slabLen 8..120 frames (master)",
+   "gradientAngle 0..360",
+   "gradientShape {linear, radial, luma}",
+   "freeze toggle",
+   "stutterQuant 1..16"
+  ],
+  "why": "Pure Zbig/slit-scan heritage: a waving arm becomes a standing helix of time. Requires tens of MB of frame history living entirely on GPU with zero readback \u2014 the definitive effect TCP constraints forbade."
+ },
+ {
+  "name": "Drumhead Resonator (per-pixel spring on Z)",
+  "drivers": [
+   "drum onsets low/mid/high -> impulses injected into far/mid/near depth bands (the scene is a 3-zone kit)",
+   "MIDI note pitch -> spring constant k (ring frequency 0.5..8 Hz)",
+   "MIDI-CC -> damping (decay 0.1..5 s)",
+   "accelerometer jerk -> whole-frame impulse (hit the phone, ring the world)"
+  ],
+  "algorithm": "One dispatch, ping-pong rg32Float (dz, v) = displacement-from-live + velocity. Per frame: a = -k*dz - c*v + coupling*laplacian4(dz) + impulse(p); v += a; dz += v; renderZ = liveZ + dz. Impulses gate by depth band (near/mid/far masks from liveZ) weighted by onset strength. The Laplacian term couples neighboring springs into a wave equation, so strikes propagate ripples across the body membrane. dz magnitude also written to fxMod energy so ringing regions glow. Standard forceReset seeds (0,0).",
+  "state_cost": "2x rg32Float at depth res: 786 KB back / 4.9 MB front. 1 dispatch (Laplacian is same-texture gathers).",
+  "params": [
+   "pitch k (master, ties to MIDI note)",
+   "damp 0.1..5 s",
+   "coupling 0..1",
+   "onsetGain per band 0..0.3 m",
+   "glowAmt 0..1"
+  ],
+  "why": "Feedback plus delay equals resonance \u2014 this is the pipeline's spring reverb. It does literally nothing until played, which is the definition of performable: kick drum hits and the whole point cloud rings and settles with real second-order physics, at the cost of one 49k-thread integrator."
+ },
+ {
+  "name": "Lissajous Rewrap (oscillographic scan-path morph)",
+  "drivers": [
+   "touch fader -> wrap 0..1 (THE move: body morphs into scope figure and back)",
+   "MIDI note -> a:b frequency ratio locked to integer/just ratios (a fifth draws a stable 3:2 figure)",
+   "audio FFT centroid -> phase drift rate (detune precesses the figure)",
+   "audio mid -> figure radius"
+  ],
+  "algorithm": "Point-domain compute in the new R3 GPU tail, one dispatch over the point buffer. Each point's stable raster identity id = row*W + col gives scan parameter t = id/N. target = center + (R*sin(2pi(a*t+pa)), R*sin(2pi(b*t+pb)), zAmp*sin(2pi(c*t+pc))); pos = mix(worldPos, target, wrap) with per-point PCG phase jitter to kill moire. RGB kept from source so the figure carries scene colors; beam-speed dimming brightness ~ 1/|d(target)/dt| exactly as a real scope trace dims on fast segments.",
+  "state_cost": "Zero state (stateless remap of the live point buffer). 1 point-domain dispatch (~200k threads).",
+  "params": [
+   "wrap 0..1 (master)",
+   "ratio a:b:c integers 1..8",
+   "R 0.2..2 m",
+   "zAmp 0..1 m",
+   "phaseDrift",
+   "beamDim 0..1"
+  ],
+  "why": "Oscillographics with 200,000 beam samples per frame: the entire audience-facing cloud collapses into a phase-locked Lissajous figure on one fader and re-inflates into the performer. Needs stable per-point identity plus a GPU point tail \u2014 exactly what the CPU/TCP era lacked."
+ },
+ {
+  "name": "Iso-Contour Slicer (depth quantizer / topographic rescan)",
+  "drivers": [
+   "20-band FFT -> per-depth-band contour width (the spectrum literally carves the scene: bass widens near slices, highs widen far)",
+   "MIDI-CC -> slice spacing 2..40 cm",
+   "LFO or CC -> scroll rate (slices sweep through the body like an MRI)",
+   "drum-onset high -> axis flip depth<->height for one bar"
+  ],
+  "algorithm": "Folds into the fxRGBModulate slot: phase = fract(depth/q + scroll*t); keep = smoothstep(w, 0, |phase-0.5|*2); write (keep, energy=onContour, bright) into the existing fxMod rgba16Float. unprojectPointCloud's existing hash-vs-keep dither kills off-contour points; survivors form glowing quantized iso-lines. Axis enum swaps the quantized field: liveZ (topographic), unprojected worldY (CT slices), or luma (front/back-camera mode). residualDim > 0 keeps a dim ghost body behind the slices instead of hard kill.",
+  "state_cost": "Zero new textures (reuses fxMod). 0-1 extra dispatches. Hard mode drops 80-95% of points \u2014 density becomes a performable axis.",
+  "params": [
+   "spacing q 0.02..0.4 m (master)",
+   "lineWidth 0.05..0.5",
+   "scrollRate -0.5..0.5 m/s",
+   "axis {z, y, luma}",
+   "glow 0..1",
+   "residualDim 0..1"
+  ],
+  "why": "Quantized-Z contouring is the scan-processor companion move to Rutt-Etra deflection. Spectrally-driven slice width makes the audio visibly sculpt the body, and massive dynamic point-count swings are free on GPU where TCP's fixed-count delivery made them untenable."
+ },
+ {
+  "name": "H-Hold Tear (sync-loss scan skew)",
+  "drivers": [
+   "gyro shake magnitude -> tear amount (physically shaking the phone breaks sync)",
+   "MIDI-CC -> sync lock 0..1 (0 = free-running chaos, 1 = locked picture)",
+   "audio bass -> row-band shear",
+   "drum onset -> one full vertical roll over a 300 ms envelope"
+  ],
+  "algorithm": "1D state buffer float2 rowPhase[H]: micro-dispatch (H threads) integrates per row: skew = skew*sync + hashNoise(y,frame)*tearAmt + bassKick*bandMask(y); vSlip += rollRate, decays toward re-lock. Addressing folds into the depth fetch: sample depth and RGB at (x + skew[y'], y') with y' = (y + vSlip) mod H; rows that wrap the seam get zPush so the roll reads as a 3D fold through the scene, not a flat glitch.",
+  "state_cost": "2x float2[H] buffers ~ 3 KB total. 1 micro-dispatch (H threads); sampling folds into existing passes. Effectively free.",
+  "params": [
+   "sync 0..1 (master)",
+   "tearAmt 0..40 px",
+   "rollRate -2..2 frames/frame",
+   "seamPush 0..0.3 m",
+   "bandFreq 1..8"
+  ],
+  "why": "A TV losing horizontal hold is the most instantly legible analog gesture in existence, and here the roll seam becomes a sculptural fold in 3D. Costs 3 KB, so it stacks under every other effect as an always-available glitch throttle tied to physically shaking the device."
+ },
+ {
+  "name": "Echo Rework: Regenerative Frame-Store Delay",
+  "builds_on": "ECHO (CPU Seam B, ContentView.swift:3134-3162) + FilterEngine echo (PointCloudFilterEngine.swift:169) \u2014 unifies and replaces both",
+  "drivers": [
+   "tap-tempo on change bar / MIDI clock -> stride (echoes lock to the beat)",
+   "MIDI-CC -> regen 0..0.98",
+   "audio bass -> zPush breathing",
+   "gyro attitude captured per slice -> ghosts replay old phone poses"
+  ],
+  "algorithm": "Delete the CPU ring and Seam-B merge. GPU ring of K=8 half-res slices {r32Float depth + rgba8Unorm color + captured attitude}. Every stride frames, write the CURRENT COMPOSITE (live + ghosts) into the head slice \u2014 regenerative feedback (echoes-of-echoes at gain^n), not a tape loop. unprojectPointCloud gains a ghost phase: one dispatch over K*sliceRes appends ghosts into the SAME atomic point ring with per-echo compound transform: z += k*zPush, scale s^k about scene centroid, rotate k*dTheta, hue-rotate k*dHue via fxMod, survival dithered by regen^k. Total output stays bounded by the existing 307,200 cap \u2014 ghosts compete with live for budget like channels on a mix bus, replacing the fixed /3 decimation.",
+  "state_cost": "8 slices at 128x96, 8 B/px: ~786 KB + 8 poses. +1 copy dispatch + ghost-append dispatch (~98k threads worst case). Replaces ~52 MB CPU ring and O(N*count) per-frame merge.",
+  "params": [
+   "stride 1..30 frames tap-tempo (master)",
+   "regen 0..0.98",
+   "zPush 0..0.3 m",
+   "scalePerEcho 0.85..1.1",
+   "spinPerEcho -5..5 deg",
+   "huePerEcho 0..60 deg"
+  ],
+  "why": "Turns a count-inflating CPU array merge into a bounded GPU frame-store delay with true regeneration. Compound per-echo rotation/scale/hue is the video-feedback signature \u2014 spiraling beat-locked ghost tunnels \u2014 that the rigid Z-only push could never produce."
+ },
+ {
+  "name": "Trails Rework: Phosphor Persistence with True Motion Vectors",
+  "builds_on": "trailDepthRaster (BackLiDARShaders.metal:1134-1218)",
+  "drivers": [
+   "MIDI-CC -> slow persistence tau 0.2..8 s",
+   "audio high band -> fast decay tau (trails crackle on hi-hats)",
+   "drum onset -> phosphor FLASH (slowE := max(slowE, onset) scene-wide, like overdriving a P7 scope)",
+   "gyro pan speed -> spread"
+  ],
+  "algorithm": "Add one shared flow pass before trails: 3x3 Lucas-Kanade-lite on the depth raster (spatial grads + temporal dt from the EMA state already resident) -> rg16Float flow ping-pong, also consumed by the Velocity rework. Trail state rgba32Float becomes (heldZ, fastE, slowE, packedFlow): body pixels set fastE=slowE=1 and latch flow; vacated pixels decay fastE *= exp(-1/(tauF*60)), slowE *= exp(-1/(tauS*60)). keepProb = slowE (replaces age/frames); dust offset direction = latched TRUE flow vector \u2014 deletes the ageGradient + biasX/biasY hack; recede runs along the real 3D velocity (flow -> sensor xy, dz/dt -> z), not camera-Z only. fxMod hue = mix(hueHot, huePersist, 1 - fastE/max(slowE,eps)): fresh trail white-hot, aged trail phosphor-green, both user-settable.",
+  "state_cost": "Same 2x rgba32Float ping-pong + offset tex as today, +2x rg16Float flow (196 KB back). +1 shared dispatch (flow), amortized with Velocity.",
+  "params": [
+   "tauSlow 0.2..8 s (master)",
+   "tauFast 0.05..0.5 s",
+   "spread 0..2",
+   "hueHot / huePersist",
+   "flashGain 0..1",
+   "recede3D 0..1"
+  ],
+  "why": "Dual-time-constant decay is literally how CRT phosphor behaves and reads as analog instantly. True motion vectors finally make fast movers shed comet trails along their actual path, fixing the stated 1-frame-thin-shell and manual-bias limitations in one shared pass."
+ },
+ {
+  "name": "Velocity Rework: Vectorscope Smear (Z-mod becomes real displacement)",
+  "builds_on": "fxRGBModulate (BackLiDARShaders.metal:1359-1425)",
+  "drivers": [
+   "audio burst -> momentary smearLen x4 (transients whip streaks out)",
+   "MIDI-CC -> velGain and smearLen",
+   "device accel -> global velocity bias (whip the phone, smear the whole scene)",
+   "drum-onset low -> freeze flow field 200 ms (motion echo)"
+  ],
+  "algorithm": "Consume the shared flow texture (Trails rework) + dz from the existing age state: full 3D per-pixel velocity v = (flow.xy, dz)/dt \u2014 lateral motion finally visible. fxRGBModulate writes energy = clamp(|v|*velGain, 0, 1) and hueAngle = atan2(flow.y, flow.x). In unproject: displace each point along v by smearLen*energy, emitting at a hash-jittered fraction f in [0,1] along the streak so the population statistically fills its own motion smear at zero count cost \u2014 geometric stretch, not tint. Color = vectorscope mapping: hue from flow angle, saturation from speed. Expose the hardcoded velGain/settleFrames/maxAge (PointCloudCleanup.swift:174-176) as live params.",
+  "state_cost": "Reuses existing rg32Float age ping-pong + shared rg16Float flow pair. 0 extra dispatches beyond the shared flow pass.",
+  "params": [
+   "smearLen 0..0.5 m (master)",
+   "velGain 5..60",
+   "jitterFrac 0..1",
+   "settleFrames 2..30",
+   "maxAge 10..120",
+   "colorMode {vectorscope, flat, spectrum}"
+  ],
+  "why": "Fixes both documented limits in one move: 'stretch' finally displaces geometry like a scan processor's velocity modulation, and flow-angle hue is the information-dense vectorscope look \u2014 direction is readable at a glance, and it costs only the flow pass already paid for by Trails."
+ },
+ {
+  "name": "Gel (Verlet Spring Lattice)",
+  "drivers": [
+   "device-motion (high-passed accel in camera frame = shake impulse; attitude = sag direction)",
+   "beat-onset low (radial thump from scene centroid)",
+   "MIDI-CC (stiffness/damping live)",
+   "touch (poke force along touch ray)"
+  ],
+  "algorithm": "Point domain, after unprojectPointCloud. Persistent buffers simPos/simVel (float4 each, N = JBU res W*H, ping-pong A/B for neighbor reads). unproject writes livePos into a pixel-indexed 'home' buffer instead of appending directly. One kernel springIntegrate (16x16 over JBU res): home = homeBuf[i]; if invalid, reseed pos=home(nearest valid), vel=0. F = kHome*(home-pos) + kNeigh*Sigma_{4 grid neighbors}((posN-pos)-(homeN-home)) - c*vel + accelHP*gainShake + onsetKick*normalize(pos-centroid). Semi-implicit Euler: vel+=F*dt; pos+=vel*dt; atomic-append (pos, rgb from homeBuf) to the render ring. Grid-neighbor springs = discrete wave equation, so a kick visibly propagates as a ripple through the body.",
+  "state_cost": "2x(pos+vel) buffers: 196,608 x 32 B x 2 = 12.6 MB (307,200 front = 19.7 MB); +1 compute dispatch/frame; home buffer reuses the unproject output.",
+  "params": [
+   "stiffness 0..1 (master; maps to kHome 2..80 s^-2)",
+   "damping 0..1 (underdamped..critical)",
+   "neighbor coupling 0..1 (kNeigh)",
+   "shake gain 0..4",
+   "onset kick 0..2"
+  ],
+  "why": "Turns the whole scene into elastic flesh: a kick drum thumps a visible pressure wave through your body, and physically shaking the phone jiggles the world \u2014 the most direct motion-to-image mapping possible. Impossible under TCP: needs persistent per-point velocity plus neighbor reads with stable identity, both free once R3 keeps points GPU-resident."
+ },
+ {
+  "name": "Pour (Attitude Gravity + Touch Wells)",
+  "builds_on": "Gravity Fall CPU particle pool (ContentView.swift:3164-3212) \u2014 full GPU rework, pool deleted",
+  "drivers": [
+   "device-motion attitude (true world-down rotated into camera frame: TILT THE PHONE TO POUR THE SCENE)",
+   "touch on change bar (place/drag a gravity well; hold time = mass)",
+   "audio burst (flips wells to repulsion = detonation)",
+   "MIDI-CC (looseness master)"
+  ],
+  "algorithm": "Same shared pos/vel buffers as Gel; one kernel. Per particle: pinned while pcg_hash(id) > loose -> pos=home, vel=0 (body intact); free -> F = 9.8*gGain*attitudeDown + Sigma_{<=4 wells} sign*G*r_hat/(r^2+eps^2) - c*vel; integrate; plane collision vs floor plane perpendicular to attitudeDown at sceneMinZ (from existing cutoutMinMaxReduce) with restitution bounce; life -= dt once free, on death reseed to home so the body erodes and re-knits at rate = loose. Dim rgb by life via the existing fxMod brightness channel. Wells: 4x float4 uniform written CPU-side from touch.",
+  "state_cost": "Shares the 12.6 MB pos/vel/life pair with Gel + 64 B well uniform; 1 dispatch/frame.",
+  "params": [
+   "looseness 0..1 (master: fraction of body that flows)",
+   "well strength -2..2 (negative = repulse)",
+   "gravity gain 0..2",
+   "restitution 0..1",
+   "reform time 0.2..5 s"
+  ],
+  "why": "Sand-physics on the live scan: tilt the phone and the room avalanches off itself, touch a shoulder and it spirals into a black hole, a bass burst blows it apart \u2014 three readable gestures, zero learning curve. Replaces the CPU Gravity pool (Seam-B bottleneck) with a bounded GPU kernel at constant point count."
+ },
+ {
+  "name": "Maelstrom (Curl-Noise Fluid + Onset Vortex Rings)",
+  "drivers": [
+   "beat-onset low/mid/high (each band fires a vortex ring: low = big slow torus, high = small fast one)",
+   "audio high band (background turbulence amount)",
+   "gyro yaw rate (swirl bias / wind)",
+   "OSC float (ring circulation for external sequencing)"
+  ],
+  "algorithm": "Analytic velocity field \u2014 no fluid grid, divergence-free by construction. Kernel per particle (shared pos/vel buffers, free/pin gate as Pour): v(p) = turb*curlNoise(p*freq + t*drift) + Sigma_{<=8 rings} ringVel_k(p). curlNoise = curl of 3 simplex channels via finite differences (6 noise evals). Ring k = {center, axis, R, circulation, age} in a small uniform buffer; ringVel = circulation * tangential direction * exp(-(coreDist)^2/sigma^2); rings self-advect center += axis * circulation/(4*pi*R) * dt, circulation decays exponentially; CPU onset handler appends rings and ages the array. Particle: vel = mix(vel, v(pos), coupling); pos += vel*dt; life/reseed as Pour. Optionally free only pixels flagged moving by the existing velShear dEMA state, so still bodies hold and movers dissolve into the flow.",
+  "state_cost": "Shares 12.6 MB pos/vel/life + 8 x 48 B ring buffer; 1 dispatch (~9 noise evals/particle, comfortably <2 ms at 200k on A17/A18).",
+  "params": [
+   "turbulence 0..2 (master)",
+   "field coupling 0..1",
+   "ring power 0..2",
+   "ring radius 0.05..0.5 m",
+   "erosion 0..1 (free fraction or motion-gated)"
+  ],
+  "why": "Drum hits fire visible smoke-ring shockwaves that curl through the point cloud and dissipate \u2014 percussion becomes spatial. Curl noise never jitters (divergence-free), so idle motion reads as liquid, not noise. Needs per-particle velocity history and unbounded advection distance: exactly what the TCP pipeline forbade."
+ },
+ {
+  "name": "Murmuration (Screen-Grid Flocking / SWARM)",
+  "builds_on": "The flat-grid back-camera luma mode named in the survey as 'unblocking SWARM' (stable per-point identity); works in LiDAR mode via pixel identity too",
+  "drivers": [
+   "face blendshapes front mode (jawOpen = scatter the flock, smile = cohesion \u2014 your face explodes into birds and re-forms)",
+   "audio mid band (alignment gain: flock 'tightens' on sustained tones)",
+   "touch (predator point that repels along the touch ray)",
+   "MIDI-CC (max speed)"
+  ],
+  "algorithm": "Boids without spatial hashing: the fixed pixel grid IS the neighborhood. State as textures for cheap neighbor taps: velTex (rgba16Float, ping-pong) + posTex (rgba32Float, ping-pong) at depth/JBU res. Pass A flockField (16x16): for pixel i sample self + 8 grid neighbors from posPrev/velPrev: alignment = avgVelN - vel; cohesion = avgPosN - pos; separation = Sigma (pos-posN)/max(|d|^2,eps) for close pairs; homing = (home - pos)*reform (home = live unprojected point, so the flock re-knits into the body); predator = repulse from touch ray; vNew = clampSpeed(vel + dt*(wa*ali + wc*coh + ws*sep + homing + predator)). Pass B integrates pos += v*dt, writes posTex and atomic-appends to the render ring. O(9N), two dispatches, zero divergent memory access.",
+  "state_cost": "2x velTex rgba16Float (1.5 MB ea) + 2x posTex rgba32Float (3 MB ea) at 512x384 = ~9 MB; 2 dispatches/frame.",
+  "params": [
+   "scatter 0..1 (master; inverts homing to explosion)",
+   "alignment 0..2",
+   "cohesion 0..2",
+   "separation radius 1..8 px",
+   "max speed 0..2 m/s",
+   "reform 0..1"
+  ],
+  "why": "The flagship front-mode demo: open your jaw and your face bursts into a murmuration that swirls and re-lands as your face when you close it. Grid-neighborhood boids make 200k-agent flocking realtime on a phone, and stable identity means reforming has zero popping \u2014 literally impossible before per-point state buffers existed."
+ },
+ {
+  "name": "Comet Trails (Trails rework: true motion vectors + ballistic dust)",
+  "builds_on": "trailDepthRaster (BackLiDARShaders.metal:1134-1218) + trail offset texture; replaces the age-gradient fan and the biasX/biasY trim hack",
+  "drivers": [
+   "device-motion attitude (dust falls under TRUE world gravity projected to screen \u2014 trails always fall 'down' no matter how the phone is held)",
+   "gyro rate (wind: rotating the phone flings existing dust sideways)",
+   "audio bass (trail length = decay seconds)",
+   "beat-onset (spark: 1-frame keepProb boost so hits leave dense debris)"
+  ],
+  "algorithm": "Raster domain, 1 new pass + repacked trail state. New kernel depthFlow (before trailDepthRaster): Lucas-Kanade-lite on the EMA depth raster \u2014 3x3 window spatial grads gx,gy + temporal dt = d - dPrev (dPrev from the existing shear state's .r channel), solve the 2x2 normal equations for (u,v) px/frame, write rg16Float flowTex; temporally smooth with the shear kernel's coherence channel. trailDepthRaster v2: state rgba32Float repacked to (heldDepth, age, vx, vy) \u2014 at the frame a pixel is vacated, latch (vx,vy) = flowTex * launchGain. Offset out per dust frame: offsetXY = v*age + 0.5*(gScreen + wind)*age^2 + jitter (gScreen = attitudeDown projected to px/frame^2, wind = gyro-mapped); .b recede*age and .a keepProb = decay^age unchanged, so the unproject dust path (metal:307-316, 362-374) consumes the same texture format untouched.",
+  "state_cost": "+1 rg16Float flowTex at depth res (~0.2 MB); trail state repacked in-place (no new alloc); +1 dispatch at 256x192 (trivial).",
+  "params": [
+   "decay 0.1..4 s (master)",
+   "launch gain 0..3 (inherited momentum)",
+   "dust gravity 0..2",
+   "wind gain 0..2",
+   "spread/jitter 0..1"
+  ],
+  "why": "Fixes Trails' core lie: dust currently fans along a static age gradient (hence the manual bias trim). With latched real motion vectors + ballistics, waving an arm flings sparks tangentially that arc and FALL \u2014 it reads as physics instantly, and gravity-follows-attitude plus gyro-wind turn phone handling itself into a performance gesture."
+ },
+ {
+  "name": "Momentum Smear (Velocity rework: 3D velocity + geometric streaks)",
+  "builds_on": "fxRGBModulate (BackLiDARShaders.metal:1359-1425) + unproject consume (:417-440); finally makes 'stretch' displace instead of tint",
+  "drivers": [
+   "beat-onset any band (freeze-burst: streak length spikes then envelope-decays = long-shutter photo per hit)",
+   "MIDI-CC (smear length + the previously hardcoded velGain/settleFrames/maxAge at PointCloudCleanup.swift:174-176, now exposed)",
+   "audio bass (gain)",
+   "OSC float (streak time for external clock sync)"
+  ],
+  "algorithm": "Shares Comet Trails' flowTex. fxRGBModulate v2 builds true 3D velocity per pixel: v3 = (u*z/fx, v*z/fy, (d-d0)*fps) m/s \u2014 lateral motion, invisible to today's Z-only sensor, becomes the dominant signal. Writes mod rgba16Float = (keep, energy=|v3|*gain, brightness) + rg16Float dirTex. In the R3 GPU tail, new emitStreak kernel after unproject: per point with energy > threshold, emit k = min(kMax, floor(energy*smear*kMax)) extra copies atomic-appended at pos - v3*(j/k)*streakTime, rgb dimmed by (1-j/k)^1.5 and optionally hue-scrolled via existing pcHue2rgb along the streak; a global atomic budget counter scales k toward 0 as the 307,200 ring fills, so worst case degrades gracefully instead of overflowing.",
+  "state_cost": "Shares flowTex; +rg16Float dirTex ~0.2 MB; +1 dispatch; append bounded by existing ring (no new point memory).",
+  "params": [
+   "smear 0..1 (master: kMax 0..8 copies)",
+   "streak time 0.05..0.5 s",
+   "velocity gain 5..60 (exposes hardcoded 25)",
+   "energy threshold 0..0.5 m/s",
+   "streak hue scroll 0..1"
+  ],
+  "why": "Fast movers finally SMEAR like a dragged shutter \u2014 a snare hit freezes a streaked exposure of whatever was moving. Variable per-point spawn count (0..8 copies proportional to speed) is precisely the unbounded-output pattern TCP made untenable and the GPU ring makes free."
+ },
+ {
+  "name": "Phantom Ensemble (Echo rework: spring-lagged GPU ghosts, constant budget)",
+  "builds_on": "CPU Echo (ContentView.swift:3134-3162) \u2014 deleted and unified with the FilterEngine echo variant (PointCloudFilterEngine.swift:169-183)",
+  "drivers": [
+   "MIDI notes (each held note materializes one ghost; pitch maps to hue rotation + lag stiffness \u2014 literally playable polyphonic ghosts)",
+   "audio bass (ghost separation breathes with the low end)",
+   "touch drag on change bar (fling: impulse into the ghost spring chain)",
+   "LFO (slow orbit when idle)"
+  ],
+  "algorithm": "Kill the CPU ring merge. GPU snapshot ring: each frame blit depth (r32Float) + color (rgba8) rasters at native 256x192 into a 33-deep ring (echoCount*stride+1). Each ghost k = one extra unprojectPointCloud dispatch (same kernel + small echo uniform) reading ring[now - k*stride], appending into the SAME atomic point ring with: (a) per-ghost rigid transform T_k integrated CPU-side as a damped spring follower of the live scene centroid \u2014 second-order lag with stiffness/damping per ghost, so young ghosts snap and old ones float and overshoot, a chorus of bodies on invisible springs (touch fling injects velocity into T_k); (b) scale 1 + k*spread and hue rotate k*dHue on the existing FoV-remapped RGB; (c) stochastic keep = ringCapacity/(liveCount*(ghosts+1)) via the existing PCG hash, so 4 ghosts at 200k points cost the same total appends as 0 ghosts \u2014 echo no longer inflates point count, ever.",
+  "state_cost": "Snapshot ring 33 x (192 KB depth + 192 KB rgba8) = ~12.4 MB + 4 x 64 B ghost transforms; +<=4 dispatches of the already-cheap unproject at decimated keep (net GPU cost roughly one extra full unproject).",
+  "params": [
+   "ghosts 0..4 (master)",
+   "stride 2..12 frames",
+   "lag stiffness 0.5..8 Hz per-ghost spread",
+   "scale spread -0.2..0.4",
+   "hue step 0..0.25",
+   "decay 0.4..1.0"
+  ],
+  "why": "Echoes stop being rigid Z-pushed clones from a CPU array merge and become a physical chorus: they lag, swing, and settle like bodies tethered by springs, each one a held MIDI note. Constant-budget stochastic dithering solves the '200k x 4 echoes untenable' problem outright, and the ~52 MB CPU ring plus O(N*count) merge disappear from Seam B."
+ },
+ {
+  "name": "Kick Shatter (build/drop spring field)",
+  "drivers": [
+   "beat-onset low -> radial impulse",
+   "MIDI note 36 pad HOLD -> riser accumulate, RELEASE -> drop slam (spring x10 for one beat)",
+   "audio burst -> full-cloud impulse",
+   "MIDI CC / touch drag -> impulse gain fader"
+  ],
+  "algorithm": "New point-domain-state-in-raster pass 'shatterIntegrate' (one 16x16 dispatch at depth res, 256x192). State: rg32Float ping-pong per pixel = (s displacement metres, v velocity). Per pixel: dir3 = pcg3 unit vector from hash(gid) (stable per grid cell); on onset uniform pulse: v += impulse * zoneWeight(depth, hash); every frame v += -k*s - c*v; s += v*dt. Riser mode uniform: while held, v += lift*dt (cloud slowly disintegrates outward/upward); on release, k *= 10 for beatLen frames -> everything slams home. unprojectPointCloud reads s at gid and offsets worldPos += dir3 * s AFTER the pinhole math, before atomic append; bypass grazing cull when s > 0.02 so exploded points survive. forceReset branch seeds s=v=0.",
+  "state_cost": "2x rg32Float 256x192 = 0.75 MB; +1 dispatch/frame (49k threads)",
+  "params": [
+   "impulse 0-0.5 m (master)",
+   "spring k 0-1",
+   "damping 0-1",
+   "riser lift 0-0.3 m/s",
+   "slam multiplier 2-20x",
+   "band weight low/mid/high onset select",
+   "zone mode: uniform / near-first / hash-scatter"
+  ],
+  "why": "The percussive money shot: kick drum physically detonates the person, spring return makes it musical instead of noisy, and pad-hold riser -> release slam is a literal build-drop you can play. Impossible pre-R3: 200k persistent spring states at 60 Hz is not a CPU job, and TCP would have shipped every exploded intermediate frame.",
+  "builds_on": "unprojectPointCloud offset path (reuses the trail-dust sensor-space offset mechanism, metal:362-374)"
+ },
+ {
+  "name": "Beat Echo (ECHO rework: stochastic time-palette ghosts)",
+  "drivers": [
+   "beat-onset (any band, selectable) -> snapshot capture",
+   "MIDI clock / tap-tempo -> quantized capture on 1/4 or 1/2 notes",
+   "MIDI CC1 'time crossfader' -> live-vs-history mix 0-1",
+   "touch x on change bar -> scrub which ghost slot dominates"
+  ],
+  "algorithm": "Replaces the CPU Seam-B echo entirely. Ring of K=8 snapshot pairs at native depth res: depth r32Float + color rgba8 (color sampled from the FoV-remapped camera tex at capture time). Capture = 1 blit + 1 tiny copy dispatch, only on beat, not per frame. In unprojectPointCloud: slot = weighted pick from pcg_hash(gid ^ frameSeed) against a per-slot weight table uniform (live weight = 1-mix); pixel unprojects the CHOSEN slot's depth/color instead of live. Per-slot age k applies z += k*zPush, scale about refDepth by pow(scaleK,k), hue rotate rgb by k*hueStep via pcHue2rgb. Total emitted points stay <= one frame's worth \u2014 the cloud becomes a shimmering mixture of now + beat-quantized past.",
+  "state_cost": "8 x (196 KB depth + 196 KB color) = 3.1 MB; 0 extra per-frame dispatches (capture only on beat), selection is uniform logic in unproject",
+  "params": [
+   "mix 0-1 (master: live vs ghosts)",
+   "echo count 1-8",
+   "quantize 1/1-1/8 note",
+   "zPush -0.5-0.5 m",
+   "scale/ghost 0.9-1.1",
+   "hue step 0-90deg",
+   "decay curve exp/linear"
+  ],
+  "why": "Fixes every Echo sin at once: no point-count inflation (stochastic mixture, constant N), no CPU array merge, ghosts get scale+hue+z instead of rigid z, and capture is beat-locked so ghosts land ON the grid of the music \u2014 reads as a visual delay pedal with a feedback knob you ride live.",
+  "builds_on": "ECHO (ContentView.swift:3134-3162) + unprojectPointCloud fxMod consume path"
+ },
+ {
+  "name": "Trail Gate (TRAILS rework: tempo-synced decay + rhythmic dust gating)",
+  "drivers": [
+   "MIDI clock / tap tempo -> beatPhase uniform (decay specified in BEATS, not seconds)",
+   "audio high-band energy -> fan spread modulation",
+   "MIDI note pads -> gate division switch 1/4, 1/8, 1/16 (trancegate presets)",
+   "drum-onset mid -> one-shot 'trail flush' (age += frames/2)"
+  ],
+  "algorithm": "Extend trailDepthRaster (metal:1134-1218) with uniforms beatPhase, gateDiv, gateWidth, gateAmt, decayBeats. Host maps decayPerFrame = exp(-1/(decayBeats * 60*60/bpm)) replacing the seconds mapping at PointCloudCleanup.swift:560. In-kernel: keepProb = pow(decayPerFrame, age) * mix(1.0, step(fract(beatPhase*gateDiv), gateWidth), gateAmt) \u2014 dust strobes on musical subdivisions while the body stays solid. spreadEff = spread * (1 + highEnergy * spreadMod) so hi-hats fizz the fan. Optional flow fix: fan dir = normalize(mix(ageGradient, -grad(d - prevState.r) 3x3 Sobel on the existing prev ping-pong, flowAmt)) \u2014 true motion direction, retiring the biasX/biasY trim hack. Everything else (offset tex, dust dither in unproject) unchanged.",
+  "state_cost": "Zero new state (existing 2x rgba32Float ping-pong + rgba32Float offset tex); same single dispatch",
+  "params": [
+   "decay 0.25-16 beats (master)",
+   "gate div 1-16",
+   "gate width 0.05-0.95",
+   "gate amount 0-1",
+   "spread audio-mod 0-2",
+   "flow vs age-gradient blend 0-1",
+   "flush momentary"
+  ],
+  "why": "Trails become a trance-gate: the smoke a dancer sheds flickers in 1/16-note rhythm locked to the DJ's clock, and decay measured in beats means the look survives any tempo change. Cheapest possible instrument \u2014 pure uniform math on an existing kernel.",
+  "builds_on": "trailDepthRaster"
+ },
+ {
+  "name": "Spectral Smear (VELOCITY rework: true motion displacement, spectrum-coloured)",
+  "drivers": [
+   "audio mid-band envelope -> smear length gain (movement only streaks when the music says so)",
+   "spectral centroid from 20-band FFT (host: sum(f_i*E_i)/sum(E_i)) -> hue uniform, dark bass = red streaks, bright highs = cyan",
+   "drum-onset high -> 200 ms flow-freeze latch (streaks hang in air)",
+   "MIDI CC -> smear gain override"
+  ],
+  "algorithm": "One new quarter-res pass 'depthFlow': 5-candidate SSD match of d(x) vs prev depth at offsets {0,\u00b11x,\u00b11y} -> flow rg16Float ping-pong (subpixel via parabolic fit). fxRGBModulate v2 reads flow: energy = clamp((|dz|*25 + length(flow)*pxToM) * gain, 0, 1) * midEnv \u2014 lateral movement finally registers. It writes flow dir into the spare fxMod channels. unprojectPointCloud: instead of tint-only, offset = flow3D * smearLen * energy * hash01(gid ^ frame) \u2014 each point lands at a random spot along its own motion streak; at 60 fps the temporal dither reads as genuine per-object motion blur with NO extra points. rgb lerps toward pcHue2rgb(centroidHue) by energy. Also promote velGain/settleFrames/maxAge (currently hardcoded, PointCloudCleanup.swift:174-176) to live params. onset latch = hold uniform freezing flow sampling for N frames.",
+  "state_cost": "flow ping-pong 2x rg16Float 128x96 = 100 KB + existing age ping-pong; +1 quarter-res dispatch (12k threads)",
+  "params": [
+   "smear length 0-0.4 m (master)",
+   "velocity gain 5-60",
+   "audio-mod depth 0-1",
+   "freeze hold 0-500 ms",
+   "hue source: centroid / fixed / depth-rainbow",
+   "settle frames 2-30"
+  ],
+  "why": "Kills both documented lies: 'velocity' now sees lateral motion, and 'stretch' finally stretches. Waving an arm draws streaks whose length is the mid-band envelope and whose colour is the spectrum's brightness \u2014 the body becomes a spectrogram pen. Stochastic streaks under fixed point budget are only possible with the GPU-resident buffer.",
+  "builds_on": "fxRGBModulate + velShearRaster state layout"
+ },
+ {
+  "name": "EQ Terrain (20-band spectrum displacement zones)",
+  "drivers": [
+   "20-band FFT with per-band AR envelopes (attack 5-20 ms, release 100-400 ms, host-side) -> bands[20] uniform buffer",
+   "MIDI CC -> layout morph columns/rings",
+   "beat-onset low -> momentary depthAmt x2 punch",
+   "OSC float array -> external EQ takeover"
+  ],
+  "algorithm": "Tiny raster pass 'eqDisplace' inserted AFTER cleanup.encode but BEFORE Light Paint/Riptide/Trails (slot at PointCloudGPUUnprojector.swift:~285): band i = layout==columns ? floor(u*20) (u along the post-rotation screen x) : floor(clamp(dist(uv,center)/maxR,0,0.999)*20) concentric rings; w = smoothstep band-edge window; d' = d - bands[i]*depthAmt*w (points bulge toward camera on that band's energy). Optionally stamp band hue into fxMod tex (bandHue = pcHue2rgb(i/20)) so zones colour-code. Because it runs upstream, Trails/Light Paint/Velocity all perceive the audio bulges as REAL motion \u2014 bass hits leave trail dust, sustained pads light-paint.",
+  "state_cost": "80-byte uniform buffer, zero textures; +1 dispatch at 256x192",
+  "params": [
+   "depth amount 0-0.5 m (master)",
+   "layout columns/rows/rings",
+   "band spread 1-20 active bands",
+   "edge softness 0-1",
+   "hue stamp 0-1",
+   "punch on kick 0-2x"
+  ],
+  "why": "The scene becomes a 200,000-point spectrum analyzer wearing the performer's face \u2014 and the upstream insertion means every other effect free-rides on the audio motion. Ring layout on a face in front-mode is an instant VJ identity shot.",
+  "builds_on": "cleanup chain insertion point + fxRGBModulate side-channel"
+ },
+ {
+  "name": "Bass Shockwave (expanding displacement wavefronts)",
+  "drivers": [
+   "drum-onset low -> spawn wave at screen center, amplitude = onset strength",
+   "touch on change bar -> spawn at touch point (play the cloud like a drum)",
+   "MIDI notes -> pitched spawns (note number -> wave speed)",
+   "bass envelope -> standing-wave mode ('breathing' ring)"
+  ],
+  "algorithm": "No texture state: ring buffer of 8 active waves in a uniform struct {origin.xy (depth-raster uv), t0, amp, speed, width} maintained on host. Per-point math folded into unprojectPointCloud (zero extra dispatch): for each live wave, r = length(uv - origin), phase = r - speed*(now-t0), band = exp(-phase^2/width^2) * amp * exp(-(now-t0)*damp); offset worldPos along normalize(worldPos.xy - originWorld, recedeZ) by band; brightness += band*flashGain so the wavefront glows. Max 8 waves = 8 fused MADs per point, trivial ALU.",
+  "state_cost": "~160-byte uniform ring, zero textures, zero extra dispatches",
+  "params": [
+   "amplitude 0-0.3 m (master)",
+   "speed 0.2-3 screen/s",
+   "width 0.02-0.3",
+   "damping 0-1",
+   "recede Z -1-1",
+   "flash gain 0-2",
+   "max waves 1-8"
+  ],
+  "why": "Direct kick-to-eyeball causality: every kick drum is a visible pressure wave rolling across the body, and touch-spawn turns the change bar into a percussion surface. The cheapest effect in the set and one of the most legible from the back of the room.",
+  "builds_on": "unprojectPointCloud (pure uniform extension)"
+ },
+ {
+  "name": "Strobe Cutter (beat-locked population/slice/negative strobe)",
+  "drivers": [
+   "beat-onset -> strobe frame flip + white flash envelope",
+   "MIDI note HOLD -> blackout (duty->0) or whiteout (negative flash) momentary pads",
+   "bass envelope -> duty cycle (cloud density pumps with the sidechain)",
+   "internal LFO synced to MIDI clock -> slice plane sweep per bar"
+  ],
+  "algorithm": "Pure uniform logic in unprojectPointCloud's existing kill path (next to the fxMod hash>keep drop, metal:417-440): mode A population strobe \u2014 keep if pcg_hash(gid ^ strobeSeed) < duty*4294967295u, strobeSeed increments on beat or at strobeHz, so a DIFFERENT random half of the cloud exists each flash (spatial shimmer, not brightness flicker, dodging display-strobe harshness); mode B slice \u2014 keep if |zOut - slicePos| < sliceWidth, slicePos = mix(zMin,zMax, LFO or beatPhase), a CT-scanner plane sweeping the body per bar (reuses cutoutMinMaxReduce for the per-frame z-span); mode C negative \u2014 rgb = mix(rgb, 1-rgb, flashEnv) with flashEnv = onset-triggered 80 ms decay. Modes stack; all one uniform struct.",
+  "state_cost": "Zero (one 64-byte uniform; optional reuse of the existing 8-byte minMax buffer)",
+  "params": [
+   "duty 0.05-1 (master)",
+   "rate: on-beat / 2-30 Hz free",
+   "slice width 0.02-0.5 m",
+   "sweep sync 1/1-1/4 bar",
+   "negative flash amt 0-1",
+   "mode mask A/B/C"
+  ],
+  "why": "The core VJ punctuation instrument: sidechained density pump on every kick, a body-slicing scan plane locked to the bar, and pad-held blackouts for drop management. Per-point stochastic existence-strobing at 200k is exactly the kind of thing the CPU tail could never do and the GPU does for free.",
+  "builds_on": "unprojectPointCloud kill/dither path + cutoutMinMaxReduce"
+ }
+]

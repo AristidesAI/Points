@@ -1,0 +1,3217 @@
+{
+ "version": 1,
+ "tiers": [
+  {
+   "tier": 1,
+   "label": "Basics"
+  },
+  {
+   "tier": 2,
+   "label": "Motion"
+  },
+  {
+   "tier": 3,
+   "label": "Body"
+  },
+  {
+   "tier": 4,
+   "label": "Music"
+  },
+  {
+   "tier": 5,
+   "label": "Wild"
+  }
+ ],
+ "templates": [
+  {
+   "id": "pure-pins",
+   "name": "Pure Pins",
+   "tier": 1,
+   "teaches": [
+    "the pin backbone",
+    "depth drives displacement"
+   ],
+   "description": "The whole engine in one line: camera depth pushes a wall of pins toward you. Twist one knob and watch yourself emerge in relief.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH GAIN"
+    },
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "PIN SIZE"
+    },
+    {
+     "param": "dom.count",
+     "control": "fader",
+     "label": "DENSITY"
+    },
+    {
+     "param": "mat.mode",
+     "control": "picker",
+     "label": "FINISH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {
+       "gain": 0.8
+      }
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {}
+     },
+     {
+      "id": "mat",
+      "type": "material",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "mat.domain"
+     ],
+     [
+      "mat.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Raw sensor depth, no ML - just light per pin",
+     "near": "dep"
+    },
+    {
+     "text": "Depth pulls pins toward you - Z=0 is the wall",
+     "near": "disp"
+    },
+    {
+     "text": "30k pins default - crank density once it feels good",
+     "near": "dom"
+    }
+   ]
+  },
+  {
+   "id": "color-by-depth",
+   "name": "Color by Depth",
+   "tier": 1,
+   "teaches": [
+    "palettes",
+    "one field feeding two params"
+   ],
+   "description": "Near pins glow one color, far pins another, with a full gradient between. The same depth field drives both position and paint.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "pal.preset",
+     "control": "picker",
+     "label": "PALETTE"
+    },
+    {
+     "param": "grad.bias",
+     "control": "knob",
+     "label": "GRADIENT SHIFT"
+    },
+    {
+     "param": "grad.spread",
+     "control": "knob",
+     "label": "SPREAD"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "sunset"
+      }
+     },
+     {
+      "id": "grad",
+      "type": "depth-gradient",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "dep.field",
+      "grad.depth"
+     ],
+     [
+      "pal.out",
+      "grad.palette"
+     ],
+     [
+      "disp.out",
+      "grad.domain"
+     ],
+     [
+      "grad.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "One depth field, two jobs - height and hue",
+     "near": "grad"
+    },
+    {
+     "text": "Palettes are swappable - the mapping stays",
+     "near": "pal"
+    },
+    {
+     "text": "Shift the bias to slide colors along your body",
+     "near": "grad"
+    }
+   ]
+  },
+  {
+   "id": "audio-pulse",
+   "name": "Audio Pulse",
+   "tier": 1,
+   "teaches": [
+    "signal to field broadcast",
+    "audio reactivity"
+   ],
+   "description": "Every pin swells with the bass from your mic. One wire from sound to size is all it takes.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "REST SIZE"
+    },
+    {
+     "param": "audio.gain",
+     "control": "knob",
+     "label": "INPUT GAIN"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    },
+    {
+     "param": "dom.count",
+     "control": "fader",
+     "label": "DENSITY"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "audio",
+      "type": "audio-levels",
+      "params": {}
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {
+       "base": 0.6
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "audio.bass",
+      "size.amount"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Bass is one number - broadcast to every pin",
+     "near": "size"
+    },
+    {
+     "text": "Signals run on CPU per frame, fields run on GPU",
+     "near": "audio"
+    },
+    {
+     "text": "Play music near the phone, then hum low",
+     "near": "audio"
+    }
+   ]
+  },
+  {
+   "id": "wave-grid",
+   "name": "Wave Grid",
+   "tier": 1,
+   "teaches": [
+    "analytic ripples",
+    "lfo modulation",
+    "multiplying fields"
+   ],
+   "description": "Rings travel outward across the grid while an LFO breathes their height. No camera needed - this one is pure synthesis.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "rip.center",
+     "control": "xy",
+     "label": "CENTER"
+    },
+    {
+     "param": "rip.frequency",
+     "control": "knob",
+     "label": "WAVELENGTH"
+    },
+    {
+     "param": "rip.speed",
+     "control": "knob",
+     "label": "TRAVEL SPEED"
+    },
+    {
+     "param": "lfo.rate",
+     "control": "knob",
+     "label": "BREATH RATE"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "WAVE HEIGHT"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "rip",
+      "type": "radial-ripple",
+      "params": {
+       "center": [
+        0.5,
+        0.5
+       ]
+      }
+     },
+     {
+      "id": "lfo",
+      "type": "lfo",
+      "params": {
+       "rate": 0.2,
+       "shape": "sine"
+      }
+     },
+     {
+      "id": "muln",
+      "type": "multiply",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "rip.out",
+      "muln.a"
+     ],
+     [
+      "lfo.out",
+      "muln.b"
+     ],
+     [
+      "muln.out",
+      "disp.amount"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "disp.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Distance-from-center math - per pin, no simulation",
+     "near": "rip"
+    },
+    {
+     "text": "Multiply is a VCA: the LFO scales the whole wave",
+     "near": "muln"
+    },
+    {
+     "text": "No source node - pins can run without a camera",
+     "near": "dom"
+    }
+   ]
+  },
+  {
+   "id": "comet-trails",
+   "name": "Comet Trails",
+   "tier": 2,
+   "teaches": [
+    "velocity fields",
+    "stateful trail memory"
+   ],
+   "description": "Move and your motion smears across the wall as glowing comet tails. Still pins fade back to rest, so only movement leaves marks.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "trl.decay",
+     "control": "knob",
+     "label": "TRAIL FADE"
+    },
+    {
+     "param": "vel.gain",
+     "control": "knob",
+     "label": "MOTION SENS"
+    },
+    {
+     "param": "tint.color",
+     "control": "picker",
+     "label": "COMET COLOR"
+    },
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "CORE SIZE"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "vel",
+      "type": "velocity",
+      "params": {}
+     },
+     {
+      "id": "trl",
+      "type": "trail",
+      "params": {
+       "decay": 0.85
+      }
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {}
+     },
+     {
+      "id": "tint",
+      "type": "tint",
+      "params": {
+       "color": "#7fd4ff"
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "dep.field",
+      "vel.in"
+     ],
+     [
+      "vel.out",
+      "trl.in"
+     ],
+     [
+      "trl.out",
+      "size.amount"
+     ],
+     [
+      "trl.out",
+      "tint.amount"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "tint.domain"
+     ],
+     [
+      "tint.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Velocity: how fast depth changes at this pin",
+     "near": "vel"
+    },
+    {
+     "text": "Trail is per-pin memory - it rents one state slot each",
+     "near": "trl"
+    },
+    {
+     "text": "Same energy feeds size and tint - wave your arm slowly",
+     "near": "tint"
+    }
+   ]
+  },
+  {
+   "id": "echo-chamber",
+   "name": "Echo Chamber",
+   "tier": 2,
+   "teaches": [
+    "echo snapshots",
+    "trigger ports",
+    "mixing fields"
+   ],
+   "description": "Every drum hit freezes a ghost copy of your pose and replays it behind the live one. Crossfade between now and the echoes.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "mixn.mix",
+     "control": "fader",
+     "label": "LIVE/ECHO"
+    },
+    {
+     "param": "ech.taps",
+     "control": "knob",
+     "label": "REPEATS"
+    },
+    {
+     "param": "ech.decay",
+     "control": "knob",
+     "label": "GHOST FADE"
+    },
+    {
+     "param": "beat.band",
+     "control": "picker",
+     "label": "TRIGGER BAND"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "beat",
+      "type": "beat-trigger",
+      "params": {
+       "band": "drumMid"
+      }
+     },
+     {
+      "id": "ech",
+      "type": "echo",
+      "params": {
+       "taps": 3,
+       "decay": 0.5
+      }
+     },
+     {
+      "id": "mixn",
+      "type": "mix",
+      "params": {
+       "mix": 0.5
+      }
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dep.field",
+      "ech.in"
+     ],
+     [
+      "beat.out",
+      "ech.trigger"
+     ],
+     [
+      "ech.out",
+      "mixn.b"
+     ],
+     [
+      "dep.field",
+      "mixn.a"
+     ],
+     [
+      "mixn.out",
+      "disp.amount"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "disp.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Echo stores whole-frame snapshots per pin",
+     "near": "ech"
+    },
+    {
+     "text": "Trigger port fires on drum onsets, not volume",
+     "near": "beat"
+    },
+    {
+     "text": "Mix crossfades two depth fields like a DJ fader",
+     "near": "mixn"
+    },
+    {
+     "text": "Strike a pose right on the beat",
+     "near": "dep"
+    }
+   ]
+  },
+  {
+   "id": "velocity-paint",
+   "name": "Velocity Paint",
+   "tier": 2,
+   "teaches": [
+    "motion into hue",
+    "smoothing with lag"
+   ],
+   "description": "Fast movement paints hot colors, stillness stays cool. Lag smooths the sensor jitter so strokes feel like brushwork.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "pal.preset",
+     "control": "picker",
+     "label": "PALETTE"
+    },
+    {
+     "param": "lag.time",
+     "control": "knob",
+     "label": "SMOOTHING"
+    },
+    {
+     "param": "cbv.sensitivity",
+     "control": "knob",
+     "label": "SENSITIVITY"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "vel",
+      "type": "velocity",
+      "params": {}
+     },
+     {
+      "id": "lag",
+      "type": "lag",
+      "params": {
+       "time": 0.15
+      }
+     },
+     {
+      "id": "cbv",
+      "type": "velocity-color",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "thermal"
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "dep.field",
+      "vel.in"
+     ],
+     [
+      "vel.out",
+      "lag.in"
+     ],
+     [
+      "lag.out",
+      "cbv.speed"
+     ],
+     [
+      "pal.out",
+      "cbv.palette"
+     ],
+     [
+      "disp.out",
+      "cbv.domain"
+     ],
+     [
+      "cbv.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Fast pins go hot, still pins stay cool",
+     "near": "cbv"
+    },
+    {
+     "text": "Lag filters jittery sensor motion into strokes",
+     "near": "lag"
+    },
+    {
+     "text": "Move slow, then flick - watch the palette jump",
+     "near": "vel"
+    }
+   ]
+  },
+  {
+   "id": "ripple-tank",
+   "name": "Ripple Tank",
+   "tier": 2,
+   "teaches": [
+    "adding wave fields",
+    "interference",
+    "xy control"
+   ],
+   "description": "Two touch-driven ripples spread across the pin field and interfere like water in a tank. Drag both pads and hunt for moire patterns.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "rip1.center",
+     "control": "xy",
+     "label": "TOUCH A"
+    },
+    {
+     "param": "rip2.center",
+     "control": "xy",
+     "label": "TOUCH B"
+    },
+    {
+     "param": "rip1.frequency",
+     "control": "knob",
+     "label": "WAVELENGTH"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "WAVE HEIGHT"
+    },
+    {
+     "param": "pal.preset",
+     "control": "picker",
+     "label": "WATER PALETTE"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "rip1",
+      "type": "radial-ripple",
+      "params": {
+       "center": [
+        0.35,
+        0.5
+       ]
+      }
+     },
+     {
+      "id": "rip2",
+      "type": "radial-ripple",
+      "params": {
+       "center": [
+        0.65,
+        0.5
+       ]
+      }
+     },
+     {
+      "id": "addn",
+      "type": "add",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "ocean"
+      }
+     },
+     {
+      "id": "grad",
+      "type": "depth-gradient",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "rip1.out",
+      "addn.a"
+     ],
+     [
+      "rip2.out",
+      "addn.b"
+     ],
+     [
+      "addn.out",
+      "disp.amount"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "addn.out",
+      "grad.depth"
+     ],
+     [
+      "pal.out",
+      "grad.palette"
+     ],
+     [
+      "disp.out",
+      "grad.domain"
+     ],
+     [
+      "grad.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Two ripples add - instant interference patterns",
+     "near": "addn"
+    },
+    {
+     "text": "Analytic rings: pure distance math, no water sim",
+     "near": "rip1"
+    },
+    {
+     "text": "Wave height also drives color - crests glow",
+     "near": "grad"
+    }
+   ]
+  },
+  {
+   "id": "arm-fire",
+   "name": "Arm Fire",
+   "tier": 3,
+   "teaches": [
+    "body region masks",
+    "masking effects to a limb"
+   ],
+   "description": "Flames of flickering pins ignite only along your arms while the rest of you stays calm. Raise them slowly and conduct the fire.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "wan.speed",
+     "control": "knob",
+     "label": "FLICKER SPEED"
+    },
+    {
+     "param": "pal.preset",
+     "control": "picker",
+     "label": "FLAME PALETTE"
+    },
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "EMBER SIZE"
+    },
+    {
+     "param": "armL.softness",
+     "control": "knob",
+     "label": "EDGE SOFT"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "armL",
+      "type": "body-region",
+      "params": {
+       "region": "l-arm"
+      }
+     },
+     {
+      "id": "armR",
+      "type": "body-region",
+      "params": {
+       "region": "r-arm"
+      }
+     },
+     {
+      "id": "addn",
+      "type": "add",
+      "params": {}
+     },
+     {
+      "id": "wan",
+      "type": "wander",
+      "params": {
+       "speed": 2.0
+      }
+     },
+     {
+      "id": "muln",
+      "type": "multiply",
+      "params": {}
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "fire"
+      }
+     },
+     {
+      "id": "grad",
+      "type": "depth-gradient",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "armL.mask",
+      "addn.a"
+     ],
+     [
+      "armR.mask",
+      "addn.b"
+     ],
+     [
+      "addn.out",
+      "muln.a"
+     ],
+     [
+      "wan.out",
+      "muln.b"
+     ],
+     [
+      "muln.out",
+      "size.amount"
+     ],
+     [
+      "muln.out",
+      "grad.depth"
+     ],
+     [
+      "pal.out",
+      "grad.palette"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "grad.domain"
+     ],
+     [
+      "grad.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Soft mask: 1 on your arm, 0 everywhere else",
+     "near": "armL"
+    },
+    {
+     "text": "Multiply is a stencil - flicker only where the mask is hot",
+     "near": "muln"
+    },
+    {
+     "text": "Wander drifts per pin - cheapest fire in town",
+     "near": "wan"
+    },
+    {
+     "text": "One energy field drives size AND color",
+     "near": "grad"
+    }
+   ]
+  },
+  {
+   "id": "hand-magnet",
+   "name": "Hand Magnet",
+   "tier": 3,
+   "teaches": [
+    "hand tracking",
+    "bipolar remap",
+    "spring physics feel"
+   ],
+   "description": "Your open palm blasts pins away, a closed fist sucks them back in. A spring gives every pin mass so it overshoots and settles.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "sct.radius",
+     "control": "knob",
+     "label": "REACH"
+    },
+    {
+     "param": "sct.strength",
+     "control": "knob",
+     "label": "FORCE"
+    },
+    {
+     "param": "spr.stiffness",
+     "control": "knob",
+     "label": "SNAP"
+    },
+    {
+     "param": "spr.damping",
+     "control": "knob",
+     "label": "WOBBLE"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "hand",
+      "type": "hand-position",
+      "params": {
+       "hand": "right"
+      }
+     },
+     {
+      "id": "open",
+      "type": "hand-openness",
+      "params": {
+       "hand": "right"
+      }
+     },
+     {
+      "id": "rmp",
+      "type": "remap",
+      "params": {
+       "outMin": -1,
+       "outMax": 1
+      }
+     },
+     {
+      "id": "sct",
+      "type": "scatter",
+      "params": {
+       "radius": 0.3
+      }
+     },
+     {
+      "id": "spr",
+      "type": "spring",
+      "params": {
+       "stiffness": 0.4,
+       "damping": 0.3
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "hand.xy",
+      "sct.center"
+     ],
+     [
+      "open.out",
+      "rmp.in"
+     ],
+     [
+      "rmp.out",
+      "sct.amount"
+     ],
+     [
+      "sct.out",
+      "spr.in"
+     ],
+     [
+      "spr.out",
+      "disp.offset"
+     ],
+     [
+      "disp.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "21 joints tracked - this uses the palm center",
+     "near": "hand"
+    },
+    {
+     "text": "Remap makes openness bipolar: fist pulls, palm pushes",
+     "near": "rmp"
+    },
+    {
+     "text": "Spring adds mass - pins overshoot then settle",
+     "near": "spr"
+    },
+    {
+     "text": "Force is strongest near your hand, fading with distance",
+     "near": "sct"
+    }
+   ]
+  },
+  {
+   "id": "head-spotlight",
+   "name": "Head Spotlight",
+   "tier": 3,
+   "teaches": [
+    "lit materials",
+    "lights are nodes",
+    "joints drive the stage"
+   ],
+   "description": "A single spotlight tracks your head across the pin wall, casting real shadows into the relief. Step sideways and the light follows.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "lgt.intensity",
+     "control": "knob",
+     "label": "BRIGHTNESS"
+    },
+    {
+     "param": "lgt.cone",
+     "control": "knob",
+     "label": "SPOT WIDTH"
+    },
+    {
+     "param": "lgt.color",
+     "control": "picker",
+     "label": "LIGHT COLOR"
+    },
+    {
+     "param": "vig.amount",
+     "control": "knob",
+     "label": "DARKNESS"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "jnt",
+      "type": "joint",
+      "params": {
+       "joint": "head"
+      }
+     },
+     {
+      "id": "lgt",
+      "type": "light",
+      "params": {
+       "kind": "spot",
+       "shadows": true
+      }
+     },
+     {
+      "id": "mat",
+      "type": "material",
+      "params": {
+       "mode": "lit"
+      }
+     },
+     {
+      "id": "vig",
+      "type": "vignette",
+      "params": {
+       "amount": 0.4
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "jnt.position",
+      "lgt.position"
+     ],
+     [
+      "disp.out",
+      "mat.domain"
+     ],
+     [
+      "mat.out",
+      "vig.in"
+     ],
+     [
+      "vig.out",
+      "out.scene"
+     ],
+     [
+      "lgt.out",
+      "out.light"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Joint is one tracked point - its z comes from depth",
+     "near": "jnt"
+    },
+    {
+     "text": "Unlit pins ignore lights - switch material to lit",
+     "near": "mat"
+    },
+    {
+     "text": "Only one light gets the cheap shadow map - this one",
+     "near": "lgt"
+    },
+    {
+     "text": "Vignette pulls eyes into the beam",
+     "near": "vig"
+    }
+   ]
+  },
+  {
+   "id": "silhouette-cut",
+   "name": "Silhouette Cut",
+   "tier": 3,
+   "teaches": [
+    "background removal",
+    "inverting masks",
+    "camera color on pins"
+   ],
+   "description": "Every pin outside your body retracts into the wall, leaving a floating silhouette painted in live camera color. You become a cutout made of pins.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "bgm.softness",
+     "control": "knob",
+     "label": "EDGE FEATHER"
+    },
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "PIN SIZE"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "RELIEF"
+    },
+    {
+     "param": "tint.amount",
+     "control": "knob",
+     "label": "CAMERA MIX"
+    },
+    {
+     "param": "dom.count",
+     "control": "fader",
+     "label": "DENSITY"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "bgm",
+      "type": "body-region",
+      "params": {
+       "region": "background"
+      }
+     },
+     {
+      "id": "rmp",
+      "type": "remap",
+      "params": {
+       "outMin": 1,
+       "outMax": 0
+      }
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {}
+     },
+     {
+      "id": "vc",
+      "type": "video-color",
+      "params": {}
+     },
+     {
+      "id": "tint",
+      "type": "tint",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "src.out",
+      "vc.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "bgm.mask",
+      "rmp.in"
+     ],
+     [
+      "rmp.out",
+      "size.amount"
+     ],
+     [
+      "vc.field",
+      "tint.color"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "tint.domain"
+     ],
+     [
+      "tint.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Background mask is 1 off-body - invert it to keep YOU",
+     "near": "rmp"
+    },
+    {
+     "text": "Size 0 means the pin retracts into the wall",
+     "near": "size"
+    },
+    {
+     "text": "video-color paints each pin its own camera pixel",
+     "near": "vc"
+    },
+    {
+     "text": "Feather the edge so the cutout breathes",
+     "near": "bgm"
+    }
+   ]
+  },
+  {
+   "id": "beat-strobe",
+   "name": "Beat Strobe",
+   "tier": 4,
+   "teaches": [
+    "onset triggers",
+    "envelopes",
+    "counters for stepped color"
+   ],
+   "description": "Every kick slams pin size and bloom with a shaped flash, while a counter steps the hue one notch per hit. Twelve beats walks the full rainbow.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "beat.band",
+     "control": "picker",
+     "label": "TRIGGER BAND"
+    },
+    {
+     "param": "env.decay",
+     "control": "knob",
+     "label": "FLASH DECAY"
+    },
+    {
+     "param": "env.amount",
+     "control": "knob",
+     "label": "PUNCH"
+    },
+    {
+     "param": "muln.b",
+     "control": "knob",
+     "label": "HUE STEP"
+    },
+    {
+     "param": "blm.threshold",
+     "control": "knob",
+     "label": "GLOW CUTOFF"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "beat",
+      "type": "beat-trigger",
+      "params": {
+       "band": "drumLow"
+      }
+     },
+     {
+      "id": "env",
+      "type": "envelope",
+      "params": {
+       "attack": 0.005,
+       "decay": 0.18
+      }
+     },
+     {
+      "id": "cnt",
+      "type": "counter",
+      "params": {
+       "wrap": 12
+      }
+     },
+     {
+      "id": "muln",
+      "type": "multiply",
+      "params": {
+       "b": 0.0833
+      }
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "neon"
+      }
+     },
+     {
+      "id": "grad",
+      "type": "depth-gradient",
+      "params": {}
+     },
+     {
+      "id": "hsv",
+      "type": "hsv-shift",
+      "params": {}
+     },
+     {
+      "id": "blm",
+      "type": "bloom",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "beat.out",
+      "env.trigger"
+     ],
+     [
+      "env.out",
+      "size.amount"
+     ],
+     [
+      "env.out",
+      "blm.amount"
+     ],
+     [
+      "beat.out",
+      "cnt.trigger"
+     ],
+     [
+      "cnt.out",
+      "muln.a"
+     ],
+     [
+      "muln.out",
+      "hsv.hue"
+     ],
+     [
+      "dep.field",
+      "grad.depth"
+     ],
+     [
+      "pal.out",
+      "grad.palette"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "grad.domain"
+     ],
+     [
+      "grad.out",
+      "hsv.domain"
+     ],
+     [
+      "hsv.out",
+      "blm.in"
+     ],
+     [
+      "blm.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Envelope shapes a click into attack and decay",
+     "near": "env"
+    },
+    {
+     "text": "Counter steps hue per hit - 12 beats, full rainbow",
+     "near": "cnt"
+    },
+    {
+     "text": "One envelope, two destinations: size and bloom",
+     "near": "blm"
+    },
+    {
+     "text": "Onsets fire on transients, not loudness",
+     "near": "beat"
+    }
+   ]
+  },
+  {
+   "id": "eq-terrain",
+   "name": "EQ Terrain",
+   "tier": 4,
+   "teaches": [
+    "fft bands",
+    "grid zone masks",
+    "building an equalizer"
+   ],
+   "description": "The grid splits into three columns and each one becomes a giant EQ bar driven by its own FFT band. Bass heaves the left, highs shimmer the right.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "TERRAIN HEIGHT"
+    },
+    {
+     "param": "f1.band",
+     "control": "picker",
+     "label": "LEFT BAND"
+    },
+    {
+     "param": "f2.band",
+     "control": "picker",
+     "label": "MID BAND"
+    },
+    {
+     "param": "f3.band",
+     "control": "picker",
+     "label": "RIGHT BAND"
+    },
+    {
+     "param": "m1.softness",
+     "control": "knob",
+     "label": "ZONE BLEND"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "f1",
+      "type": "fft-band",
+      "params": {
+       "band": 2
+      }
+     },
+     {
+      "id": "f2",
+      "type": "fft-band",
+      "params": {
+       "band": 9
+      }
+     },
+     {
+      "id": "f3",
+      "type": "fft-band",
+      "params": {
+       "band": 16
+      }
+     },
+     {
+      "id": "m1",
+      "type": "region-rect",
+      "params": {
+       "zone": "left"
+      }
+     },
+     {
+      "id": "m2",
+      "type": "region-rect",
+      "params": {
+       "zone": "center"
+      }
+     },
+     {
+      "id": "m3",
+      "type": "region-rect",
+      "params": {
+       "zone": "right"
+      }
+     },
+     {
+      "id": "x1",
+      "type": "multiply",
+      "params": {}
+     },
+     {
+      "id": "x2",
+      "type": "multiply",
+      "params": {}
+     },
+     {
+      "id": "x3",
+      "type": "multiply",
+      "params": {}
+     },
+     {
+      "id": "a1",
+      "type": "add",
+      "params": {}
+     },
+     {
+      "id": "a2",
+      "type": "add",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {
+       "gain": 1.2
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "f1.out",
+      "x1.a"
+     ],
+     [
+      "m1.mask",
+      "x1.b"
+     ],
+     [
+      "f2.out",
+      "x2.a"
+     ],
+     [
+      "m2.mask",
+      "x2.b"
+     ],
+     [
+      "f3.out",
+      "x3.a"
+     ],
+     [
+      "m3.mask",
+      "x3.b"
+     ],
+     [
+      "x1.out",
+      "a1.a"
+     ],
+     [
+      "x2.out",
+      "a1.b"
+     ],
+     [
+      "a1.out",
+      "a2.a"
+     ],
+     [
+      "x3.out",
+      "a2.b"
+     ],
+     [
+      "a2.out",
+      "disp.amount"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "disp.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "20 FFT bands - pick which one owns each zone",
+     "near": "f1"
+    },
+    {
+     "text": "Region mask here is a grid column, not a body part",
+     "near": "m1"
+    },
+    {
+     "text": "Multiply gates the band into its zone, add stacks zones",
+     "near": "a1"
+    },
+    {
+     "text": "Blend zone edges so bars melt into each other",
+     "near": "m2"
+    }
+   ]
+  },
+  {
+   "id": "midi-rig",
+   "name": "MIDI Rig",
+   "tier": 4,
+   "teaches": [
+    "MIDI learn",
+    "CC to any param",
+    "note-triggered shockwaves"
+   ],
+   "description": "Three CC knobs grab depth, size, and hue while any note fires a shockwave ring across the wall. Plug in a controller over USB, network, or BLE and play the pins.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "cc1.cc",
+     "control": "picker",
+     "label": "CC A > DEPTH"
+    },
+    {
+     "param": "cc2.cc",
+     "control": "picker",
+     "label": "CC B > SIZE"
+    },
+    {
+     "param": "cc3.cc",
+     "control": "picker",
+     "label": "CC C > HUE"
+    },
+    {
+     "param": "shk.trigger",
+     "control": "pad",
+     "label": "BLAST"
+    },
+    {
+     "param": "shk.speed",
+     "control": "knob",
+     "label": "WAVE SPEED"
+    },
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "BASE SIZE"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "cc1",
+      "type": "midi-cc",
+      "params": {
+       "cc": 1
+      }
+     },
+     {
+      "id": "cc2",
+      "type": "midi-cc",
+      "params": {
+       "cc": 74
+      }
+     },
+     {
+      "id": "cc3",
+      "type": "midi-cc",
+      "params": {
+       "cc": 71
+      }
+     },
+     {
+      "id": "note",
+      "type": "midi-note",
+      "params": {
+       "note": 36
+      }
+     },
+     {
+      "id": "shk",
+      "type": "shockwave",
+      "params": {}
+     },
+     {
+      "id": "addn",
+      "type": "add",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {}
+     },
+     {
+      "id": "hsv",
+      "type": "hsv-shift",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "addn.a"
+     ],
+     [
+      "shk.out",
+      "addn.b"
+     ],
+     [
+      "addn.out",
+      "disp.amount"
+     ],
+     [
+      "note.trigger",
+      "shk.trigger"
+     ],
+     [
+      "cc1.out",
+      "disp.gain"
+     ],
+     [
+      "cc2.out",
+      "size.amount"
+     ],
+     [
+      "cc3.out",
+      "hsv.hue"
+     ],
+     [
+      "disp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "hsv.domain"
+     ],
+     [
+      "hsv.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Any CC can grab any port - tap a knob to MIDI-learn",
+     "near": "cc1"
+    },
+    {
+     "text": "Notes are triggers - velocity rides along free",
+     "near": "note"
+    },
+    {
+     "text": "Shockwave: one expanding ring per hit, pure math",
+     "near": "shk"
+    },
+    {
+     "text": "Add stacks the ring on top of camera depth",
+     "near": "addn"
+    }
+   ]
+  },
+  {
+   "id": "bpm-sculpt",
+   "name": "BPM Sculpt",
+   "tier": 4,
+   "teaches": [
+    "bpm sync",
+    "sequencers",
+    "shape morph is a lerp"
+   ],
+   "description": "A step sequencer locked to the global BPM morphs every pin between two shapes on the beat. Slew turns the steps into liquid glides.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "seq.division",
+     "control": "picker",
+     "label": "STEP RATE"
+    },
+    {
+     "param": "slw.time",
+     "control": "knob",
+     "label": "MORPH GLIDE"
+    },
+    {
+     "param": "smorph.shapeA",
+     "control": "picker",
+     "label": "SHAPE A"
+    },
+    {
+     "param": "smorph.shapeB",
+     "control": "picker",
+     "label": "SHAPE B"
+    },
+    {
+     "param": "lfo.rate",
+     "control": "knob",
+     "label": "SPIN"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "seq",
+      "type": "step-sequencer",
+      "params": {
+       "division": "1/4",
+       "steps": 8,
+       "values": [
+        0,
+        1,
+        0.5,
+        1,
+        0,
+        0.25,
+        0.75,
+        1
+       ]
+      }
+     },
+     {
+      "id": "slw",
+      "type": "slew",
+      "params": {
+       "time": 0.08
+      }
+     },
+     {
+      "id": "smorph",
+      "type": "shape-morph",
+      "params": {
+       "shapeA": "sphere",
+       "shapeB": "spike"
+      }
+     },
+     {
+      "id": "lfo",
+      "type": "lfo",
+      "params": {
+       "sync": "1/1"
+      }
+     },
+     {
+      "id": "rot",
+      "type": "rotation",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "seq.out",
+      "slw.in"
+     ],
+     [
+      "slw.out",
+      "smorph.mix"
+     ],
+     [
+      "lfo.out",
+      "rot.angle"
+     ],
+     [
+      "disp.out",
+      "smorph.domain"
+     ],
+     [
+      "smorph.out",
+      "rot.domain"
+     ],
+     [
+      "rot.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Morph is a 0-1 lerp - meshes share vertex order",
+     "near": "smorph"
+    },
+    {
+     "text": "Sequencer steps on the global BPM - tap tempo up top",
+     "near": "seq"
+    },
+    {
+     "text": "Slew turns stairs into ramps",
+     "near": "slw"
+    },
+    {
+     "text": "A bar-synced LFO keeps the spin musical",
+     "near": "lfo"
+    }
+   ]
+  },
+  {
+   "id": "feedback-bloom",
+   "name": "Feedback Bloom",
+   "tier": 5,
+   "teaches": [
+    "stacking stateful nodes",
+    "state slot budget",
+    "glow abuse"
+   ],
+   "description": "Beat-frozen echoes smear through a trail and detonate in bloom, so the wall feels like it remembers everything you did. A slow hue drift sells the feedback illusion.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "ech.decay",
+     "control": "knob",
+     "label": "ECHO FADE"
+    },
+    {
+     "param": "trl.decay",
+     "control": "knob",
+     "label": "SMEAR"
+    },
+    {
+     "param": "blm.amount",
+     "control": "knob",
+     "label": "GLOW"
+    },
+    {
+     "param": "lfo.rate",
+     "control": "knob",
+     "label": "HUE DRIFT"
+    },
+    {
+     "param": "disp.gain",
+     "control": "knob",
+     "label": "DEPTH"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "beat",
+      "type": "beat-trigger",
+      "params": {
+       "band": "drumLow"
+      }
+     },
+     {
+      "id": "ech",
+      "type": "echo",
+      "params": {
+       "taps": 4,
+       "decay": 0.6
+      }
+     },
+     {
+      "id": "trl",
+      "type": "trail",
+      "params": {
+       "decay": 0.8
+      }
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "neon"
+      }
+     },
+     {
+      "id": "grad",
+      "type": "depth-gradient",
+      "params": {}
+     },
+     {
+      "id": "hsv",
+      "type": "hsv-shift",
+      "params": {}
+     },
+     {
+      "id": "lfo",
+      "type": "lfo",
+      "params": {
+       "rate": 0.05
+      }
+     },
+     {
+      "id": "blm",
+      "type": "bloom",
+      "params": {
+       "amount": 0.7
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dep.field",
+      "ech.in"
+     ],
+     [
+      "beat.out",
+      "ech.trigger"
+     ],
+     [
+      "ech.out",
+      "trl.in"
+     ],
+     [
+      "trl.out",
+      "disp.amount"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "trl.out",
+      "grad.depth"
+     ],
+     [
+      "pal.out",
+      "grad.palette"
+     ],
+     [
+      "lfo.out",
+      "hsv.hue"
+     ],
+     [
+      "disp.out",
+      "grad.domain"
+     ],
+     [
+      "grad.out",
+      "hsv.domain"
+     ],
+     [
+      "hsv.out",
+      "blm.in"
+     ],
+     [
+      "blm.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Echo then trail: snapshots that smear - feedback with no neighbors",
+     "near": "trl"
+    },
+    {
+     "text": "Each stateful node rents floats per pin - watch the budget",
+     "near": "ech"
+    },
+    {
+     "text": "Bloom blows out only the brightest pins",
+     "near": "blm"
+    },
+    {
+     "text": "Glacial hue drift makes the memory feel alive",
+     "near": "lfo"
+    }
+   ]
+  },
+  {
+   "id": "kick-shatter",
+   "name": "Kick Shatter",
+   "tier": 5,
+   "teaches": [
+    "trigger-envelope-force chains",
+    "springs reform the image",
+    "color from motion"
+   ],
+   "description": "Every kick drum blasts the pins apart like shrapnel, and a spring drags each one home so your image self-heals. The debris is tinted by how fast it flies.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "beat.band",
+     "control": "picker",
+     "label": "TRIGGER"
+    },
+    {
+     "param": "sct.strength",
+     "control": "knob",
+     "label": "BLAST FORCE"
+    },
+    {
+     "param": "env.decay",
+     "control": "knob",
+     "label": "BLAST TAIL"
+    },
+    {
+     "param": "spr.stiffness",
+     "control": "knob",
+     "label": "REFORM SPEED"
+    },
+    {
+     "param": "spr.damping",
+     "control": "knob",
+     "label": "WOBBLE"
+    },
+    {
+     "param": "pal.preset",
+     "control": "picker",
+     "label": "SPARK PALETTE"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "beat",
+      "type": "beat-trigger",
+      "params": {
+       "band": "drumLow"
+      }
+     },
+     {
+      "id": "env",
+      "type": "envelope",
+      "params": {
+       "attack": 0.002,
+       "decay": 0.4
+      }
+     },
+     {
+      "id": "sct",
+      "type": "scatter",
+      "params": {
+       "seed": 3
+      }
+     },
+     {
+      "id": "spr",
+      "type": "spring",
+      "params": {
+       "stiffness": 0.5,
+       "damping": 0.25
+      }
+     },
+     {
+      "id": "vel",
+      "type": "velocity",
+      "params": {}
+     },
+     {
+      "id": "cbv",
+      "type": "velocity-color",
+      "params": {}
+     },
+     {
+      "id": "pal",
+      "type": "palette",
+      "params": {
+       "preset": "sparks"
+      }
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "beat.out",
+      "env.trigger"
+     ],
+     [
+      "env.out",
+      "sct.amount"
+     ],
+     [
+      "sct.out",
+      "spr.in"
+     ],
+     [
+      "spr.out",
+      "disp.offset"
+     ],
+     [
+      "spr.out",
+      "vel.in"
+     ],
+     [
+      "vel.out",
+      "cbv.speed"
+     ],
+     [
+      "pal.out",
+      "cbv.palette"
+     ],
+     [
+      "disp.out",
+      "cbv.domain"
+     ],
+     [
+      "cbv.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Scatter throws each pin on its own hashed vector",
+     "near": "sct"
+    },
+    {
+     "text": "Spring pulls every pin home - the image self-heals",
+     "near": "spr"
+    },
+    {
+     "text": "Velocity tints the shrapnel while it flies",
+     "near": "cbv"
+    },
+    {
+     "text": "Low damping for jelly, high for snap",
+     "near": "env"
+    }
+   ]
+  },
+  {
+   "id": "face-swarm",
+   "name": "Face Swarm",
+   "tier": 5,
+   "teaches": [
+    "face masks",
+    "per-pin noise swarms",
+    "masked forces"
+   ],
+   "description": "The pins that make up your face dissolve into a drifting swarm, then a spring herds them back into your features. Everything is per-pin math - no flocking, and it still swarms.",
+   "source": "front-depth",
+   "deck": [
+    {
+     "param": "wan.speed",
+     "control": "knob",
+     "label": "SWARM SPEED"
+    },
+    {
+     "param": "sct.strength",
+     "control": "knob",
+     "label": "BREAKUP"
+    },
+    {
+     "param": "spr.stiffness",
+     "control": "knob",
+     "label": "REFORM"
+    },
+    {
+     "param": "fmask.softness",
+     "control": "knob",
+     "label": "MASK EDGE"
+    },
+    {
+     "param": "tint.color",
+     "control": "picker",
+     "label": "SWARM TINT"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {}
+     },
+     {
+      "id": "fmask",
+      "type": "face-region",
+      "params": {
+       "region": "face"
+      }
+     },
+     {
+      "id": "wan",
+      "type": "wander",
+      "params": {
+       "speed": 1.2
+      }
+     },
+     {
+      "id": "muln",
+      "type": "multiply",
+      "params": {}
+     },
+     {
+      "id": "sct",
+      "type": "scatter",
+      "params": {}
+     },
+     {
+      "id": "spr",
+      "type": "spring",
+      "params": {
+       "stiffness": 0.35,
+       "damping": 0.4
+      }
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {}
+     },
+     {
+      "id": "tint",
+      "type": "tint",
+      "params": {
+       "color": "#ffd27f"
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "fmask.mask",
+      "muln.a"
+     ],
+     [
+      "wan.out",
+      "muln.b"
+     ],
+     [
+      "muln.out",
+      "sct.amount"
+     ],
+     [
+      "sct.out",
+      "spr.in"
+     ],
+     [
+      "spr.out",
+      "disp.offset"
+     ],
+     [
+      "fmask.mask",
+      "tint.amount"
+     ],
+     [
+      "disp.out",
+      "tint.domain"
+     ],
+     [
+      "tint.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "76 landmarks build this soft face mask",
+     "near": "fmask"
+    },
+    {
+     "text": "Wander is per-pin noise - no neighbors, still swarms",
+     "near": "wan"
+    },
+    {
+     "text": "Mask gates the force: only face pins fly",
+     "near": "muln"
+    },
+    {
+     "text": "Spring herds the swarm back into your face",
+     "near": "spr"
+    }
+   ]
+  },
+  {
+   "id": "pin-mosaic",
+   "name": "Pin Mosaic",
+   "tier": 5,
+   "teaches": [
+    "quantize posterizes",
+    "seeded per-pin random",
+    "mosaic density"
+   ],
+   "description": "A few thousand fat discs sample the camera, posterize its colors, and tilt on seeded random angles for a hand-laid tile look. Drop the count and the portrait turns into abstract print.",
+   "source": "any",
+   "deck": [
+    {
+     "param": "qnt.steps",
+     "control": "knob",
+     "label": "COLOR STEPS"
+    },
+    {
+     "param": "dom.count",
+     "control": "fader",
+     "label": "TILE COUNT"
+    },
+    {
+     "param": "size.base",
+     "control": "knob",
+     "label": "TILE SIZE"
+    },
+    {
+     "param": "shp.type",
+     "control": "picker",
+     "label": "TILE SHAPE"
+    },
+    {
+     "param": "rot.range",
+     "control": "knob",
+     "label": "TILT"
+    }
+   ],
+   "graph": {
+    "nodes": [
+     {
+      "id": "src",
+      "type": "source",
+      "params": {}
+     },
+     {
+      "id": "dep",
+      "type": "depth",
+      "params": {}
+     },
+     {
+      "id": "dom",
+      "type": "domain",
+      "params": {
+       "count": 4800
+      }
+     },
+     {
+      "id": "disp",
+      "type": "displace",
+      "params": {
+       "gain": 0.2
+      }
+     },
+     {
+      "id": "vc",
+      "type": "video-color",
+      "params": {}
+     },
+     {
+      "id": "qnt",
+      "type": "quantize",
+      "params": {
+       "steps": 4
+      }
+     },
+     {
+      "id": "tint",
+      "type": "tint",
+      "params": {}
+     },
+     {
+      "id": "rnd",
+      "type": "random",
+      "params": {
+       "seed": 7
+      }
+     },
+     {
+      "id": "rot",
+      "type": "rotation",
+      "params": {
+       "range": 0.35
+      }
+     },
+     {
+      "id": "shp",
+      "type": "shape",
+      "params": {
+       "type": "disc"
+      }
+     },
+     {
+      "id": "size",
+      "type": "size",
+      "params": {
+       "base": 1.6
+      }
+     },
+     {
+      "id": "out",
+      "type": "output",
+      "params": {}
+     }
+    ],
+    "wires": [
+     [
+      "src.out",
+      "dep.source"
+     ],
+     [
+      "src.out",
+      "vc.source"
+     ],
+     [
+      "dom.sites",
+      "disp.domain"
+     ],
+     [
+      "dep.field",
+      "disp.amount"
+     ],
+     [
+      "vc.field",
+      "qnt.in"
+     ],
+     [
+      "qnt.out",
+      "tint.color"
+     ],
+     [
+      "rnd.out",
+      "rot.angle"
+     ],
+     [
+      "disp.out",
+      "shp.domain"
+     ],
+     [
+      "shp.out",
+      "size.domain"
+     ],
+     [
+      "size.out",
+      "rot.domain"
+     ],
+     [
+      "rot.out",
+      "tint.domain"
+     ],
+     [
+      "tint.out",
+      "out.scene"
+     ]
+    ]
+   },
+   "stickies": [
+    {
+     "text": "Quantize snaps every color to N steps - instant print look",
+     "near": "qnt"
+    },
+    {
+     "text": "Random is a hash: same seed, same mosaic forever",
+     "near": "rnd"
+    },
+    {
+     "text": "Fewer, bigger pins read as tiles, not pixels",
+     "near": "dom"
+    },
+    {
+     "text": "Try slab or tube tiles for parquet",
+     "near": "shp"
+    }
+   ]
+  }
+ ]
+}
