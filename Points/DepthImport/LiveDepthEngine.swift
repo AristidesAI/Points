@@ -16,7 +16,8 @@ struct LiveModel: Sendable, Equatable {
     var inverse: Bool       // RELATIVE models emit inverse depth (near = large) → flip
     var metric: Bool = false // METRIC models output true metres → use as-is (tune with node near/far)
     static let all: [LiveModel] = [
-        // Metric (real metres — DA V2 metric small, converted): tune the node's near/far for the scene.
+        // Metric (real metres — converted small models): tune the node's near/far for the scene.
+        LiveModel(name: "Metric Video DA S",    resource: "MetricVideoDA_S",   inverse: false, metric: true),
         LiveModel(name: "DA2 Metric Outdoor S", resource: "DAv2MetricOutdoor_S", inverse: false, metric: true),
         LiveModel(name: "DA2 Metric Indoor S",  resource: "DAv2MetricIndoor_S",  inverse: false, metric: true),
         // Relative (normalised to a metre range for display):
