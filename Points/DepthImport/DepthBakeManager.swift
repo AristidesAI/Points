@@ -45,28 +45,18 @@ nonisolated final class MoGe2DepthModel: DepthModel, @unchecked Sendable {
                                              userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]) }
         let input = try MoGe2_ViTB_Normal_504Input(imageWith: image)   // resizes to 504×504 ARGB
         let out = try await model.prediction(input: input)
-        let (depth, w, h) = Self.floats(out.depth)
-        let scale = Self.floats(out.metric_scale).0.first ?? 1
+        // Read via MLShapedArray.scalars — it honours the array's shape/strides and returns clean
+        // row-major values. Reading MLMultiArray.dataPointer linearly sheared each row (ANE outputs
+        // are row-padded), which showed up as diagonal bands in the preview.
+        let sa = out.depthShapedArray                                  // MLShapedArray<Float16>
+        let shape = sa.shape
+        let w = shape.last ?? 0
+        let h = shape.count >= 2 ? shape[shape.count - 2] : 1
+        let scalars = sa.scalars                                       // logical row-major
+        var depth = [Float](repeating: 0, count: scalars.count)
+        for i in scalars.indices { depth[i] = Float(scalars[i]) }
+        let scale = out.metric_scaleShapedArray.scalars.first.map(Float.init) ?? 1
         return DepthResult(width: w, height: h, depth: depth, metricScale: scale)
-    }
-
-    /// MLMultiArray (Float16) → [Float] + the trailing (width, height) of its shape.
-    private static func floats(_ a: MLMultiArray) -> ([Float], Int, Int) {
-        let n = a.count
-        var out = [Float](repeating: 0, count: n)
-        if a.dataType == .float16 {
-            let p = a.dataPointer.bindMemory(to: Float16.self, capacity: n)
-            for i in 0..<n { out[i] = Float(p[i]) }
-        } else if a.dataType == .float32 {
-            let p = a.dataPointer.bindMemory(to: Float.self, capacity: n)
-            for i in 0..<n { out[i] = p[i] }
-        } else {
-            for i in 0..<n { out[i] = a[i].floatValue }
-        }
-        let s = a.shape.map(\.intValue)
-        let w = s.count >= 1 ? s[s.count - 1] : n
-        let h = s.count >= 2 ? s[s.count - 2] : 1
-        return (out, w, h)
     }
 }
 
@@ -112,6 +102,7 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     private(set) var fps = 0.0
     private(set) var sourceName = ""
     private(set) var previewImage: CGImage?
+    private(set) var bgStatus = ""          // surfaced so we can see if the background task actually submits
     var etaSeconds: Double { fps > 0 ? Double(max(totalFrames - currentFrame, 0)) / fps : 0 }
     var isRunning: Bool { stage == .preparing || stage == .baking }
 
@@ -161,7 +152,8 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     private func submitBackgroundTask() {
         let req = BGContinuedProcessingTaskRequest(identifier: Self.taskID,
                                                    title: "Processing video", subtitle: "Preparing…")
-        do { try BGTaskScheduler.shared.submit(req) } catch { }
+        do { try BGTaskScheduler.shared.submit(req); bgStatus = "background task submitted" }
+        catch { bgStatus = "bg task failed: \(error.localizedDescription)" }
     }
 
     // MARK: publish (MainActor)

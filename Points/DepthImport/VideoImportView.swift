@@ -90,6 +90,9 @@ struct VideoImportView: View {
             }
             Text("Keeps processing if you leave the app — watch the Dynamic Island.")
                 .font(.system(size: 10)).foregroundStyle(Theme.text2)
+            if !bake.bgStatus.isEmpty {
+                Text(bake.bgStatus).font(.system(size: 9).monospaced()).foregroundStyle(Theme.text2.opacity(0.7))
+            }
             Spacer()
             Button { bake.cancel() } label: {
                 Text("Cancel").font(.system(size: 14, weight: .semibold))
