@@ -1,8 +1,9 @@
 # Plan — Depth-Video Import: Architecture Groundwork
 
-**Status:** Groundwork scaffolded + building (this session). Bake is **simulated** (StubDepthModel);
-the pipeline, background execution, Dynamic Island, and edge-loop UI are **real**. Implements the
-front end of the existing spec [`Plans/04-Depth-Import-Pipeline.md`](04-Depth-Import-Pipeline.md).
+**Status:** Building. **MoGe-2 now runs for real** on the ANE (photo + per-frame video) with a live
+depth preview; background execution, Dynamic Island, and edge-loop UI are real. Front end of the
+existing spec [`Plans/04-Depth-Import-Pipeline.md`](04-Depth-Import-Pipeline.md). Storage + looped
+point-cloud playback are the remaining milestones.
 
 ## Goal (from the original vision)
 RGB **video/photo in → one-time on-device metric-depth bake on the ANE → stored depth → infinite
@@ -41,10 +42,18 @@ priority (Depth Anything Video, "no breathing by construction"), photos secondar
 | Progress / fps / ETA | **real** (off asset frame count) | frame thumbnails strip |
 | Background continuation + Dynamic Island | **real** (BGContinuedProcessingTask) | on-device verify; thermal pacing |
 | Edge-loop indicator | **real** | tune corner radius per device |
-| Per-frame depth | **StubDepthModel** (sleep) | AVAssetReader → CoreML on ANE |
-| Models | protocol only | MoGe-2 (`~/Downloads/MoGe2_ViTB_Normal_504.mlpackage`, photos), DAv2-S (Fast), VDA-S (Best — the one real conversion R&D item) |
-| Storage | none | PointsDepth v2 (quantized UInt16 + LZ4, mmap) |
-| Playback | none | sequential looper (no AVPlayer) + `Clip Transport`/`Still Image` Source nodes (already in the catalog) |
+| Per-frame depth | **REAL — MoGe-2 on ANE**: photo → 1 bake, video → AVAssetReader BGRA decode (sampled ~6 fps) → per-frame MoGe-2, live grayscale depth preview | temporal-consistent video model; full-res / aspect-correct decode |
+| Models | **MoGe-2 ViT-B (504) bundled + running** (`.cpuAndNeuralEngine`; direct `depth`+`metric_scale` outputs) | DAv2-S (Fast) + VDA-S (Best) still need their own CoreML conversion |
+| Storage | none | PointsDepth v2 (quantized UInt16 + LZ4, mmap) — bake currently previews, doesn't persist |
+| Playback | none | sequential looper (no AVPlayer) + `Clip Transport`/`Still Image` Source nodes (already in the catalog); bind baked depth as a Metal texture in the renderer |
+
+**Model file:** `Points/DepthImport/MoGe2_ViTB_Normal_504.mlpackage` (202 MB) — **git-ignored**; must be
+present locally to build (the generated `MoGe2_ViTB_Normal_504` class depends on it). Xcode auto-includes
+it via the synchronized folder group.
+
+**Known rough edges (groundwork):** input is squashed to 504² (no aspect letterbox yet); portrait video
+frames ignore the track's `preferredTransform` so the depth preview may be rotated; video is sampled
+~6 fps for a quick test, not the full bake.
 
 ## Slots that already exist (no new graph plumbing)
 `Plans/03-Node-Catalog.json` / the registry already define **Source** (`mode: media/still`),

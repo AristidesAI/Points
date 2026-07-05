@@ -180,11 +180,16 @@ _First tasks — verify the Round 2 items I couldn't see from a build:_
 - **L/R hands** — do Left/Right Pinch + Gesture track the correct hand? (front camera may be swapped —
   say so and I'll flip the one line.)
 - **Pinch 0–10** — does a full-spread pinch reach ~10? Too early / too late?
-- **Video import** — open the import button: edge bar fills **clockwise from top-centre** and reaches
-  the screen edges? Start a bake, background the app → **Dynamic Island shows progress** and keeps
-  going? (Needs the Background Modes capability toggle above.)
-- Then: want me to take the import pipeline further (real MoGe-2 photo bake first, since it's already
-  converted), and/or build the photo-import mode + the page-swap polish?
+- **Depth import — now runs the REAL MoGe-2 model** (photo + video, ANE). Open the import button:
+  - Quickest test: pick a **photo** → you should see its **depth map** render (near = bright) within a
+    second or two ("Preparing engine…" on first run while it compiles).
+  - Pick a **video** → depth streams frame-by-frame (sampled ~6 fps for the test); background the app →
+    **Dynamic Island shows progress** and it keeps going. (Needs the Background Modes capability, done.)
+  - Edge bar fills **clockwise from top-centre** + reaches the screen edges?
+  - Rough edges I know about: input squashed to 504² (no aspect letterbox); portrait video may show
+    rotated (ignores the track transform); bake previews but doesn't persist yet.
+- Next up (say which): persist the bake (PointsDepth storage) + render it as a **looped point cloud**
+  (the actual payoff); dedicated video models (DAv2-S/VDA-S) need their own CoreML conversion.
 
 
 ### Round 3 feedback:
