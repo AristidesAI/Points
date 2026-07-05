@@ -137,7 +137,8 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "live-depth", name: "Live Depth Model", family: .source,
             outputs: [PortSpec("depth", .fieldFloat)],
-            params: [.option("model", ["MoGe-2", "Depth Anything V3 S", "Depth Anything V2 S"], "Depth Anything V2 S"),
+            params: [.option("model", ["DA2 Metric Outdoor S", "DA2 Metric Indoor S", "MoGe-2",
+                                        "Depth Anything V3 S", "Depth Anything V2 S"], "DA2 Metric Outdoor S"),
                      .option("lens", ["Wide", "Ultra-wide", "Tele", "Front"], "Wide"),
                      .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
             execution: .interpreterOp,

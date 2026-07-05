@@ -13,9 +13,14 @@ import CoreVideo
 struct LiveModel: Sendable, Equatable {
     var name: String        // display
     var resource: String    // compiled .mlmodelc bundle resource
-    var inverse: Bool       // relative models emit inverse depth (near = large) → flip
+    var inverse: Bool       // RELATIVE models emit inverse depth (near = large) → flip
+    var metric: Bool = false // METRIC models output true metres → use as-is (tune with node near/far)
     static let all: [LiveModel] = [
-        LiveModel(name: "MoGe-2",             resource: "MoGe2_ViTB_Normal_504",    inverse: false),
+        // Metric (real metres — DA V2 metric small, converted): tune the node's near/far for the scene.
+        LiveModel(name: "DA2 Metric Outdoor S", resource: "DAv2MetricOutdoor_S", inverse: false, metric: true),
+        LiveModel(name: "DA2 Metric Indoor S",  resource: "DAv2MetricIndoor_S",  inverse: false, metric: true),
+        // Relative (normalised to a metre range for display):
+        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",    inverse: false),
         LiveModel(name: "Depth Anything V3 S", resource: "DepthAnythingV3_small_504", inverse: true),
         LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",  inverse: true),
     ]
@@ -30,6 +35,7 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
     private var inputName = "image", outputName = "depth"
     private var inputW = 504, inputH = 504
     private var inverse = false
+    private var metric = false
     private var busy = false
     private var loadedResource = ""
     private var pool: CVPixelBufferPool?
@@ -54,7 +60,7 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
             ?? desc.outputDescriptionsByName.keys.first ?? "depth"
         lock.lock()
         model = ml; inputName = iName; inputW = iW; inputH = iH; outputName = oName
-        inverse = m.inverse; loadedResource = m.resource
+        inverse = m.inverse; metric = m.metric; loadedResource = m.resource
         lock.unlock()
         renderer.setOrient(0)   // upright RGB → identity
     }
@@ -64,7 +70,7 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
         lock.lock()
         guard let model, !busy else { lock.unlock(); return }
         busy = true
-        let inName = inputName, outName = outputName, iw = inputW, ih = inputH, inv = inverse
+        let inName = inputName, outName = outputName, iw = inputW, ih = inputH, inv = inverse, met = metric
         lock.unlock()
         defer { lock.lock(); busy = false; lock.unlock() }
 
@@ -76,13 +82,13 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
               let out = try? model.prediction(from: provider),
               let dv = out.featureValue(for: outName) else { return }
 
-        guard let (metres, w, h) = depthFloats(dv, inverse: inv), let pb = buffer(metres, w, h) else { return }
+        guard let (metres, w, h) = depthFloats(dv, inverse: inv, metric: met), let pb = buffer(metres, w, h) else { return }
         renderer.ingest(depth: pb, color: nil, lumaOnly: false)
     }
 
-    // MARK: depth → normalised metres
+    // MARK: depth → metres
 
-    private func depthFloats(_ v: MLFeatureValue, inverse: Bool) -> ([Float], Int, Int)? {
+    private func depthFloats(_ v: MLFeatureValue, inverse: Bool, metric: Bool) -> ([Float], Int, Int)? {
         var raw: [Float] = []; var w = 0, h = 0
         if let a = v.multiArrayValue {
             (raw, w, h) = arrayFloats(a)
@@ -90,7 +96,12 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
             (raw, w, h) = f
         } else { return nil }
         guard w > 0, h > 0, raw.count >= w * h else { return nil }
-        // Normalise valid values → 0.25…2.5 m (near objects small), flipping inverse-depth models.
+        // Metric models already output metres — pass through (tune the node's near/far for the scene).
+        if metric {
+            for i in 0..<(w * h) where !raw[i].isFinite { raw[i] = 0 }
+            return (raw, w, h)
+        }
+        // Relative models: normalise valid values → 0.25…2.5 m (near small), flipping inverse-depth.
         var lo = Float.greatestFiniteMagnitude, hi = -Float.greatestFiniteMagnitude
         for x in raw where x.isFinite { lo = min(lo, x); hi = max(hi, x) }
         guard hi > lo else { return nil }
