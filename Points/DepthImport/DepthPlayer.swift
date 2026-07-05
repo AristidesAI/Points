@@ -13,12 +13,14 @@ import CoreVideo
     private(set) var frames: [[Float]] = []
     private(set) var width = 0, height = 0
     private(set) var isVideo = false
+    private(set) var playbackFPS: Double = 30    // play back at the rate frames were sampled
     var isEmpty: Bool { frames.isEmpty }
     var count: Int { frames.count }
 
-    func begin(width: Int, height: Int, isVideo: Bool) {
+    func begin(width: Int, height: Int, isVideo: Bool, fps: Double) {
         frames.removeAll(keepingCapacity: true)
         self.width = width; self.height = height; self.isVideo = isVideo
+        self.playbackFPS = fps > 0 ? fps : 30
     }
     func append(_ metres: [Float]) { if frames.count < 600 { frames.append(metres) } }   // ~600MB ceiling at 504²
 }
@@ -41,7 +43,8 @@ import CoreVideo
         renderer.setOrient(0)      // imported frames are upright → no transpose/flip
         renderer.resetFilter()
         // Fires on the main runloop (scheduled from the main actor) → assumeIsolated is valid.
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        let interval = 1.0 / max(ImportedDepthStore.shared.playbackFPS, 1)
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
     }

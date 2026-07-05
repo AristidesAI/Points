@@ -168,8 +168,8 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     /// Store the frame (for playback) + update the UI. `metres` + `preview` are Sendable so this
     /// hops cleanly from the off-main bake loop.
     private func record(metres: [Float], w: Int, h: Int, frame: Int, total: Int, fps: Double,
-                        isVideo: Bool, first: Bool, preview: DepthPreview?) {
-        if first { ImportedDepthStore.shared.begin(width: w, height: h, isVideo: isVideo) }
+                        playbackFPS: Double, isVideo: Bool, first: Bool, preview: DepthPreview?) {
+        if first { ImportedDepthStore.shared.begin(width: w, height: h, isVideo: isVideo, fps: playbackFPS) }
         ImportedDepthStore.shared.append(metres)
         currentFrame = frame; totalFrames = total; self.fps = fps
         progress = total > 0 ? Double(frame) / Double(total) : 0
@@ -199,13 +199,20 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     }
 
     private nonisolated func bakePhoto(url: URL, model: MoGe2DepthModel) async throws {
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+        let ci = CIContext(options: [.useSoftwareRenderer: false])
+        guard let img = CIImage(contentsOf: url) else {
             throw NSError(domain: "bake", code: 2, userInfo: [NSLocalizedDescriptionKey: "Can't read image"])
+        }
+        // Upright per EXIF orientation so the depth (preview + point cloud) isn't rotated.
+        let orient = (img.properties[kCGImagePropertyOrientation as String] as? UInt32)
+            .flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+        let up = img.oriented(orient)
+        guard let cg = ci.createCGImage(up, from: up.extent) else {
+            throw NSError(domain: "bake", code: 2, userInfo: [NSLocalizedDescriptionKey: "Can't render image"])
         }
         let r = try await model.bake(cg)
         await record(metres: r.metres, w: r.width, h: r.height, frame: 1, total: 1, fps: 0,
-                     isVideo: false, first: true, preview: Self.preview(from: r))
+                     playbackFPS: 0, isVideo: false, first: true, preview: Self.preview(from: r))
     }
 
     private nonisolated func bakeVideo(url: URL, model: MoGe2DepthModel) async throws {
@@ -214,10 +221,14 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             throw NSError(domain: "bake", code: 3, userInfo: [NSLocalizedDescriptionKey: "No video track"])
         }
         let srcFPS = (try? await track.load(.nominalFrameRate)) ?? 30
+        let transform = (try? await track.load(.preferredTransform)) ?? .identity   // upright portrait video
         let dur = (try? await asset.load(.duration).seconds) ?? 0
         // Sample ~6 model runs / second of video so a test clip bakes quickly with a live preview.
         let stride = max(1, Int((srcFPS <= 0 ? 30 : srcFPS) / 6))
-        let total = max(Int((dur.isFinite ? dur : 0) * 6), 1)
+        // Play back at the SAMPLED rate so the clip's real-time duration is preserved (was baking at
+        // ~6 fps then playing at 30 → ~5× too fast).
+        let playbackFPS = Double(srcFPS <= 0 ? 30 : srcFPS) / Double(stride)
+        let total = max(Int((dur.isFinite ? dur : 0) * playbackFPS), 1)
 
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
@@ -233,14 +244,14 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             defer { read += 1 }
             if Task.isCancelled || BakeShared.snapshot.cancelled { reader.cancelReading(); return }
             guard read % stride == 0, let pb = CMSampleBufferGetImageBuffer(sample) else { continue }
-            let cgi = CIImage(cvPixelBuffer: pb)
+            let cgi = CIImage(cvPixelBuffer: pb).transformed(by: transform)   // upright per track transform
             guard let cg = ci.createCGImage(cgi, from: cgi.extent) else { continue }
             let r = try await model.bake(cg)
             baked += 1
             let elapsed = Date().timeIntervalSince(started)
             await record(metres: r.metres, w: r.width, h: r.height, frame: baked, total: total,
                          fps: elapsed > 0 ? Double(baked) / elapsed : 0,
-                         isVideo: true, first: baked == 1, preview: Self.preview(from: r))
+                         playbackFPS: playbackFPS, isVideo: true, first: baked == 1, preview: Self.preview(from: r))
         }
     }
 

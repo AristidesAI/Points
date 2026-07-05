@@ -248,9 +248,9 @@ struct ContentView: View {
             if runtime.hasRecordNode, !askedPhotos { askedPhotos = true; recorder.requestAuthorization() }
             // Vision runs only while a body/hand node is in the graph.
             sources?.vision.setRunning(runtime.usesBodyNodes)
-            // Imported photo/video (Still Image / Video Source node) → play the baked depth as the
-            // point-cloud source and pause the live cameras; otherwise resume the live feed.
-            if runtime.usesImportedMedia && !ImportedDepthStore.shared.isEmpty {
+            // Wiring a Still Image / Video Source node INTO Point Display plays the baked depth as the
+            // point-cloud source (pausing the live cameras); wiring Depth back returns to the live feed.
+            if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
                 sources?.setMediaMode(true); player?.start()
             } else {
                 player?.stop(); sources?.setMediaMode(false)

@@ -97,6 +97,14 @@ final class GraphRuntime {
     // Still Image / Video Source node exists in the graph.
     private static let importedMediaIDs: Set<String> = ["still-image", "clip-transport"]
     var usesImportedMedia: Bool { graph.nodes.contains { Self.importedMediaIDs.contains($0.specID) } }
+    /// True when a Still Image / Video Source node is WIRED into Point Display — that connection (not
+    /// mere presence) switches the render to the imported clip; wiring Depth back returns to live.
+    var importedSourceWired: Bool {
+        guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }) else { return false }
+        return graph.wires.contains { w in
+            w.toNode == pd.id && (graph.node(w.fromNode).map { Self.importedMediaIDs.contains($0.specID) } ?? false)
+        }
+    }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,
     // and persistent per-node state (envelopes/counters/S&H).

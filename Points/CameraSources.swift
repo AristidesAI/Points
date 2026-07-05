@@ -243,7 +243,11 @@ final class SourceManager {
         guard mediaMode != on else { return }
         mediaMode = on
         if on { front.stop(); back.stop() }
-        else if started { run(facing) }
+        else if started {
+            renderer.setOrient(facing == .front ? Self.frontOrient : Self.backOrient)   // player left orient 0
+            renderer.resetFilter()
+            run(facing)
+        }
     }
 
     func toggleFacing() {
