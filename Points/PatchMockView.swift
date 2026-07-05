@@ -47,14 +47,18 @@ enum NodeMetrics {
     static let maxParamRows = 5
     static let portDot: CGFloat = 14          // 2× the old 7, half proud of the edge
 
-    static func paramRows(_ spec: NodeSpec) -> Int { min(spec.params.count, maxParamRows) }
+    /// Value rows shown = params NOT exposed as ports (exposed ones show as an amber port row instead,
+    /// so they're not repeated in the value list), capped at maxParamRows.
+    static func paramRows(_ spec: NodeSpec, _ exposed: Int = 0) -> Int {
+        min(max(spec.params.count - exposed, 0), maxParamRows)
+    }
 
     /// Total input-port rows = declared inputs + params exposed as ports (flat model).
     static func inputRows(_ spec: NodeSpec, _ exposed: Int) -> Int { spec.inputs.count + exposed }
 
     static func height(_ spec: NodeSpec, exposed: Int = 0) -> CGFloat {
         headerH + CGFloat(inputRows(spec, exposed)) * portRowH
-            + CGFloat(paramRows(spec)) * paramRowH
+            + CGFloat(paramRows(spec, exposed)) * paramRowH
             + CGFloat(spec.outputs.count) * portRowH + 8
     }
 
@@ -66,7 +70,7 @@ enum NodeMetrics {
 
     static func outputAnchor(_ spec: NodeSpec, _ index: Int, exposed: Int = 0) -> CGPoint {
         let y = headerH + CGFloat(inputRows(spec, exposed)) * portRowH
-            + CGFloat(paramRows(spec)) * paramRowH + portRowH * (CGFloat(index) + 0.5)
+            + CGFloat(paramRows(spec, exposed)) * paramRowH + portRowH * (CGFloat(index) + 0.5)
         return CGPoint(x: width + 3, y: y)
     }
 }
@@ -516,7 +520,7 @@ struct NodeEditorView: View {
         return id
     }
 
-    /// Arm the hold-to-grab timer for an unselected node. Fires after ~0.5s if the finger
+    /// Arm the hold-to-grab timer for an unselected node. Fires after ~0.375s if the finger
     /// hasn't moved (a move cancels it and becomes a pan).
     private func beginPendingHold(_ id: String, at loc: CGPoint) {
         pendingNode = id
@@ -524,7 +528,7 @@ struct NodeEditorView: View {
         pendingMoved = false
         holdTask?.cancel()
         holdTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: 375_000_000)   // ¼ quicker than the old 0.5s
             guard !Task.isCancelled, dragMode == .pendingHold, !pendingMoved,
                   let pid = pendingNode else { return }
             selection = [pid]; selectedWire = nil; selectedPort = nil
@@ -975,7 +979,7 @@ struct NodeCardView: View {
                         .padding(.trailing, 7)
                         .frame(height: NodeMetrics.portRowH)
                     }
-                    ForEach(spec.params.prefix(NodeMetrics.maxParamRows), id: \.name) { p in
+                    ForEach(spec.params.filter { !node.exposedParams.contains($0.name) }.prefix(NodeMetrics.maxParamRows), id: \.name) { p in
                         HStack {
                             Text(p.name).font(.system(size: 9)).foregroundStyle(Theme.text2)
                                 .lineLimit(1)
@@ -1031,7 +1035,7 @@ struct NodeCardView: View {
             func inY(_ i: Int) -> CGFloat { NodeMetrics.portRowH * (CGFloat(i) + 0.5) }
             func outY(_ i: Int) -> CGFloat {
                 CGFloat(ins) * NodeMetrics.portRowH
-                    + CGFloat(NodeMetrics.paramRows(spec)) * NodeMetrics.paramRowH
+                    + CGFloat(NodeMetrics.paramRows(spec, node.exposedParams.count)) * NodeMetrics.paramRowH
                     + NodeMetrics.portRowH * (CGFloat(i) + 0.5)
             }
             let ax: CGFloat = 12

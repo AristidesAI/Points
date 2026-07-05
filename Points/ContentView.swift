@@ -59,7 +59,10 @@ struct ContentView: View {
 
     /// Fixed bottom-bar height (both modes) so the render viewport never changes size — the
     /// camera-view and node-view backdrops are pixel-identical. Tall node settings scroll.
-    private let barH: CGFloat = 240
+    /// Sized to the minimal bars (least-param node / camera deck) so there's no dead space above
+    /// the home indicator; taller bars grow up over the backdrop bottom. Same value for both modes,
+    /// so the fixed-backdrop invariant (no view-switch height jump) is preserved.
+    private let barH: CGFloat = 180
 
     /// Top-left touch-safe rect around the corner menu — taps here never fire a shockwave.
     /// Expands while the menu is open so tapping a menu option is safe too.

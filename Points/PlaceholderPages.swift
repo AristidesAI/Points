@@ -394,6 +394,7 @@ struct NodePaletteView: View {
     @State private var detail: NodeSpec?
     @State private var holdingID: String?
     @State private var gridFamily: NodeFamily = .source
+    @State private var gridQuick = true        // grid mode lands on the Recent+Favourites group
 
     private var recentIDs: [String] { recentCSV.split(separator: ",").map(String.init) }
     private var favIDs: [String] { favCSV.split(separator: ",").map(String.init) }
@@ -549,38 +550,91 @@ struct NodePaletteView: View {
     }
 
     private var gridBody: some View {
-        VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(NodeFamily.allCases, id: \.self) { fam in
-                        let count = NodeRegistry.shared.allSpecs.filter { $0.family == fam && matches($0) }.count
-                        Button { gridFamily = fam } label: {
-                            HStack(spacing: 5) {
-                                Rectangle().fill(familyColor(fam)).frame(width: 8, height: 8)
-                                Text(fam.rawValue).font(.system(size: 10, weight: .bold)).tracking(1)
-                                Text("\(count)").font(.system(size: 8).monospacedDigit())
+        let fams = families.map(\.0)   // non-empty families (already respects search / wire-type filter)
+        return VStack(spacing: 0) {
+            // Family bar: a fixed ★ Recent+Favourites tab, then an infinitely-looping family strip.
+            HStack(spacing: 6) {
+                quickTab
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            // Tripled so the strip wraps past either end — reach the last family by
+                            // scrolling either way. // ponytail: no edge-recenter; tripling is plenty for ~12.
+                            ForEach(0 ..< (max(fams.count, 1) * 3), id: \.self) { i in
+                                if !fams.isEmpty { familyTab(fams[i % fams.count], tag: i) }
                             }
-                            .padding(.horizontal, 10).padding(.vertical, 8)
-                            .foregroundStyle(gridFamily == fam ? Color.black : Theme.text)
-                            .background(gridFamily == fam ? Theme.text : Theme.panel)
-                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-                            .opacity(count == 0 ? 0.35 : 1)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(count == 0)
+                        .padding(.trailing, 16)
                     }
+                    .onAppear { if !fams.isEmpty { proxy.scrollTo(fams.count, anchor: .leading) } }
                 }
-                .padding(.horizontal, 16).padding(.vertical, 8)
             }
+            .padding(.leading, 16).padding(.vertical, 8)
             Rectangle().fill(Theme.line).frame(height: 1)
-            // 3 across, fitted to the screen width, scrolling DOWN in rows of 3 (fills the screen).
+            // 3 across, scrolling DOWN in rows of 3.
             ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                    ForEach(gridSpecs, id: \.id) { spec in nodeCube(spec) }
+                if gridQuick {
+                    VStack(alignment: .leading, spacing: 14) {
+                        quickSection("RECENT", recentIDs)
+                        quickSection("FAVOURITES", favIDs)
+                        if recentIDs.isEmpty && favIDs.isEmpty {
+                            Text("Add a node, or star one in its details — your recents and favourites collect here.")
+                                .font(.system(size: 11)).foregroundStyle(Theme.text2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(16)
+                } else {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                        ForEach(gridSpecs, id: \.id) { spec in nodeCube(spec) }
+                    }
+                    .padding(16)
                 }
-                .padding(16)
             }
             .frame(maxHeight: .infinity)
+        }
+    }
+
+    private var quickTab: some View {
+        Button { gridQuick = true } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "star.fill").font(.system(size: 8))
+                Text("RECENT").font(.system(size: 10, weight: .bold)).tracking(1)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .foregroundStyle(gridQuick ? Color.black : Theme.text)
+            .background(gridQuick ? Theme.text : Theme.panel)
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func familyTab(_ fam: NodeFamily, tag: Int) -> some View {
+        let count = NodeRegistry.shared.allSpecs.filter { $0.family == fam && matches($0) }.count
+        let sel = !gridQuick && gridFamily == fam
+        return Button { gridQuick = false; gridFamily = fam } label: {
+            HStack(spacing: 5) {
+                Rectangle().fill(familyColor(fam)).frame(width: 8, height: 8)
+                Text(fam.rawValue).font(.system(size: 10, weight: .bold)).tracking(1)
+                Text("\(count)").font(.system(size: 8).monospacedDigit())
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .foregroundStyle(sel ? Color.black : Theme.text)
+            .background(sel ? Theme.text : Theme.panel)
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .id(tag)
+    }
+
+    /// Recent / Favourites block for the grid's quick group — mini-title above a 3-wide cube grid.
+    @ViewBuilder private func quickSection(_ title: String, _ ids: [String]) -> some View {
+        let specs = ids.compactMap { NodeRegistry.shared.spec($0) }.filter(matches)
+        if !specs.isEmpty {
+            Text(title).font(.system(size: 9, weight: .bold)).tracking(1.4).foregroundStyle(Theme.text2)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(specs, id: \.id) { spec in nodeCube(spec) }
+            }
         }
     }
 
