@@ -235,9 +235,52 @@ Points ▸ Live Activities is ON** (the system progress UI is a Live Activity).
 ---
 
 ### Round 4 notes:
-
+(from chat) Imported video/photo worked but **rotated ~90–180°** (preview + output); source should
+switch by **connecting** the Depth/Still/Video node to Point Display (not presence); **video played ~5×
+too fast** (18s looped in ~5s). Then: research the smallest **realtime metric depth** models for live
+back-camera use on LiDAR-less phones (video-specific — Metric Depth Anything Video S/B); build a **Live
+Depth Model** node with many models; and a **MoGe-2 realtime** node with lens switching.
 
 ### Round 4 feedback:
+
+**3 fixes** (commit `311b308`):
+- **Orientation** — decode now uprights each frame (video: the track's `preferredTransform`; photo:
+  EXIF orientation), so preview + point cloud are no longer rotated.
+- **Source by connection** — the node WIRED into Point Display sets the source: Still Image / Video
+  Source → imported clip, Depth → live TrueDepth/LiDAR. Returning to live restores camera orientation +
+  resets the EMA. (Was gating on mere presence.)
+- **Playback speed** — plays at the sampled rate (`srcFPS/stride`), so an 18s clip plays in 18s.
+
+**Live monocular depth on the RGB camera** (commit `2471bc1`) — one **Live Depth Model** source node
+covers both asks (the multi-model live node + trying MoGe-2 live):
+- `RGBCameraSource` — live lens-selectable RGB (ultrawide / wide / tele / front).
+- `LiveDepthEngine` — generic over the model (introspects I/O; handles MLMultiArray or image outputs),
+  ANE, normalises to a metre range, pushes each frame → the same `ingest` seam → point cloud.
+- **Node params: MODEL** (MoGe-2 / Depth Anything V3 S / Depth Anything V2 S) **+ LENS + near/far/invert**.
+  Wire depth → Point Display to run it; ContentView switches source 3-way (live-model / imported / live
+  cameras). Bundled the small CoreML models on disk (git-ignored).
+- MoGe-2 live = pick "MoGe-2" as the model (its depth map drives the cloud). A separate MoGe-2-only node
+  can be split out later if you want it distinct.
+
+⚠ **Verify on-device:**
+- Imported photo/video now **upright**? Video plays at **real-time speed** (18s ≈ 18s)?
+- Switching the node wired to Point Display (Depth ↔ Still ↔ Video ↔ **Live Depth Model**) switches the
+  source live?
+- **Live Depth Model** node → wire to Point Display → does the back camera drive a live point cloud?
+  Try each MODEL + LENS. Relative models (DAv2/DAv3) render **shape** but not true metric scale — tune
+  near/far/invert; per-frame normalise may **flicker/breathe** (tell me and I'll add temporal range
+  smoothing). MoGe-2 live will be slower (bigger model) — check the framerate.
+- Model research — **done** → [RESEARCH-Live-Depth-Models.md](RESEARCH-Live-Depth-Models.md). TL;DR:
+  the one video-temporal + metric + commercial + ANE-small model is **Metric-Video-Depth-Anything-Small**
+  (Apache, convert); fastest ship-now metric is **DA V2 Metric Small** (VKITTI/Hypersim — you already
+  have the `.pth`), ~30 fps on a 15 Pro. Both need CoreML conversion (torch+coremltools toolchain — the
+  sandbox here can't run it; recipe is in the doc). The DA3 small/base I bundled are **relative**, not
+  metric. Want me to (a) walk you through converting DA-V2-Metric-Small, or (b) you run the recipe and
+  drop the `.mlpackage` in — then I add it to the node's model list?
+
+Deferred / next: metric calibration per model; MoGe-2-specific node if you want it separate; converting
+the metric DAv2 `.pth` + any video metric models to CoreML (needs a torch/coremltools toolchain — the
+sandbox here can't).
 
 ---
 
