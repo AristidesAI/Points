@@ -270,13 +270,25 @@ covers both asks (the multi-model live node + trying MoGe-2 live):
   Try each MODEL + LENS. Relative models (DAv2/DAv3) render **shape** but not true metric scale — tune
   near/far/invert; per-frame normalise may **flicker/breathe** (tell me and I'll add temporal range
   smoothing). MoGe-2 live will be slower (bigger model) — check the framerate.
-- Model research — **done** → [RESEARCH-Live-Depth-Models.md](RESEARCH-Live-Depth-Models.md). TL;DR:
-  the one video-temporal + metric + commercial + ANE-small model is **Metric-Video-Depth-Anything-Small**
-  (Apache, convert); fastest ship-now metric is **DA V2 Metric Small** (VKITTI/Hypersim — you already
-  have the `.pth`), ~30 fps on a 15 Pro. Both need CoreML conversion (torch+coremltools toolchain — the
-  sandbox here can't run it; recipe is in the doc). The DA3 small/base I bundled are **relative**, not
-  metric. Want me to (a) walk you through converting DA-V2-Metric-Small, or (b) you run the recipe and
-  drop the `.mlpackage` in — then I add it to the node's model list?
+- Model research — **done** → [RESEARCH-Live-Depth-Models.md](RESEARCH-Live-Depth-Models.md).
+
+**Round 5 — converted + bundled 3 metric models** (commits `5c2a1b2`, `dcc081b`; toolchain + scripts in
+[Plans/conversion/](conversion/README.md)). Got a py3.11 + torch 2.7 + coremltools 9 env working (3.14
+couldn't) and converted your `.pth` weights → CoreML fp16:
+- **Metric Video DA S** — Metric-Video-Depth-Anything Small, one general indoor+outdoor metric model
+  (per-frame; the temporal motion modules are bypassed since einops won't lower — temporal smoothing is
+  a later add). Now the Live Depth Model node's **default**.
+- **DA2 Metric Outdoor S** (VKITTI 0–80 m) + **DA2 Metric Indoor S** (Hypersim 0–20 m) — scene-specific.
+- All output **true metres** (engine passes them through; tune the node's near/far for the scene). The
+  earlier DA2/DA3 relative options remain.
+- **DepthPro**: it's already CoreML in your folder but a 4-stage chain, ~1 s/frame, non-commercial → skipped
+  for live.
+- **Base models** (Metric-VDA vitb, etc.): deferred per your "smalls first, then base if performance is
+  great" — one command in the conversion README once you've tested.
+
+⚠ **Verify on-device:** Live Depth Model → wire to Point Display → pick **Metric Video DA S** + a lens →
+does the back camera drive a live **metric** point cloud, and what framerate? Then try the Outdoor/Indoor
+DA2 models. If depth reads off, tune near/far. Tell me the fps and I'll advise small-vs-base.
 
 Deferred / next: metric calibration per model; MoGe-2-specific node if you want it separate; converting
 the metric DAv2 `.pth` + any video metric models to CoreML (needs a torch/coremltools toolchain — the
