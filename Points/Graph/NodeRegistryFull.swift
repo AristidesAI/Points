@@ -61,6 +61,7 @@ extension NodeRegistry {
 
     func registerFullCatalog() {
         registerTriggerNodes()   // §13 v2 — control-rate trigger-layer nodes (nested triggerGraph)
+        registerVisualPack()     // 20 field-transform visual nodes (color / depth / shape)
         registerSpec(NodeSpec(
             id: "source", name: "Source", family: .source,
             outputs: [PortSpec("source", .source)],
