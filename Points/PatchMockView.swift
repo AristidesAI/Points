@@ -158,6 +158,7 @@ struct NodeEditorView: View {
     @State private var wireDrag: WireDragState?
     @State private var ghostFinger: CGPoint?
     @State private var dragActive = false
+    @State private var dragStart: CGPoint = .zero   // this gesture's start; a new value ⇒ reclassify
     @State private var dragMode: CanvasDragMode = .none
     @State private var lastPan: CGSize = .zero
     @State private var pinchActive = false
@@ -417,9 +418,18 @@ struct NodeEditorView: View {
     private var canvasDrag: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
             .onChanged { g in
-                if !dragActive {
+                // Reclassify on a fresh finger-down. Keying on startLocation (not just the
+                // dragActive latch) self-heals a drag that was cancelled without onEnded firing —
+                // e.g. interrupted by the pinch recognizer — which otherwise left dragActive stuck
+                // true and made the next single-finger swipe "randomly" not pan.
+                if !dragActive || g.startLocation != dragStart {
                     dragActive = true
+                    dragStart = g.startLocation
                     stopInertia()
+                    // Drop any transient the previous (interrupted) drag left set.
+                    holdTask?.cancel(); holdTask = nil
+                    rubber = nil; portDraft = nil; wireDrag = nil; ghostFinger = nil
+                    pendingNode = nil; draggingNode = nil; grabOffsets = [:]
                     if camera.selectTool {
                         dragMode = .rubber
                     } else if let pr = portColumnHit(at: g.startLocation) {
