@@ -1,41 +1,76 @@
 import Foundation
 import AVFoundation
+import CoreImage
+import CoreML
+import CoreGraphics
+import ImageIO
 import BackgroundTasks
 import Observation
 
-// Video / photo depth-bake pipeline — ARCHITECTURE GROUNDWORK for Plans/04-Depth-Import-Pipeline.md.
-//
-// The plan: RGB video/photo in → one-time on-device metric-depth bake on the ANE → stored depth →
-// infinite looped playback (live sensors NEVER use these models). The real models — Metric-Video-
-// Depth-Anything-S (video "Best"), Depth Anything V2-S (video "Fast"), MoGe-2 (photos) — aren't
-// converted/bundled yet, so this ships a StubDepthModel that simulates the per-frame ANE timing.
-// Everything else is real: PHPicker import, a real frame count off the asset, live progress, and
-// BGContinuedProcessingTask so the bake keeps running when backgrounded AND the system renders the
-// Dynamic Island progress for free (iOS 26). Drop a real DepthModel in and wire AVAssetReader +
-// the PointsDepth writer to finish it.
+// Video / photo depth-bake pipeline — Plans/04-Depth-Import-Pipeline.md. RGB in → one-time on-device
+// metric-depth bake on the ANE → (future) stored depth → looped point cloud. This runs the REAL
+// MoGe-2 model per frame and shows a live depth preview so you can confirm it works. AVAssetReader
+// decodes video frames; a single photo bakes one frame. The PointsDepth writer + sequential looper
+// (playback as a point cloud) are the next milestone; for now the bake proves the model + pipeline.
 
 // MARK: - Depth model abstraction
 
-/// A monocular metric-depth backend. Real backends run on the ANE
-/// (`MLModelConfiguration.computeUnits = .cpuAndNeuralEngine` — ANE is background-legal, GPU is not).
+struct DepthResult: Sendable {
+    var width: Int
+    var height: Int
+    var depth: [Float]         // per-pixel depth (row-major, W*H). MoGe-2 gives metric-ish depth.
+    var metricScale: Float     // MoGe-2 metric_scale (multiply depth for metres)
+}
+
 protocol DepthModel: Sendable {
     var displayName: String { get }
-    /// Warm-up: on-device compile / first load ("Preparing engine…", 10–60 s on first import).
-    func prepare() async throws
-    /// Bake one frame's metric depth. The stub sleeps ≈ the real ANE per-frame budget.
-    func bakeFrame(_ index: Int) async throws
+    func prepare() async throws                    // load / warm-up (compiles on first run)
+    func bake(_ image: CGImage) async throws -> DepthResult
 }
 
-/// Stand-in until the CoreML models are converted/bundled. Simulates the timing so the whole
-/// import → background → Dynamic Island pipeline is real and testable now.
-struct StubDepthModel: DepthModel {
-    var displayName = "Simulated depth (stub)"
-    var msPerFrame: UInt64 = 24        // ≈ DAv2-S ANE budget (17–34 ms/frame from the spike notes)
-    func prepare() async throws { try? await Task.sleep(nanoseconds: 500_000_000) }
-    func bakeFrame(_ index: Int) async throws { try? await Task.sleep(nanoseconds: msPerFrame * 1_000_000) }
+/// MoGe-2 (ViT-B, 504²) — the bundled, already-converted model. Runs on the ANE. Direct `depth`
+/// output + `metric_scale`. Model file is git-ignored (202 MB) — see .gitignore / the plan doc.
+nonisolated final class MoGe2DepthModel: DepthModel, @unchecked Sendable {
+    let displayName = "MoGe-2 (ViT-B 504)"
+    private var model: MoGe2_ViTB_Normal_504?
+
+    func prepare() async throws {
+        let cfg = MLModelConfiguration()
+        cfg.computeUnits = .cpuAndNeuralEngine     // ANE (background-legal); keeps the GPU free
+        model = try await MoGe2_ViTB_Normal_504.load(configuration: cfg)
+    }
+
+    func bake(_ image: CGImage) async throws -> DepthResult {
+        guard let model else { throw NSError(domain: "MoGe2", code: 1,
+                                             userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]) }
+        let input = try MoGe2_ViTB_Normal_504Input(imageWith: image)   // resizes to 504×504 ARGB
+        let out = try await model.prediction(input: input)
+        let (depth, w, h) = Self.floats(out.depth)
+        let scale = Self.floats(out.metric_scale).0.first ?? 1
+        return DepthResult(width: w, height: h, depth: depth, metricScale: scale)
+    }
+
+    /// MLMultiArray (Float16) → [Float] + the trailing (width, height) of its shape.
+    private static func floats(_ a: MLMultiArray) -> ([Float], Int, Int) {
+        let n = a.count
+        var out = [Float](repeating: 0, count: n)
+        if a.dataType == .float16 {
+            let p = a.dataPointer.bindMemory(to: Float16.self, capacity: n)
+            for i in 0..<n { out[i] = Float(p[i]) }
+        } else if a.dataType == .float32 {
+            let p = a.dataPointer.bindMemory(to: Float.self, capacity: n)
+            for i in 0..<n { out[i] = p[i] }
+        } else {
+            for i in 0..<n { out[i] = a[i].floatValue }
+        }
+        let s = a.shape.map(\.intValue)
+        let w = s.count >= 1 ? s[s.count - 1] : n
+        let h = s.count >= 2 ? s[s.count - 2] : 1
+        return (out, w, h)
+    }
 }
 
-// MARK: - Import options (the import sheet: Indoor/Outdoor always, quality tier)
+// MARK: - Import options
 
 struct BakeOptions: Sendable, Equatable {
     enum SceneKind: String, CaseIterable, Sendable { case indoor = "Indoor", outdoor = "Outdoor" }
@@ -44,11 +79,9 @@ struct BakeOptions: Sendable, Equatable {
     var quality: Quality = .fast
 }
 
-// MARK: - Cross-actor progress snapshot
+// MARK: - Cross-actor progress snapshot (read by the nonisolated background-task handler)
 
-/// Written by the MainActor bake loop, read by the nonisolated background-task handler. One shared
-/// Sendable value so the handler never touches the MainActor manager.
-final class BakeSnapshot: @unchecked Sendable {
+nonisolated final class BakeSnapshot: @unchecked Sendable {
     private let lock = NSLock()
     private var _fraction = 0.0, _subtitle = "Preparing…", _finished = false, _cancelled = false
     var fraction: Double { lock.withLock { _fraction } }
@@ -61,8 +94,10 @@ final class BakeSnapshot: @unchecked Sendable {
     func reset() { lock.withLock { _fraction = 0; _subtitle = "Preparing…"; _finished = false; _cancelled = false } }
 }
 
-/// File-scope so the nonisolated launch handler reaches it without the MainActor manager.
-enum BakeShared { static let snapshot = BakeSnapshot() }
+nonisolated enum BakeShared { static let snapshot = BakeSnapshot() }
+
+/// Sendable grayscale preview handed from the off-main bake loop to the MainActor UI.
+struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height: Int }
 
 // MARK: - Manager
 
@@ -76,14 +111,15 @@ enum BakeShared { static let snapshot = BakeSnapshot() }
     private(set) var currentFrame = 0
     private(set) var fps = 0.0
     private(set) var sourceName = ""
+    private(set) var previewImage: CGImage?
     var etaSeconds: Double { fps > 0 ? Double(max(totalFrames - currentFrame, 0)) / fps : 0 }
     var isRunning: Bool { stage == .preparing || stage == .baking }
 
-    private var model: DepthModel = StubDepthModel()
+    private let model = MoGe2DepthModel()
     private var bakeTask: Task<Void, Never>?
 
-    // Register once, early (App init). The system calls this to keep the app alive while the bake
-    // runs in the background and to drive the Dynamic Island; the bake itself runs on the manager.
+    // MARK: background task (keeps the bake alive + drives the Dynamic Island when minimised)
+
     nonisolated static func registerBackgroundHandler() {
         _ = BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
             guard let cont = task as? BGContinuedProcessingTask else {
@@ -103,13 +139,18 @@ enum BakeShared { static let snapshot = BakeSnapshot() }
         }
     }
 
-    func start(url: URL, options: BakeOptions) {
+    // MARK: control
+
+    func start(url: URL, isVideo: Bool, options: BakeOptions) {
         guard !isRunning else { return }
         sourceName = url.lastPathComponent
-        stage = .preparing; progress = 0; currentFrame = 0; totalFrames = 0; fps = 0
+        stage = .preparing; progress = 0; currentFrame = 0; totalFrames = 0; fps = 0; previewImage = nil
         BakeShared.snapshot.reset()
         submitBackgroundTask()
-        bakeTask = Task { await runBake(url: url, options: options) }
+        let model = self.model
+        bakeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.prepareAndBake(url: url, isVideo: isVideo, model: model)
+        }
     }
 
     func cancel() {
@@ -117,35 +158,19 @@ enum BakeShared { static let snapshot = BakeSnapshot() }
         bakeTask?.cancel()
     }
 
-    // Ask the system to keep us alive + show the Dynamic Island while we bake. Failing (e.g. on the
-    // simulator, or without the Info.plist identifier) is fine — the foreground bake still runs.
     private func submitBackgroundTask() {
         let req = BGContinuedProcessingTaskRequest(identifier: Self.taskID,
-                                                   title: "Processing video",
-                                                   subtitle: "Preparing…")
+                                                   title: "Processing video", subtitle: "Preparing…")
         do { try BGTaskScheduler.shared.submit(req) } catch { }
     }
 
-    private func runBake(url: URL, options: BakeOptions) async {
-        let frames = (try? await Self.frameCount(url)) ?? 300
-        totalFrames = frames
-        let started = Date()
-        do {
-            try await model.prepare()
-            guard !BakeShared.snapshot.cancelled else { return finish(.cancelled) }
-            stage = .baking
-            for i in 0..<frames {
-                if Task.isCancelled || BakeShared.snapshot.cancelled { return finish(.cancelled) }
-                // Real path (future): AVAssetReader → CVPixelBuffer → model → PointsDepth writer.
-                try await model.bakeFrame(i)
-                currentFrame = i + 1
-                progress = Double(currentFrame) / Double(frames)
-                let elapsed = Date().timeIntervalSince(started)
-                fps = elapsed > 0 ? Double(currentFrame) / elapsed : 0
-                BakeShared.snapshot.update(progress, "Frame \(currentFrame) of \(frames)")
-            }
-            finish(.done)
-        } catch { finish(.failed(error.localizedDescription)) }
+    // MARK: publish (MainActor)
+
+    private func publish(frame: Int, total: Int, fps: Double, preview: DepthPreview?) {
+        currentFrame = frame; totalFrames = total; self.fps = fps
+        progress = total > 0 ? Double(frame) / Double(total) : 0
+        BakeShared.snapshot.update(progress, "Frame \(frame) of \(total)")
+        if let p = preview { previewImage = Self.grayscaleCGImage(p) }
     }
 
     private func finish(_ s: Stage) {
@@ -154,16 +179,91 @@ enum BakeShared { static let snapshot = BakeSnapshot() }
         BakeShared.snapshot.markFinished()
     }
 
-    /// Real frame count off the asset, sampled ≤30 fps as the spec bakes.
-    private static func frameCount(_ url: URL) async throws -> Int {
-        let asset = AVURLAsset(url: url)
-        let dur = try await asset.load(.duration)
-        let seconds = dur.seconds.isFinite ? dur.seconds : 0
-        var rate: Float = 30
-        if let track = try await asset.loadTracks(withMediaType: .video).first {
-            rate = try await track.load(.nominalFrameRate)
+    // MARK: bake loop (off main; publishes back to MainActor)
+
+    private nonisolated func prepareAndBake(url: URL, isVideo: Bool, model: MoGe2DepthModel) async {
+        do {
+            try await model.prepare()
+            if Task.isCancelled || BakeShared.snapshot.cancelled { await finish(.cancelled); return }
+            await MainActor.run { self.stage = .baking }
+            if isVideo { try await bakeVideo(url: url, model: model) }
+            else { try await bakePhoto(url: url, model: model) }
+            await finish(BakeShared.snapshot.cancelled ? .cancelled : .done)
+        } catch {
+            await finish(.failed(error.localizedDescription))
         }
-        let capped = Double(min(rate <= 0 ? 30 : rate, 30))
-        return max(Int(seconds * capped), 1)
+    }
+
+    private nonisolated func bakePhoto(url: URL, model: MoGe2DepthModel) async throws {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+            throw NSError(domain: "bake", code: 2, userInfo: [NSLocalizedDescriptionKey: "Can't read image"])
+        }
+        let r = try await model.bake(cg)
+        await publish(frame: 1, total: 1, fps: 0, preview: Self.preview(from: r))
+    }
+
+    private nonisolated func bakeVideo(url: URL, model: MoGe2DepthModel) async throws {
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw NSError(domain: "bake", code: 3, userInfo: [NSLocalizedDescriptionKey: "No video track"])
+        }
+        let srcFPS = (try? await track.load(.nominalFrameRate)) ?? 30
+        let dur = (try? await asset.load(.duration).seconds) ?? 0
+        // Sample ~6 model runs / second of video so a test clip bakes quickly with a live preview.
+        let stride = max(1, Int((srcFPS <= 0 ? 30 : srcFPS) / 6))
+        let total = max(Int((dur.isFinite ? dur : 0) * 6), 1)
+
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        output.alwaysCopiesSampleData = false
+        reader.add(output)
+        reader.startReading()
+
+        let ci = CIContext(options: [.useSoftwareRenderer: false])
+        let started = Date()
+        var read = 0, baked = 0
+        while let sample = output.copyNextSampleBuffer() {
+            defer { read += 1 }
+            if Task.isCancelled || BakeShared.snapshot.cancelled { reader.cancelReading(); return }
+            guard read % stride == 0, let pb = CMSampleBufferGetImageBuffer(sample) else { continue }
+            let cgi = CIImage(cvPixelBuffer: pb)
+            guard let cg = ci.createCGImage(cgi, from: cgi.extent) else { continue }
+            let r = try await model.bake(cg)
+            baked += 1
+            let elapsed = Date().timeIntervalSince(started)
+            await publish(frame: baked, total: total,
+                          fps: elapsed > 0 ? Double(baked) / elapsed : 0, preview: Self.preview(from: r))
+        }
+    }
+
+    // MARK: depth → grayscale preview
+
+    /// Normalise depth (near = bright), ignoring non-finite values.
+    private nonisolated static func preview(from r: DepthResult) -> DepthPreview? {
+        let w = r.width, h = r.height
+        guard w > 0, h > 0, r.depth.count >= w * h else { return nil }
+        var lo = Float.greatestFiniteMagnitude, hi = -Float.greatestFiniteMagnitude
+        for v in r.depth where v.isFinite { lo = min(lo, v); hi = max(hi, v) }
+        guard hi > lo else { return nil }
+        var px = [UInt8](repeating: 0, count: w * h)
+        let inv = 1 / (hi - lo)
+        for i in 0..<(w * h) {
+            let v = r.depth[i]
+            px[i] = v.isFinite ? UInt8(max(0, min(1, (hi - v) * inv)) * 255) : 0   // near→white
+        }
+        return DepthPreview(pixels: px, width: w, height: h)
+    }
+
+    private nonisolated static func grayscaleCGImage(_ p: DepthPreview) -> CGImage? {
+        var px = p.pixels
+        return px.withUnsafeMutableBytes { raw -> CGImage? in
+            guard let ctx = CGContext(data: raw.baseAddress, width: p.width, height: p.height,
+                                      bitsPerComponent: 8, bytesPerRow: p.width,
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+            return ctx.makeImage()
+        }
     }
 }

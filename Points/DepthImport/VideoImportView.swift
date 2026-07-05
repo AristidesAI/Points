@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 struct VideoImportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var bake = DepthBakeManager()
-    @State private var pickedURL: URL?
+    @State private var picked: (url: URL, isVideo: Bool)?
     @State private var options = BakeOptions()
     @State private var showPicker = false
 
@@ -30,7 +30,7 @@ struct VideoImportView: View {
         }
         .foregroundStyle(Theme.text)
         .sheet(isPresented: $showPicker) {
-            VideoPicker { url in pickedURL = url }.ignoresSafeArea()
+            MediaPicker { url, isVideo in picked = (url, isVideo) }.ignoresSafeArea()
         }
     }
 
@@ -38,38 +38,37 @@ struct VideoImportView: View {
 
     private var setupScreen: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header("Import depth video", "One-time on-device metric-depth bake → looped point cloud.")
+            header("Import depth", "One-time on-device MoGe-2 bake → depth. Photo or video.")
             Button { showPicker = true } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "film.stack")
-                    Text(pickedURL == nil ? "Choose a video…" : (pickedURL?.lastPathComponent ?? "")).lineLimit(1)
+                    Image(systemName: "photo.badge.plus")
+                    Text(picked == nil ? "Choose a photo or video…" : picked!.url.lastPathComponent).lineLimit(1)
                     Spacer()
-                    if pickedURL != nil { Image(systemName: "checkmark").foregroundStyle(Color(hex: 0x4DD0FF)) }
+                    if picked != nil { Image(systemName: "checkmark").foregroundStyle(Color(hex: 0x4DD0FF)) }
                 }
                 .font(.system(size: 13, weight: .medium))
                 .padding(14).background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
 
-            if pickedURL != nil {
+            if let p = picked {
+                Text(p.isVideo ? "Video → MoGe-2 per frame (sampled ~6 fps for this test)."
+                               : "Photo → a single MoGe-2 bake.")
+                    .font(.system(size: 10)).foregroundStyle(Theme.text2)
                 picker("SCENE", BakeOptions.SceneKind.allCases, options.scene) { options.scene = $0 }
                 picker("QUALITY", BakeOptions.Quality.allCases, options.quality) { options.quality = $0 }
-                Text(options.quality == .best
-                     ? "Best: video-consistent model (Depth Anything Video) — slower, no flicker."
-                     : "Fast: per-frame model (Depth Anything V2-S) — quicker, polished on top.")
-                    .font(.system(size: 10)).foregroundStyle(Theme.text2)
             }
             Spacer()
             Button {
-                if let url = pickedURL { bake.start(url: url, options: options) }
+                if let p = picked { bake.start(url: p.url, isVideo: p.isVideo, options: options) }
             } label: {
                 Text("Start processing").font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: .infinity).padding(14)
-                    .background(pickedURL == nil ? Theme.panel : Color(hex: 0x2E7BFF))
-                    .foregroundStyle(pickedURL == nil ? Theme.text2 : .white)
+                    .background(picked == nil ? Theme.panel : Color(hex: 0x2E7BFF))
+                    .foregroundStyle(picked == nil ? Theme.text2 : .white)
                     .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
             }
-            .buttonStyle(.plain).disabled(pickedURL == nil)
+            .buttonStyle(.plain).disabled(picked == nil)
             closeButton
         }
     }
@@ -79,9 +78,10 @@ struct VideoImportView: View {
     private var bakeScreen: some View {
         VStack(alignment: .leading, spacing: 14) {
             header("Processing", bake.sourceName)
+            depthPreview
             Spacer()
             Text(String(format: "%.0f%%", bake.progress * 100))
-                .font(.system(size: 64, weight: .heavy).monospacedDigit())
+                .font(.system(size: 56, weight: .heavy).monospacedDigit())
                 .foregroundStyle(Color(hex: 0x4DD0FF))
             VStack(alignment: .leading, spacing: 6) {
                 stat("FRAME", bake.totalFrames > 0 ? "\(bake.currentFrame) / \(bake.totalFrames)" : "…")
@@ -115,6 +115,25 @@ struct VideoImportView: View {
                     .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    /// Live depth map coming out of the model — the proof it's working.
+    private var depthPreview: some View {
+        ZStack {
+            Rectangle().fill(Color.black)
+            if let img = bake.previewImage {
+                Image(decorative: img, scale: 1, orientation: .up)
+                    .resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
+            } else {
+                Text("Preparing engine…").font(.system(size: 11)).foregroundStyle(Theme.text2)
+            }
+        }
+        .frame(height: 240).frame(maxWidth: .infinity).clipped()
+        .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        .overlay(alignment: .topLeading) {
+            Text("DEPTH").font(.system(size: 8, weight: .bold)).tracking(1.2).foregroundStyle(.white)
+                .padding(4).background(Color.black.opacity(0.6)).padding(6)
         }
     }
 
@@ -177,13 +196,13 @@ struct VideoImportView: View {
     }
 }
 
-// MARK: - PHPicker (video only, copies the pick to a stable temp URL)
+// MARK: - PHPicker (photo or video → a stable temp URL + which kind)
 
-struct VideoPicker: UIViewControllerRepresentable {
-    var onPick: (URL) -> Void
+struct MediaPicker: UIViewControllerRepresentable {
+    var onPick: (URL, Bool) -> Void          // (url, isVideo)
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var config = PHPickerConfiguration()
-        config.filter = .videos
+        config.filter = .any(of: [.videos, .images])
         config.selectionLimit = 1
         let vc = PHPickerViewController(configuration: config)
         vc.delegate = context.coordinator
@@ -193,18 +212,21 @@ struct VideoPicker: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
 
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
-        let onPick: (URL) -> Void
-        init(onPick: @escaping (URL) -> Void) { self.onPick = onPick }
+        let onPick: (URL, Bool) -> Void
+        init(onPick: @escaping (URL, Bool) -> Void) { self.onPick = onPick }
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
             guard let provider = results.first?.itemProvider else { return }
+            let isVideo = provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
+            let type = isVideo ? UTType.movie.identifier : UTType.image.identifier
             // The provided URL is deleted when the closure returns → copy it somewhere stable.
-            provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
+            provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
                 guard let url else { return }
+                let ext = isVideo ? "mov" : (url.pathExtension.isEmpty ? "jpg" : url.pathExtension)
                 let dst = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString).appendingPathExtension("mov")
+                    .appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
                 try? FileManager.default.copyItem(at: url, to: dst)
-                Task { @MainActor in self.onPick(dst) }
+                Task { @MainActor in self.onPick(dst, isVideo) }
             }
         }
     }
