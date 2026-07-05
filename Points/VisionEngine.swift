@@ -116,7 +116,8 @@ nonisolated final class VisionEngine: @unchecked Sendable {
         }
         var pinch: Float = 0.5, openness: Float = 0.5
         if let tt = p(.thumbTip), let it = p(.indexTip) {
-            pinch = min(simd_distance(tt, it) * 4, 1)      // 0 touching → 1 wide
+            pinch = min(simd_distance(tt, it) * 2.2, 1)    // 0 touching → 1 at full physical spread
+            // ponytail: 2.2 = 1/maxSpread(~0.45 normalized); calibration knob if 10 lands early/late
         }
         // A finger is "up" when its tip is meaningfully farther from the wrist than its PIP joint.
         func up(_ tip: VNHumanHandPoseObservation.JointName, _ pip: VNHumanHandPoseObservation.JointName,

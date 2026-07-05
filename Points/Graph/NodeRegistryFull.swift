@@ -79,7 +79,7 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: id, name: name, family: .body,
             outputs: [PortSpec("distance", .signal)],
-            params: Self.visionParams, execution: .control, description: desc,
+            params: Self.pinchParams, execution: .control, description: desc,
             controlEvalStateful: { node, _, ctx, state in
                 var p = state.x
                 let d = shapeVisionValue(source(ctx), node, ctx.dt, &p)
@@ -94,6 +94,13 @@ extension NodeRegistry {
     private static let visionParams: [ParamSpec] = [
         .float("gain", 0...4, 1), .float("inMin", 0...1, 0), .float("inMax", 0...1, 1),
         .float("outMin", 0...1, 0), .float("outMax", 0...1, 1),
+        .float("deadzone", 0...0.5, 0), .float("smoothing", 0...1, 0), .bool("invert", false)]
+
+    /// Pinch nodes: like visionParams but OUT scales to 10 — a full-spread pinch reads 10, not 1.
+    /// (Driving an exposed 0-1 param? Lower outMax to 1 or add a Remap, else it saturates fast.)
+    private static let pinchParams: [ParamSpec] = [
+        .float("gain", 0...4, 1), .float("inMin", 0...1, 0), .float("inMax", 0...1, 1),
+        .float("outMin", 0...10, 0), .float("outMax", 0...10, 10),
         .float("deadzone", 0...0.5, 0), .float("smoothing", 0...1, 0), .bool("invert", false)]
 
     // MARK: - SOURCE (rest)
