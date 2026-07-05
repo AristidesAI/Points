@@ -388,10 +388,50 @@ struct NodePaletteView: View {
     var onAdd: ((NodeSpec) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @AppStorage("paletteGrid") private var gridMode = false   // list ↔ TouchDesigner OP-grid
+    @AppStorage("recentNodeIDs") private var recentCSV = ""   // last-added spec ids (most-recent first, ≤6)
+    @AppStorage("favNodeIDs") private var favCSV = ""         // starred spec ids (set in the detail card)
     @State private var search = ""
     @State private var detail: NodeSpec?
     @State private var holdingID: String?
     @State private var gridFamily: NodeFamily = .source
+
+    private var recentIDs: [String] { recentCSV.split(separator: ",").map(String.init) }
+    private var favIDs: [String] { favCSV.split(separator: ",").map(String.init) }
+    private func recordRecent(_ spec: NodeSpec) {
+        var ids = recentIDs.filter { $0 != spec.id }
+        ids.insert(spec.id, at: 0)
+        recentCSV = ids.prefix(6).joined(separator: ",")
+    }
+    /// Every add routes through here so it lands in the Recent strip.
+    private func add(_ spec: NodeSpec) { recordRecent(spec); onAdd?(spec) }
+
+    /// Horizontal strip of quick-add chips (Recent / Favourites) — tap a chip to add it.
+    @ViewBuilder private func quickStrip(_ title: String, _ ids: [String]) -> some View {
+        let specs = ids.compactMap { NodeRegistry.shared.spec($0) }.filter(matches)
+        if !specs.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.system(size: 9, weight: .bold)).tracking(1.4)
+                    .foregroundStyle(Theme.text2).padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(specs, id: \.id) { spec in
+                            HStack(spacing: 5) {
+                                Rectangle().fill(familyColor(spec.family)).frame(width: 5, height: 16)
+                                Text(spec.name).font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Theme.text).lineLimit(1)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 6)
+                            .background(Theme.panel)
+                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .onTapGesture { UIImpactFeedbackGenerator(style: .medium).impactOccurred(); add(spec) }
+                        }
+                    }.padding(.horizontal, 16)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
 
     private func matches(_ s: NodeSpec) -> Bool {
         !NodeRegistry.triggerOnlyIDs.contains(s.id)   // flat model: Drive Param is obsolete → hidden
@@ -427,7 +467,7 @@ struct NodePaletteView: View {
                 ZStack(alignment: .bottom) {
                     Color.black.opacity(0.55).ignoresSafeArea()
                         .onTapGesture { detail = nil }
-                    NodeSpecCard(spec: spec, onAdd: onAdd.map { add in { s in detail = nil; add(s) } })
+                    NodeSpecCard(spec: spec, onAdd: onAdd == nil ? nil : { s in detail = nil; add(s) })
                 }
                 .transition(.opacity)
             }
@@ -472,6 +512,8 @@ struct NodePaletteView: View {
     private var listBody: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 4, pinnedViews: .sectionHeaders) {
+                quickStrip("RECENT", recentIDs)
+                quickStrip("FAVOURITES", favIDs)
                 ForEach(families, id: \.0) { fam, specs in
                     Section {
                         ForEach(specs, id: \.id) { spec in
@@ -480,7 +522,7 @@ struct NodePaletteView: View {
                                 .onTapGesture { detail = spec }
                                 .onLongPressGesture(minimumDuration: 0.55) {
                                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                    onAdd?(spec)
+                                    add(spec)
                                 } onPressingChanged: { holdingID = $0 ? spec.id : nil }
                         }
                     } header: {
@@ -561,7 +603,7 @@ struct NodePaletteView: View {
         .onTapGesture { detail = spec }
         .onLongPressGesture(minimumDuration: 0.55) {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            onAdd?(spec)
+            add(spec)
         } onPressingChanged: { holdingID = $0 ? spec.id : nil }
         .animation(.easeOut(duration: 0.5), value: holding)
     }
@@ -606,6 +648,14 @@ extension NodeSpec: Identifiable {}
 struct NodeSpecCard: View {
     let spec: NodeSpec
     var onAdd: ((NodeSpec) -> Void)? = nil
+    @AppStorage("favNodeIDs") private var favCSV = ""
+
+    private var isFav: Bool { favCSV.split(separator: ",").map(String.init).contains(spec.id) }
+    private func toggleFav() {
+        var ids = favCSV.split(separator: ",").map(String.init)
+        if let i = ids.firstIndex(of: spec.id) { ids.remove(at: i) } else { ids.append(spec.id) }
+        favCSV = ids.joined(separator: ",")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -616,6 +666,20 @@ struct NodeSpecCard: View {
                 Text(spec.family.rawValue).font(.system(size: 9, weight: .semibold)).tracking(1)
                     .foregroundStyle(Theme.text2)
                 if onAdd != nil {
+                    // Favourite toggle — sits just left of ADD; adds/removes this node from the
+                    // Favourites strip at the top of the palette.
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        toggleFav()
+                    } label: {
+                        Image(systemName: isFav ? "star.fill" : "star")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(isFav ? Color(hex: 0xFFC24D) : Theme.text2)
+                            .frame(width: 34, height: 30)
+                            .background(Theme.panel)
+                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                    }
+                    .buttonStyle(PadPressStyle())
                     // Tap adds the node and closes the palette (hold-a-row on the list also works).
                     Button {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
