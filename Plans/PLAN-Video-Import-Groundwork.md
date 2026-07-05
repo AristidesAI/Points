@@ -44,8 +44,8 @@ priority (Depth Anything Video, "no breathing by construction"), photos secondar
 | Edge-loop indicator | **real** | tune corner radius per device |
 | Per-frame depth | **REAL — MoGe-2 on ANE**: photo → 1 bake, video → AVAssetReader BGRA decode (sampled ~6 fps) → per-frame MoGe-2, live grayscale depth preview | temporal-consistent video model; full-res / aspect-correct decode |
 | Models | **MoGe-2 ViT-B (504) bundled + running** (`.cpuAndNeuralEngine`; direct `depth`+`metric_scale` outputs) | DAv2-S (Fast) + VDA-S (Best) still need their own CoreML conversion |
-| Storage | none | PointsDepth v2 (quantized UInt16 + LZ4, mmap) — bake currently previews, doesn't persist |
-| Playback | none | sequential looper (no AVPlayer) + `Clip Transport`/`Still Image` Source nodes (already in the catalog); bind baked depth as a Metal texture in the renderer |
+| Storage | **in-memory** (`ImportedDepthStore`, capped 600 frames) | PointsDepth v2 on disk (quantized UInt16 + LZ4, mmap) |
+| Playback | **REAL — renders as a point cloud.** `DepthPlayer` loops the baked metric-depth frames into `renderer.ingest` (the same seam the live cameras use) at 30 fps; live cameras pause. **Still Image / Video Source** nodes now output `.fieldFloat` depth via `loadDepth` (like the Depth node) → Point Display. | aspect/orientation refinement; transport (speed / loop-range); scale calibration |
 
 **Model file:** `Points/DepthImport/MoGe2_ViTB_Normal_504.mlpackage` (202 MB) — **git-ignored**; must be
 present locally to build (the generated `MoGe2_ViTB_Normal_504` class depends on it). Xcode auto-includes

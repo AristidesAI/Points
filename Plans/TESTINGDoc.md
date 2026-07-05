@@ -194,6 +194,44 @@ _First tasks — verify the Round 2 items I couldn't see from a build:_
 
 ### Round 3 feedback:
 
+Your test showed the bake ran but the result was wrong: depth preview was **diagonal black/white
+bands**, the **Source node's `.source` output only fed sinks**, and the **Dynamic Island didn't appear**
+when backgrounded. Fixed all three (commits `18a6a8e`, `59e10bc`).
+
+**Model side — diagonal bands.** Root cause: ANE model outputs are **row-padded**; I was reading the
+MoGe-2 depth `MLMultiArray` linearly off `dataPointer`, so each row's padding shifted the next → a
+diagonal shear on a smooth depth map. Now read via `MLShapedArray.scalars`, which honours the array's
+shape/strides. Clean depth map.
+
+**Node side — imported media renders as a point cloud (the real fix).** The render pipeline map showed
+the single seam is `renderer.ingest(depth:…)` — everything downstream is source-agnostic, so baked
+depth pushed through it renders **exactly like live LiDAR**. So:
+- **Still Image** + **Video Source** (was "Clip Transport") nodes now output **`.fieldFloat` depth** via
+  `loadDepth` — same as the Depth node — instead of the inert `.source` port. Wire `depth → Point
+  Display`. Video Source loops.
+- New **`DepthPlayer` + `ImportedDepthStore`**: the bake stores each frame's metric depth (metres); the
+  player loops them into `renderer.ingest` at 30 fps (DepthFloat32 buffers, EMA reset at the loop seam).
+  Live cameras pause while media plays. After a bake, **"Use in project"** drops + wires the source node
+  and it starts playing.
+- Also fixed: the Left/Right hand nodes weren't starting Vision (missing from `bodyFamily`).
+
+**Dynamic Island.** Root cause (confirmed against the docs): the `BGContinuedProcessingTask` id
+**must be prefixed with the real bundle id and permitted as a `.*` wildcard** — mine was
+`com.points.depthbake` (bundle id is `aristides.lintzeris.Points`), so submission was silently rejected.
+Now `aristides.lintzeris.Points.depthbake.*` in Info.plist; each run registers + submits a fresh
+suffixed id. The bake screen shows the submit status so we can see it now. Also verify **Settings ▸
+Points ▸ Live Activities is ON** (the system progress UI is a Live Activity).
+
+⚠ **Verify on-device:**
+- Photo/video bake → depth preview is a **clean depth map** (no diagonal bands)?
+- Import → "Use in project" → does the **point cloud render the imported depth**, and does video **loop**?
+  If it reads **flat or inverted**, that's depth-scale calibration — tune the Still Image/Video Source
+  node's **near/far** (or tell me and I'll adjust the metric-scale mapping).
+- Background a video bake → **Dynamic Island now shows progress**? (Check the bake screen's status line +
+  the Live Activities setting.)
+- Known rough edges still: square (504²) squash — imported cloud is stretched to the 3:4 grid; portrait
+  video may be rotated. Say if that matters and I'll add aspect/orientation handling.
+
 ---
 
 ### Round 4 notes:
