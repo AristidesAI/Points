@@ -163,6 +163,9 @@ struct NodeEditorView: View {
     @State private var lastPan: CGSize = .zero
     @State private var pinchActive = false
     @State private var inertia: Task<Void, Never>?
+    @State private var zoomInertia: Task<Void, Never>?   // fling-zoom that keeps rolling after a pinch
+    @State private var zoomVel: CGFloat = 1              // smoothed pinch factor (>1 zoom in, <1 out)
+    @State private var pinchCenter: CGPoint = .zero
     @State private var selectedPort: PortRef?     // white-outlined port square
     @State private var portDraft: PortDraft?      // active port-column interaction
     // Tap-and-HOLD (~0.5s) on an UNSELECTED node → select + grab it, move in the same motion.
@@ -207,11 +210,14 @@ struct NodeEditorView: View {
                         camera.offset.width = center.x - (center.x - camera.offset.width) * f
                         camera.offset.height = center.y - (center.y - camera.offset.height) * f
                         camera.scale = newScale
+                        zoomVel = zoomVel * 0.4 + factor * 0.6   // smoothed factor → fling velocity
+                        pinchCenter = center
                     },
                     onBegan: {
                         // Pinch beats everything: drop any drag mid-flight, freeze pans.
                         pinchActive = true
                         stopInertia()
+                        zoomVel = 1
                         wireDrag = nil
                         ghostFinger = nil
                         portDraft = nil
@@ -220,7 +226,7 @@ struct NodeEditorView: View {
                         pendingNode = nil
                         dragMode = .none
                     },
-                    onEnded: { pinchActive = false }
+                    onEnded: { pinchActive = false; startZoomInertia() }
                 )
                 wireCanvas
                     .allowsHitTesting(false)
@@ -274,8 +280,28 @@ struct NodeEditorView: View {
     }
 
     private func stopInertia() {
-        inertia?.cancel()
-        inertia = nil
+        inertia?.cancel(); inertia = nil
+        zoomInertia?.cancel(); zoomInertia = nil
+    }
+
+    /// Keep zooming after the fingers lift, decaying to a stop — interrupted by any fresh drag
+    /// (canvasDrag reclassify + pinch onBegan both call stopInertia).
+    private func startZoomInertia() {
+        guard abs(zoomVel - 1) > 0.006 else { return }   // a still/slow release doesn't fling
+        stopInertia()
+        var vel = zoomVel
+        let center = pinchCenter
+        zoomInertia = Task { @MainActor in
+            while !Task.isCancelled, abs(vel - 1) > 0.002 {
+                let newScale = min(max(camera.scale * vel, 0.2), 2.2)
+                let f = newScale / camera.scale
+                camera.offset.width = center.x - (center.x - camera.offset.width) * f
+                camera.offset.height = center.y - (center.y - camera.offset.height) * f
+                camera.scale = newScale
+                vel = 1 + (vel - 1) * 0.90
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
     }
 
     private func startInertia(_ v: CGSize) {
@@ -1539,12 +1565,12 @@ struct NodeLiveReadout: View {
         case "value-display": return String(format: "%.3f", runtime.liveControlValue(node.id, "out"))
         case "binary-display": return runtime.liveControlValue(node.id, "out") > 0.5 ? "YES" : "NO"
         case "live-update":
-            var best: Wire?, bestV: Float = 0.35   // the active input must clear this to show
-            for w in runtime.activeGraph.wires where w.toNode == node.id {
-                let v = runtime.liveControlValue(w.fromNode, w.fromPort)
-                if v > bestV { bestV = v; best = w }
-            }
-            guard let w = best else { return "—" }
+            // The node holds the active input index (with a HOLD gate) → read it and name that wire.
+            let idx = Int(runtime.liveControlValue(node.id, "out").rounded())
+            guard idx >= 0, idx < spec.inputs.count else { return "—" }
+            let port = spec.inputs[idx].name
+            guard let w = runtime.activeGraph.wires.first(where: { $0.toNode == node.id && $0.toPort == port })
+            else { return "—" }
             // Prefer the source port's name (e.g. Hand Gesture's "palm"/"fist"); if it's a generic
             // "out", fall back to the source node's name (e.g. "Hand Pinch").
             let generic: Set<String> = ["out", "in", "value", "signal"]

@@ -49,6 +49,45 @@ extension NodeRegistry {
             emit: { b, inputs, _ in [b.materialize(inputs.first ?? -1, default: .zero)] }))
     }
 
+    /// Palm/fist/peace/point trigger node reading a chosen gesture bus (all hands / left / right),
+    /// with HOLD (linger) + SMOOTHING. Source is continuous while the gesture is recognised.
+    private func gestureShapeNode(_ id: String, _ name: String, _ desc: String,
+                                  _ source: @escaping @Sendable (ControlContext) -> SIMD4<Float>) {
+        registerSpec(NodeSpec(
+            id: id, name: name, family: .body,
+            outputs: [PortSpec("palm", .trigger), PortSpec("fist", .trigger),
+                      PortSpec("peace", .trigger), PortSpec("point", .trigger)],
+            params: [.float("hold", 0...3, 0.25), .float("smoothing", 0...1, 0)],
+            execution: .control, description: desc,
+            controlEvalStateful: { node, _, ctx, state in
+                let raw = source(ctx)
+                let hold = node.float("hold", 0.25), sm = node.float("smoothing", 0)
+                let atk: Float = sm > 0.001 ? (1 - sm * 0.97) : 1               // rise to the gesture
+                let rel: Float = hold > 0.001 ? (1 - exp(-ctx.dt / hold)) : 1    // linger ~HOLD after it stops
+                var s = state
+                for i in 0..<4 { let t = raw[i]; s[i] += (t - s[i]) * (t > s[i] ? atk : rel) }
+                state = s
+                return [SIMD4(repeating: s.x), SIMD4(repeating: s.y),
+                        SIMD4(repeating: s.z), SIMD4(repeating: s.w)]
+            }))
+    }
+
+    /// Hand-pinch distance node (0 touching → wide) reading a chosen pinch bus (first / left / right),
+    /// SHAPED via the shared vision params.
+    private func handPinchNode(_ id: String, _ name: String, _ desc: String,
+                               _ source: @escaping @Sendable (ControlContext) -> Float) {
+        registerSpec(NodeSpec(
+            id: id, name: name, family: .body,
+            outputs: [PortSpec("distance", .signal)],
+            params: Self.visionParams, execution: .control, description: desc,
+            controlEvalStateful: { node, _, ctx, state in
+                var p = state.x
+                let d = shapeVisionValue(source(ctx), node, ctx.dt, &p)
+                state = SIMD4(p, 0, 0, 0)
+                return [SIMD4(repeating: d)]
+            }))
+    }
+
     private static let shapeNames = ["sphere", "cube", "tube", "slab", "cone", "ring", "disc", "spike"]
 
     /// Shared richer settings for continuous Vision nodes (Hand Position, Head Pose, Pinch, Openness).
@@ -775,17 +814,12 @@ extension NodeRegistry {
                 state = SIMD4(px, py, 0, 0)
                 return [SIMD4(repeating: x), SIMD4(repeating: y)]
             }))
-        registerSpec(NodeSpec(
-            id: "pinch-amount", name: "Hand Pinch", family: .body,
-            outputs: [PortSpec("distance", .signal)],
-            params: Self.visionParams, execution: .control,
-            description: "Index-tip↔thumb-tip distance (0 touching → 1 wide) for the first hand seen, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT. Drive Z, size…",
-            controlEvalStateful: { node, _, ctx, state in
-                var p = state.x
-                let d = shapeVisionValue(ctx.bodyB.z, node, ctx.dt, &p)
-                state = SIMD4(p, 0, 0, 0)
-                return [SIMD4(repeating: d)]
-            }))
+        handPinchNode("pinch-amount", "Hand Pinch",
+                      "Index-tip↔thumb-tip distance (0 touching → wide) for the FIRST hand seen, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT. Drive Z, size…") { $0.bodyB.z }
+        handPinchNode("left-hand-pinch", "Left Hand Pinch",
+                      "Pinch distance for the LEFT hand only (by chirality) — a right-hand pinch does nothing. SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.") { $0.pinchLR.x }
+        handPinchNode("right-hand-pinch", "Right Hand Pinch",
+                      "Pinch distance for the RIGHT hand only (by chirality) — a left-hand pinch does nothing. SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.") { $0.pinchLR.z }
         registerSpec(NodeSpec(
             id: "hand-openness", name: "Hand Openness", family: .body,
             outputs: [PortSpec("amount", .signal)],
@@ -809,28 +843,10 @@ extension NodeRegistry {
                 state = SIMD4(px, py, 0, 0)
                 return [SIMD4(repeating: x), SIMD4(repeating: y)]
             }))
-        registerSpec(NodeSpec(
-            id: "hand-gesture", name: "Hand Gesture", family: .body,
-            outputs: [PortSpec("palm", .trigger), PortSpec("fist", .trigger),
-                      PortSpec("peace", .trigger), PortSpec("point", .trigger)],
-            params: [.float("hold", 0...3, 0), .float("smoothing", 0...1, 0)],
-            execution: .control,
-            description: "Recognised hand shape — palm · fist · peace · point. HOLD keeps the output high (seconds) while you keep the gesture up, so a wired palette/effect STICKS instead of flashing; SMOOTHING eases the transition between states. HOLD 0 + SMOOTHING 0 = raw one-frame pulses.",
-            controlEvalStateful: { node, _, ctx, state in
-                let raw = SIMD4<Float>(ctx.gestures.x, ctx.gestures.y, ctx.gestures.z, ctx.gestures.w)
-                let hold = node.float("hold", 0)
-                let sm = node.float("smoothing", 0)
-                let atk: Float = sm > 0.001 ? (1 - sm * 0.97) : 1               // how fast it rises to the gesture
-                let rel: Float = hold > 0.001 ? (1 - exp(-ctx.dt / hold)) : 1    // linger ~HOLD seconds after it stops
-                var s = state
-                for i in 0..<4 {
-                    let t = raw[i]
-                    s[i] += (t - s[i]) * (t > s[i] ? atk : rel)
-                }
-                state = s
-                return [SIMD4(repeating: s.x), SIMD4(repeating: s.y),
-                        SIMD4(repeating: s.z), SIMD4(repeating: s.w)]
-            }))
+        let gestureDesc = "Recognised hand shape — palm · fist · peace · point — held HIGH continuously while the gesture stays visible. HOLD lingers the output a moment after it drops (bridges brief mis-reads); SMOOTHING eases transitions between states."
+        gestureShapeNode("hand-gesture", "Hand Gesture", gestureDesc + " Uses the first hand seen.") { $0.gestures }
+        gestureShapeNode("left-hand-gesture", "Left Hand Gesture", gestureDesc + " LEFT hand only (by chirality).") { $0.gesturesL }
+        gestureShapeNode("right-hand-gesture", "Right Hand Gesture", gestureDesc + " RIGHT hand only (by chirality).") { $0.gesturesR }
         stubControl("person-present", "Person Present", .body,
                     [PortSpec("present", .signal), PortSpec("entered", .trigger)],
                     "Someone in frame?") { ctx in
@@ -1048,12 +1064,22 @@ extension NodeRegistry {
             }))
         registerSpec(NodeSpec(
             id: "live-update", name: "Live Update", family: .tools,
-            inputs: [PortSpec("in1", .trigger), PortSpec("in2", .trigger), PortSpec("in3", .trigger),
-                     PortSpec("in4", .trigger), PortSpec("in5", .trigger), PortSpec("in6", .trigger)],
+            inputs: (1...10).map { PortSpec("in\($0)", .trigger) },
             outputs: [PortSpec("out", .signal)],
+            params: [.float("hold", 0...3, 0.6)],
             execution: .control,
-            description: "Wire several triggers in (e.g. every Hand Gesture output). Shows the NAME of whichever input is active right now — so palm→fist reads \"PALM\" then \"FIST\". Outputs the active value.",
-            controlEval: { _, inputs, _ in [inputs.max(by: { $0.x < $1.x }) ?? .zero] }))
+            description: "Wire several triggers in (e.g. every Hand Gesture output) and it shows the NAME of whichever input is active right now — palm→fist reads \"PALM\" then \"FIST\". HOLD keeps the last name up briefly so a momentary drop doesn't blank it to \"—\". Outputs the active input's index.",
+            controlEvalStateful: { node, inputs, ctx, state in
+                // state.x = held active index (−1 = none) · state.y = seconds since a real input was active.
+                // Only latch on a genuine active input; hold the last one for HOLD s before clearing.
+                var active = -1; var best: Float = 0.35
+                for (i, v) in inputs.enumerated() where v.x > best { best = v.x; active = i }
+                var idx = state.x, timer = state.y
+                if active >= 0 { idx = Float(active); timer = 0 }
+                else { timer += ctx.dt; if timer >= node.float("hold", 0.6) { idx = -1 } }
+                state = SIMD4(idx, timer, 0, 0)
+                return [SIMD4(idx, best, 0, 0)]
+            }))
         registerSpec(NodeSpec(
             id: "macro", name: "Macro", family: .tools,
             execution: .render,

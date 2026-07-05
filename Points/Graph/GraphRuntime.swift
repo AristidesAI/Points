@@ -87,7 +87,7 @@ final class GraphRuntime {
     var usesMidiNodes: Bool { graph.nodes.contains { Self.midiIDs.contains($0.specID) } }
 
     // Live body/hand tracking (Vision), supplied by ContentView while a body node exists.
-    @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>))?
+    @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>))?
     private static let bodyFamily: Set<String> = ["hand-position", "pinch-amount", "hand-openness",
         "head-pose", "hand-gesture", "person-present", "joint", "body-region", "face-region"]
     var usesBodyNodes: Bool { graph.nodes.contains { Self.bodyFamily.contains($0.specID) } }
@@ -916,6 +916,7 @@ final class GraphRuntime {
         if let m = midiSource?() { ctx.midi = m }                                  // live MIDI
         if let b = bodySource?() {                                                 // live Vision
             ctx.bodyA = b.bodyA; ctx.bodyB = b.bodyB; ctx.gestures = b.gestures; ctx.present = b.present
+            ctx.pinchLR = b.pinchLR; ctx.gesturesL = b.gesturesL; ctx.gesturesR = b.gesturesR
         }
         evaluateControlGraph(ctx)
 

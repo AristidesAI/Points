@@ -11,13 +11,16 @@ nonisolated final class VisionEngine: @unchecked Sendable {
     private let queue = DispatchQueue(label: "points.vision", qos: .userInitiated)
     private let bodyReq = VNDetectHumanBodyPoseRequest()
     private let handReq: VNDetectHumanHandPoseRequest = {
-        let r = VNDetectHumanHandPoseRequest(); r.maximumHandCount = 1; return r
+        let r = VNDetectHumanHandPoseRequest(); r.maximumHandCount = 2; return r
     }()
 
     private let lock = NSLock()
     private var _bodyA = SIMD4<Float>.zero      // headX, headY, handLX, handLY
     private var _bodyB = SIMD4<Float>.zero      // handRX, handRY, pinch, openness
-    private var _gestures = SIMD4<Float>.zero   // palm, fist, peace, point
+    private var _gestures = SIMD4<Float>.zero   // palm, fist, peace, point (first hand seen)
+    private var _pinchLR = SIMD4<Float>.zero    // pinchL, opennessL, pinchR, opennessR
+    private var _gesturesL = SIMD4<Float>.zero  // left-hand palm/fist/peace/point
+    private var _gesturesR = SIMD4<Float>.zero  // right-hand palm/fist/peace/point
     private var _present = SIMD4<Float>.zero    // present, entered
     private var wasPresent = false
     private var busy = false
@@ -26,15 +29,17 @@ nonisolated final class VisionEngine: @unchecked Sendable {
 
     func setRunning(_ on: Bool) {
         running = on
-        if !on { lock.lock(); _bodyA = .zero; _bodyB = .zero; _gestures = .zero; _present = .zero; lock.unlock() }
+        if !on { lock.lock(); _bodyA = .zero; _bodyB = .zero; _gestures = .zero
+                 _pinchLR = .zero; _gesturesL = .zero; _gesturesR = .zero; _present = .zero; lock.unlock() }
     }
 
-    /// Latest tracking (thread-safe). Gesture triggers + entered-pulse decay on read.
-    func current() -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>) {
+    /// Latest tracking (thread-safe). Gestures are CONTINUOUS (held between Vision frames);
+    /// only the entered-pulse decays on read.
+    func current() -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>,
+                       pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>) {
         lock.lock(); defer { lock.unlock() }
-        let out = (_bodyA, _bodyB, _gestures, _present)
-        _gestures *= 0.5
-        _present.y = 0
+        let out = (_bodyA, _bodyB, _gestures, _present, _pinchLR, _gesturesL, _gesturesR)
+        _present.y = 0   // entered-pulse is a one-shot edge; gestures stay high while recognised
         return out
     }
 
@@ -43,11 +48,13 @@ nonisolated final class VisionEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         guard running, !busy, now - lastRun > 0.075 else { return }
         busy = true; lastRun = now
+        // Read-only handoff of the CF-retained frame to the Vision queue (never mutated here).
+        nonisolated(unsafe) let pb = pixelBuffer
         queue.async { [weak self] in
             guard let self else { return }
             defer { self.busy = false }
             let orient: CGImagePropertyOrientation = front ? .leftMirrored : .right
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orient, options: [:])
+            let handler = VNImageRequestHandler(cvPixelBuffer: pb, orientation: orient, options: [:])
             try? handler.perform([self.bodyReq, self.handReq])
             self.consume(front: front)
         }
@@ -69,14 +76,27 @@ nonisolated final class VisionEngine: @unchecked Sendable {
             if let l = jp(.leftWrist) { bodyA.z = l.x; bodyA.w = l.y }
             if let r = jp(.rightWrist) { bodyB.x = r.x; bodyB.y = r.y }
         }
-        if let hand = handReq.results?.first {
-            let h = analyseHand(hand)
-            bodyB.z = h.pinch; bodyB.w = h.openness; gestures = h.gestures
+        var handL = SIMD2<Float>.zero, handR = SIMD2<Float>.zero      // (pinch, openness) per hand
+        var gesturesL = SIMD4<Float>.zero, gesturesR = SIMD4<Float>.zero
+        var firstSet = false
+        for obs in handReq.results ?? [] {
+            let h = analyseHand(obs)
+            if !firstSet { bodyB.z = h.pinch; bodyB.w = h.openness; gestures = h.gestures; firstSet = true }
+            // Chirality = the anatomical hand (not "whichever is in front first"). NOTE: the mirrored
+            // FRONT camera may report the opposite side on screen — swap the two cases if on-device
+            // testing shows left/right reversed.
+            switch obs.chirality {
+            case .left:  handL = SIMD2(h.pinch, h.openness); gesturesL = h.gestures
+            case .right: handR = SIMD2(h.pinch, h.openness); gesturesR = h.gestures
+            default: break
+            }
         }
 
         lock.lock()
         _bodyA = bodyA; _bodyB = bodyB
-        _gestures = simd_max(_gestures, gestures)
+        _gestures = gestures                                          // current frame, no decay → continuous
+        _pinchLR = SIMD4(handL.x, handL.y, handR.x, handR.y)
+        _gesturesL = gesturesL; _gesturesR = gesturesR
         _present.x = present
         if present > 0.5 && !wasPresent { _present.y = 1 }
         wasPresent = present > 0.5

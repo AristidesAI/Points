@@ -165,6 +165,9 @@ struct ControlContext: Sendable {
     var midi: SIMD4<Float> = .zero     // last CC value (0-1), note gate (0/1), velocity (0-1), pitch bend (-1…1)
     var bodyA: SIMD4<Float> = .zero    // headX, headY, handLX, handLY (0-1)
     var bodyB: SIMD4<Float> = .zero    // handRX, handRY, pinchAmount, handOpenness
-    var gestures: SIMD4<Float> = .zero // palm, fist, peace, point (hand-gesture triggers)
+    var gestures: SIMD4<Float> = .zero // palm, fist, peace, point (first hand seen)
     var present: SIMD4<Float> = .zero  // personPresent, entered-pulse, _, _
+    var pinchLR: SIMD4<Float> = .zero  // pinchL, opennessL, pinchR, opennessR (by chirality)
+    var gesturesL: SIMD4<Float> = .zero // left-hand palm/fist/peace/point
+    var gesturesR: SIMD4<Float> = .zero // right-hand palm/fist/peace/point
 }
