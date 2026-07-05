@@ -118,22 +118,38 @@ extension NodeRegistry {
             controlEval: { _, _, _ in [] }))
 
         registerSpec(NodeSpec(
-            id: "clip-transport", name: "Clip Transport", family: .source,
-            inputs: [PortSpec("speed", .signal, default: [1, 1, 1, 1]), PortSpec("restart", .trigger)],
-            outputs: [PortSpec("position", .signal), PortSpec("looped", .trigger)],
-            params: [.bool("playing", true), .bool("loop", true),
-                     .float("loopStart", 0...1, 0), .float("loopEnd", 0...1, 1)],
-            execution: .control,
-            description: "Play/pause/speed/loop-range for imported depth clips. · Arrives with the media import engine.",
-            controlEval: { _, _, _ in [.zero, .zero] }))
+            id: "clip-transport", name: "Video Source", family: .source,
+            outputs: [PortSpec("depth", .fieldFloat)],
+            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false), .bool("loop", true)],
+            execution: .interpreterOp,
+            description: "An imported video's baked depth, per pin, playing on loop, remapped near→far — wire depth → Point Display like the Depth node. Import a video to fill it.",
+            emit: { b, _, node in
+                let r = b.reg()
+                b.emitPatched(PinInstruction(.loadDepth, dst: r,
+                                             imm: [node.float("near", 0.1), node.float("far", 2.5), node.float("invert"), 0]),
+                              key: "\(node.id).range", lanes: [0, 1, 2])
+                b.addPatchKey("\(node.id).near", lane: 0)
+                b.addPatchKey("\(node.id).far", lane: 1)
+                b.addPatchKey("\(node.id).invert", lane: 2)
+                return [r]
+            }))
 
         registerSpec(NodeSpec(
             id: "still-image", name: "Still Image", family: .source,
-            outputs: [PortSpec("source", .source)],
-            params: [.option("fit", ["fill", "fit"], "fill")],
-            execution: .control,
-            description: "An imported photo with its baked depth as a static source. · Arrives with the media import engine.",
-            controlEval: { _, _, _ in [] }))
+            outputs: [PortSpec("depth", .fieldFloat)],
+            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
+            execution: .interpreterOp,
+            description: "An imported photo's baked depth, per pin, remapped near→far to 1→0 — wire depth → Point Display exactly like the Depth node. Import a photo to fill it.",
+            emit: { b, _, node in
+                let r = b.reg()
+                b.emitPatched(PinInstruction(.loadDepth, dst: r,
+                                             imm: [node.float("near", 0.1), node.float("far", 2.5), node.float("invert"), 0]),
+                              key: "\(node.id).range", lanes: [0, 1, 2])
+                b.addPatchKey("\(node.id).near", lane: 0)
+                b.addPatchKey("\(node.id).far", lane: 1)
+                b.addPatchKey("\(node.id).invert", lane: 2)
+                return [r]
+            }))
 
         registerSpec(NodeSpec(
             id: "confidence", name: "Confidence", family: .source,

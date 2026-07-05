@@ -89,8 +89,14 @@ final class GraphRuntime {
     // Live body/hand tracking (Vision), supplied by ContentView while a body node exists.
     @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>))?
     private static let bodyFamily: Set<String> = ["hand-position", "pinch-amount", "hand-openness",
-        "head-pose", "hand-gesture", "person-present", "joint", "body-region", "face-region"]
+        "head-pose", "hand-gesture", "person-present", "joint", "body-region", "face-region",
+        "left-hand-pinch", "right-hand-pinch", "left-hand-gesture", "right-hand-gesture"]
     var usesBodyNodes: Bool { graph.nodes.contains { Self.bodyFamily.contains($0.specID) } }
+
+    // Imported media (photo/video) baked-depth playback, driven by ContentView's DepthPlayer while a
+    // Still Image / Video Source node exists in the graph.
+    private static let importedMediaIDs: Set<String> = ["still-image", "clip-transport"]
+    var usesImportedMedia: Bool { graph.nodes.contains { Self.importedMediaIDs.contains($0.specID) } }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,
     // and persistent per-node state (envelopes/counters/S&H).

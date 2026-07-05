@@ -12,7 +12,7 @@
 	     app is backgrounded, via BGContinuedProcessingTask. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.points.depthbake</string>
+		<string>aristides.lintzeris.Points.depthbake.*</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

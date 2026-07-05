@@ -2,11 +2,6 @@ import SwiftUI
 
 @main
 struct PointsApp: App {
-    init() {
-        // Register the depth-bake continued-processing task before launch finishes, so a bake can
-        // keep running (+ show the Dynamic Island) when the app is backgrounded. See DepthBakeManager.
-        DepthBakeManager.registerBackgroundHandler()
-    }
     var body: some Scene {
         WindowGroup {
             RootView()

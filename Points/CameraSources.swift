@@ -236,6 +236,16 @@ final class SourceManager {
         front.setFiltering(on)
     }
 
+    /// Imported-media playback owns the depth feed → pause the live cameras (else they fight the
+    /// DepthPlayer's ingest). Turning it off resumes the current facing.
+    private(set) var mediaMode = false
+    func setMediaMode(_ on: Bool) {
+        guard mediaMode != on else { return }
+        mediaMode = on
+        if on { front.stop(); back.stop() }
+        else if started { run(facing) }
+    }
+
     func toggleFacing() {
         guard lidarAvailable || facing == .back else { return }
         let target: Facing = facing == .front ? .back : .front

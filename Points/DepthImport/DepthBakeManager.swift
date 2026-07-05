@@ -20,6 +20,9 @@ struct DepthResult: Sendable {
     var height: Int
     var depth: [Float]         // per-pixel depth (row-major, W*H). MoGe-2 gives metric-ish depth.
     var metricScale: Float     // MoGe-2 metric_scale (multiply depth for metres)
+    /// Metric depth in metres — what the renderer's shader expects. // ponytail: calibration point if
+    /// the point cloud reads flat/inverted, tune here or the Depth node's near/far.
+    var metres: [Float] { metricScale > 0 && metricScale != 1 ? depth.map { $0 * metricScale } : depth }
 }
 
 protocol DepthModel: Sendable {
@@ -92,7 +95,9 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
 // MARK: - Manager
 
 @MainActor @Observable final class DepthBakeManager {
-    nonisolated static let taskID = "com.points.depthbake"
+    // Continued-processing id MUST be prefixed with the real bundle id and permitted as a wildcard
+    // (…depthbake.*) in Info.plist; each run appends a fresh suffix.
+    nonisolated static var taskPrefix: String { (Bundle.main.bundleIdentifier ?? "aristides.lintzeris.Points") + ".depthbake" }
 
     enum Stage: Equatable { case idle, preparing, baking, done, cancelled, failed(String) }
     private(set) var stage: Stage = .idle
@@ -111,23 +116,19 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
 
     // MARK: background task (keeps the bake alive + drives the Dynamic Island when minimised)
 
-    nonisolated static func registerBackgroundHandler() {
-        _ = BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
-            guard let cont = task as? BGContinuedProcessingTask else {
-                task.setTaskCompleted(success: false); return
-            }
-            let snap = BakeShared.snapshot
-            cont.progress.totalUnitCount = 1000
-            var expired = false
-            cont.expirationHandler = { expired = true; snap.markCancelled() }
-            while !snap.finished && !expired {
-                cont.progress.completedUnitCount = Int64(snap.fraction * 1000)
-                cont.updateTitle("Processing video", subtitle: snap.subtitle)
-                Thread.sleep(forTimeInterval: 0.25)
-            }
-            cont.progress.completedUnitCount = 1000
-            cont.setTaskCompleted(success: !expired)
+    /// Runs on the system's task queue: drives the Dynamic Island progress and holds the app alive
+    /// while the bake runs, until it finishes or the user cancels.
+    nonisolated static func driveContinuedTask(_ cont: BGContinuedProcessingTask) {
+        let snap = BakeShared.snapshot
+        cont.progress.totalUnitCount = 1000
+        cont.expirationHandler = { snap.markCancelled() }
+        while !snap.finished && !snap.cancelled {
+            cont.progress.completedUnitCount = Int64(snap.fraction * 1000)
+            cont.updateTitle("Processing video", subtitle: snap.subtitle)
+            Thread.sleep(forTimeInterval: 0.2)
         }
+        cont.progress.completedUnitCount = 1000
+        cont.setTaskCompleted(success: !snap.cancelled)
     }
 
     // MARK: control
@@ -150,15 +151,26 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     }
 
     private func submitBackgroundTask() {
-        let req = BGContinuedProcessingTaskRequest(identifier: Self.taskID,
-                                                   title: "Processing video", subtitle: "Preparing…")
-        do { try BGTaskScheduler.shared.submit(req); bgStatus = "background task submitted" }
-        catch { bgStatus = "bg task failed: \(error.localizedDescription)" }
+        // Register a handler for THIS run's concrete id (dynamic per-submission avoids double-register).
+        let id = "\(Self.taskPrefix).\(UUID().uuidString)"
+        let ok = BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { task in
+            guard let cont = task as? BGContinuedProcessingTask else { task.setTaskCompleted(success: false); return }
+            Self.driveContinuedTask(cont)
+        }
+        guard ok else { bgStatus = "bg register refused — is \(Self.taskPrefix).* in BGTaskSchedulerPermittedIdentifiers?"; return }
+        let req = BGContinuedProcessingTaskRequest(identifier: id, title: "Processing video", subtitle: "Preparing…")
+        do { try BGTaskScheduler.shared.submit(req); bgStatus = "background task running" }
+        catch { bgStatus = "bg submit failed: \(error.localizedDescription)" }
     }
 
     // MARK: publish (MainActor)
 
-    private func publish(frame: Int, total: Int, fps: Double, preview: DepthPreview?) {
+    /// Store the frame (for playback) + update the UI. `metres` + `preview` are Sendable so this
+    /// hops cleanly from the off-main bake loop.
+    private func record(metres: [Float], w: Int, h: Int, frame: Int, total: Int, fps: Double,
+                        isVideo: Bool, first: Bool, preview: DepthPreview?) {
+        if first { ImportedDepthStore.shared.begin(width: w, height: h, isVideo: isVideo) }
+        ImportedDepthStore.shared.append(metres)
         currentFrame = frame; totalFrames = total; self.fps = fps
         progress = total > 0 ? Double(frame) / Double(total) : 0
         BakeShared.snapshot.update(progress, "Frame \(frame) of \(total)")
@@ -192,7 +204,8 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             throw NSError(domain: "bake", code: 2, userInfo: [NSLocalizedDescriptionKey: "Can't read image"])
         }
         let r = try await model.bake(cg)
-        await publish(frame: 1, total: 1, fps: 0, preview: Self.preview(from: r))
+        await record(metres: r.metres, w: r.width, h: r.height, frame: 1, total: 1, fps: 0,
+                     isVideo: false, first: true, preview: Self.preview(from: r))
     }
 
     private nonisolated func bakeVideo(url: URL, model: MoGe2DepthModel) async throws {
@@ -225,8 +238,9 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             let r = try await model.bake(cg)
             baked += 1
             let elapsed = Date().timeIntervalSince(started)
-            await publish(frame: baked, total: total,
-                          fps: elapsed > 0 ? Double(baked) / elapsed : 0, preview: Self.preview(from: r))
+            await record(metres: r.metres, w: r.width, h: r.height, frame: baked, total: total,
+                         fps: elapsed > 0 ? Double(baked) / elapsed : 0,
+                         isVideo: true, first: baked == 1, preview: Self.preview(from: r))
         }
     }
 

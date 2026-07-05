@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 // DepthBakeManager / Plans/04-Depth-Import-Pipeline.md.
 
 struct VideoImportView: View {
+    var onBaked: ((Bool) -> Void)? = nil        // (isVideo) — add the source node to the graph
     @Environment(\.dismiss) private var dismiss
     @State private var bake = DepthBakeManager()
     @State private var picked: (url: URL, isVideo: Bool)?
@@ -112,10 +113,15 @@ struct VideoImportView: View {
             Text("Playback + the Source-node transport land with the real model bake.")
                 .font(.system(size: 10)).foregroundStyle(Theme.text2).multilineTextAlignment(.center)
             Spacer()
-            Button { dismiss() } label: {
-                Text("Done").font(.system(size: 14, weight: .semibold))
+            Button {
+                if bake.stage == .done, let p = picked { onBaked?(p.isVideo) }
+                dismiss()
+            } label: {
+                Text(bake.stage == .done ? "Use in project" : "Done").font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: .infinity).padding(14)
-                    .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                    .background(bake.stage == .done ? Color(hex: 0x2E7BFF) : Theme.panel)
+                    .foregroundStyle(bake.stage == .done ? .white : Theme.text)
+                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
         }

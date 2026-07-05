@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var deckDir = 1
     @State private var vpH: CGFloat = 0      // live viewer height (grid centres inside it)
     @State private var sheet: AppSheet?
+    @State private var player: DepthPlayer?      // loops imported baked depth into the renderer
     @State private var palette: PaletteContext?
     // A NEW wire pulled from an output and dropped on empty → open the palette filtered to
     // compatible inputs; the chosen node auto-connects to this source.
@@ -222,7 +223,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .sheet(item: $sheet) { which in
             switch which {
-            case .importMedia: VideoImportView()
+            case .importMedia: VideoImportView(onBaked: { isVideo in addImportedNode(isVideo) })
             case .settings: SettingsPlaceholderView()
             case .record: RecordPlaceholderView()
             case .ndi: NDIPlaceholderView()
@@ -247,6 +248,13 @@ struct ContentView: View {
             if runtime.hasRecordNode, !askedPhotos { askedPhotos = true; recorder.requestAuthorization() }
             // Vision runs only while a body/hand node is in the graph.
             sources?.vision.setRunning(runtime.usesBodyNodes)
+            // Imported photo/video (Still Image / Video Source node) → play the baked depth as the
+            // point-cloud source and pause the live cameras; otherwise resume the live feed.
+            if runtime.usesImportedMedia && !ImportedDepthStore.shared.isEmpty {
+                sources?.setMediaMode(true); player?.start()
+            } else {
+                player?.stop(); sources?.setMediaMode(false)
+            }
             // NDI streams only while the NDI node's START is active (asks Local Network on first send).
             if runtime.ndiStreaming {
                 ndi.start(name: runtime.ndiRenderConfig()?.name ?? "Points")   // restarts if name changed
@@ -271,6 +279,7 @@ struct ContentView: View {
                 let s = SourceManager(renderer: renderer)
                 sources = s
                 s.start()
+                player = DepthPlayer(renderer: renderer)
                 let rt = runtime
                 renderer.programProvider = { rt.frameProgram() }
                 let ae = audio
@@ -329,6 +338,21 @@ struct ContentView: View {
     }
 
     // MARK: add node (with TouchDesigner-style insert on the selected wire)
+
+    /// After a bake: drop a Still Image / Video Source node and wire it into Point Display's depth
+    /// input, so the imported baked depth renders as the point cloud (and the DepthPlayer starts).
+    private func addImportedNode(_ isVideo: Bool) {
+        let specID = isVideo ? "clip-transport" : "still-image"
+        let reg = NodeRegistry.shared
+        let pd = runtime.activeGraph.nodes.first { $0.specID == "point-display" }
+        let at = pd.map { $0.position + [-Float(NodeMetrics.width) - 40, 0] } ?? .zero
+        guard let nid = runtime.addNode(specID, at: at) else { return }
+        if let pd, let outPort = reg.spec(specID)?.outputs.first?.name,
+           let inPort = reg.spec(pd.specID)?.inputs.first(where: { $0.name == "depth" || $0.type == .fieldFloat })?.name {
+            _ = runtime.connect(from: nid, fromPort: outPort, to: pd.id, toPort: inPort)
+        }
+        selection = [nid]
+    }
 
     private func addNode(_ spec: NodeSpec) {
         defer { selectedWire = nil; pendingConnect = nil; pendingConnectInput = nil; palette = nil }
