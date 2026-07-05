@@ -105,6 +105,13 @@ final class GraphRuntime {
             w.toNode == pd.id && (graph.node(w.fromNode).map { Self.importedMediaIDs.contains($0.specID) } ?? false)
         }
     }
+    /// The Live Depth Model node wired into Point Display (to read its model/lens choice), or nil.
+    var liveDepthNode: GraphNode? {
+        guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }),
+              let w = graph.wires.first(where: { $0.toNode == pd.id && graph.node($0.fromNode)?.specID == "live-depth" })
+        else { return nil }
+        return graph.node(w.fromNode)
+    }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,
     // and persistent per-node state (envelopes/counters/S&H).

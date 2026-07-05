@@ -42,6 +42,8 @@ struct ContentView: View {
     @State private var vpH: CGFloat = 0      // live viewer height (grid centres inside it)
     @State private var sheet: AppSheet?
     @State private var player: DepthPlayer?      // loops imported baked depth into the renderer
+    @State private var rgbCam: RGBCameraSource?  // live RGB feed for the Live Depth Model node
+    @State private var liveEngine: LiveDepthEngine?
     @State private var palette: PaletteContext?
     // A NEW wire pulled from an output and dropped on empty → open the palette filtered to
     // compatible inputs; the chosen node auto-connects to this source.
@@ -248,12 +250,20 @@ struct ContentView: View {
             if runtime.hasRecordNode, !askedPhotos { askedPhotos = true; recorder.requestAuthorization() }
             // Vision runs only while a body/hand node is in the graph.
             sources?.vision.setRunning(runtime.usesBodyNodes)
-            // Wiring a Still Image / Video Source node INTO Point Display plays the baked depth as the
-            // point-cloud source (pausing the live cameras); wiring Depth back returns to the live feed.
-            if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
+            // Depth source is chosen by what's WIRED into Point Display:
+            //  • Live Depth Model node → run the RGB camera through the chosen CoreML model
+            //  • Still Image / Video Source → play the baked clip
+            //  • Depth (or nothing) → live TrueDepth / LiDAR
+            if let ln = runtime.liveDepthNode {
+                player?.stop()
+                sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR (shares the camera)
+                liveEngine?.load(LiveModel.named(ln.option("model", "Depth Anything V2 S")))
+                rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide)
+            } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
+                rgbCam?.stop()
                 sources?.setMediaMode(true); player?.start()
             } else {
-                player?.stop(); sources?.setMediaMode(false)
+                rgbCam?.stop(); player?.stop(); sources?.setMediaMode(false)
             }
             // NDI streams only while the NDI node's START is active (asks Local Network on first send).
             if runtime.ndiStreaming {
@@ -280,6 +290,11 @@ struct ContentView: View {
                 sources = s
                 s.start()
                 player = DepthPlayer(renderer: renderer)
+                let eng = LiveDepthEngine(renderer: renderer)
+                liveEngine = eng
+                let cam = RGBCameraSource()
+                cam.onFrame = { pb, _ in eng.process(pb) }   // each RGB frame → model → point cloud
+                rgbCam = cam
                 let rt = runtime
                 renderer.programProvider = { rt.frameProgram() }
                 let ae = audio

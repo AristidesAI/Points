@@ -3,9 +3,10 @@
 # Vendored NDI static library (256 MB, device-only). Fetch from the NDI Advanced SDK
 # or copy from another project's ThirdParty/NDI/. Headers + bridging header ARE tracked.
 Points/NDI/libndi_ios.a
-# Vendored MoGe-2 depth model (202 MB). Copy from ~/Downloads/MoGe2_ViTB_Normal_504.mlpackage.
-# Must be present locally to build the depth-import feature.
-Points/DepthImport/MoGe2_ViTB_Normal_504.mlpackage
+# Vendored CoreML depth models (large, ~50-200 MB each). Copy the .mlpackages into
+# Points/DepthImport/ locally — they must be present to build the depth features. Sources:
+# MoGe2_ViTB_Normal_504, DepthAnythingV2SmallF16, DepthAnythingV3_small_504, …
+Points/DepthImport/*.mlpackage
 
 # Xcode
 *.xcuserstate

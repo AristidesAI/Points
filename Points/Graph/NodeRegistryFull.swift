@@ -135,6 +135,25 @@ extension NodeRegistry {
             }))
 
         registerSpec(NodeSpec(
+            id: "live-depth", name: "Live Depth Model", family: .source,
+            outputs: [PortSpec("depth", .fieldFloat)],
+            params: [.option("model", ["MoGe-2", "Depth Anything V3 S", "Depth Anything V2 S"], "Depth Anything V2 S"),
+                     .option("lens", ["Wide", "Ultra-wide", "Tele", "Front"], "Wide"),
+                     .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
+            execution: .interpreterOp,
+            description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS; wire depth → Point Display like the Depth node.",
+            emit: { b, _, node in
+                let r = b.reg()
+                b.emitPatched(PinInstruction(.loadDepth, dst: r,
+                                             imm: [node.float("near", 0.1), node.float("far", 2.5), node.float("invert"), 0]),
+                              key: "\(node.id).range", lanes: [0, 1, 2])
+                b.addPatchKey("\(node.id).near", lane: 0)
+                b.addPatchKey("\(node.id).far", lane: 1)
+                b.addPatchKey("\(node.id).invert", lane: 2)
+                return [r]
+            }))
+
+        registerSpec(NodeSpec(
             id: "still-image", name: "Still Image", family: .source,
             outputs: [PortSpec("depth", .fieldFloat)],
             params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
