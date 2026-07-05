@@ -47,6 +47,9 @@ final class NodeRegistry: @unchecked Sendable {
                                              imm: [node.float("near", 0.25), node.float("far", 2.5),
                                                    node.float("invert"), 0]),
                               key: "\(node.id).range", lanes: [0, 1, 2])
+                b.addPatchKey("\(node.id).near", lane: 0)   // §13 — per-param keys so nested triggers can drive each
+                b.addPatchKey("\(node.id).far", lane: 1)
+                b.addPatchKey("\(node.id).invert", lane: 2)
                 return [r]
             }))
 
@@ -77,9 +80,11 @@ final class NodeRegistry: @unchecked Sendable {
             description: "Per-pin constants: uv, normalized index, stable hash, distance from center.",
             emit: { b, _, _ in
                 let uv = b.reg(); b.emit(PinInstruction(.loadUV, dst: uv))
-                let idx = b.reg(); b.emit(PinInstruction(.loadIndex, dst: idx))
-                // index in .x, hash in .y, centerDist in .z — all lanes broadcast per output use
-                return [uv, idx, idx, idx]
+                let idx = b.reg(); b.emit(PinInstruction(.loadIndex, dst: idx))   // normIndex in .x
+                // hash/centerDist need their value in .x (consumers read .x), so derive each into its own reg.
+                let hsh = b.reg(); b.emit(PinInstruction(.hash1, dst: hsh, a: idx, imm: [1, 0, 0, 0]))
+                let cd = b.reg(); b.emit(PinInstruction(.dist2, dst: cd, a: uv, imm: [0.5, 0.5, 0, 0]))
+                return [uv, idx, hsh, cd]
             }))
 
         register(NodeSpec(
@@ -104,17 +109,25 @@ final class NodeRegistry: @unchecked Sendable {
                     b.emitPatched(PinInstruction(.freeXY, dst: xy, a: d,
                                                  imm: [node.float("separation", 1), node.float("focus", 1), 0, 0]),
                                   key: "\(node.id).xy", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).separation", lane: 0)   // §13 per-param keys (free mode)
+                    b.addPatchKey("\(node.id).focus", lane: 1)
                 } else {
                     b.emitPatched(PinInstruction(.pinFieldXY, dst: xy, a: d,
                                                  imm: [node.float("separation", 1), node.float("volume", 0),
                                                        node.float("wobble", 0), edge]),
                                   key: "\(node.id).xy", lanes: [0, 1, 2])
+                    b.addPatchKey("\(node.id).separation", lane: 0)   // §13 per-param keys (pinout mode)
+                    b.addPatchKey("\(node.id).volume", lane: 1)
+                    b.addPatchKey("\(node.id).wobble", lane: 2)
                 }
                 let z = b.reg()
                 b.emitPatched(PinInstruction(.pinFieldZ, dst: z, a: d,
                                              imm: [node.float("gain", 1.2), node.float("gamma", 1),
                                                    node.float("zFlatten", 1), edge]),
                               key: "\(node.id).z", lanes: [0, 1, 2])
+                b.addPatchKey("\(node.id).gain", lane: 0)   // §13 per-param keys
+                b.addPatchKey("\(node.id).gamma", lane: 1)
+                b.addPatchKey("\(node.id).zFlatten", lane: 2)
                 return [xy, z]
             }))
 
@@ -213,6 +226,8 @@ final class NodeRegistry: @unchecked Sendable {
                 b.emitPatched(PinInstruction(.clampOp, dst: c, a: s,
                                              imm: [node.float("min", 0), node.float("max", 3), 0, 0]),
                               key: "\(node.id).clamp", lanes: [0, 1])
+                b.addPatchKey("\(node.id).min", lane: 0)   // §13 per-param keys (base already keyed)
+                b.addPatchKey("\(node.id).max", lane: 1)
                 return [c]
             }))
     }
@@ -572,14 +587,24 @@ final class NodeRegistry: @unchecked Sendable {
         register(NodeSpec(
             id: "random", name: "Random", family: .signal,
             outputs: [PortSpec("out", .fieldFloat)],
-            params: [.float("seed", 0...9999, 1)],
+            params: [.float("seed", 0...9999, 1),
+                     .float("contrast", 0.25...4, 1),   // >1 biases toward 0, <1 toward 1 (gamma on the noise)
+                     .float("amount", 0...1, 1)],        // spread of the randomness around 0.5 (0 = flat 0.5)
             execution: .interpreterOp,
-            description: "Stable per-pin random 0-1 — same every frame until reseeded.",
+            description: "Stable per-pin random 0-1 — same every frame until reseeded. CONTRAST shapes the distribution, AMOUNT dials how far it spreads from 0.5. Seed sweeps the whole field (0-9999).",
             emit: { b, _, node in
                 let idx = b.reg(); b.emit(PinInstruction(.loadIndex, dst: idx))
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.hash1, dst: r, a: idx, imm: [1, node.float("seed", 1), 0, 0]),
                               key: "\(node.id).seed", lanes: [1])
+                let c = node.float("contrast", 1)
+                if abs(c - 1) > 1e-4 {
+                    b.emit(PinInstruction(.powOp, dst: r, a: r, imm: [c, 0, 0, 0]))
+                }
+                let a = node.float("amount", 1)
+                if abs(a - 1) > 1e-4 {   // r = (r - 0.5)*a + 0.5  →  madd a·r + (0.5 - 0.5a)
+                    b.emit(PinInstruction(.madd, dst: r, a: r, imm: [a, 0.5 - 0.5 * a, 0, 0]))
+                }
                 return [r]
             }))
     }
@@ -660,8 +685,9 @@ final class NodeRegistry: @unchecked Sendable {
                      PortSpec("rotation", .fieldVec3),
                      PortSpec("shape", .fieldFloat),
                      PortSpec("stretch", .fieldVec3, default: [1, 1, 1, 0])],
+            outputs: [PortSpec("image", .source)],   // the composited frame — tap for NDI / Record
             execution: .render,
-            description: "The render sink: position offset, wall Z, size, colour, plus per-pin rotation (turns), shape morph (0 sphere → 1 cube) and stretch (per-axis scale).",
+            description: "The render sink: position offset, wall Z, size, colour, plus per-pin rotation (turns), shape morph (0 sphere → 1 cube) and stretch (per-axis scale). Its IMAGE output is the finished frame — wire it to an NDI or Record node to stream/capture.",
             emit: { b, inputs, _ in
                 if inputs[0] >= 0 { b.emit(PinInstruction(.writePos, a: inputs[0])) }
                 if inputs[1] >= 0 { b.emit(PinInstruction(.writeZ, a: inputs[1])) }
@@ -672,6 +698,39 @@ final class NodeRegistry: @unchecked Sendable {
                 if inputs[6] >= 0 { b.emit(PinInstruction(.writeStretch, a: inputs[6])) }
                 return [0]
             }))
+
+        // NDI network output — a global sink downstream of Output. Presence + params drive the
+        // renderer's NDI pass (not part of the per-pin chain, like Camera). All-option params so
+        // they render as segments in the node settings bar.
+        register(NodeSpec(
+            id: "ndi-out", name: "NDI Out", family: .output,
+            inputs: [PortSpec("image", .source)],
+            params: [.option("stream", ["STOP", "START"], "STOP"),
+                     .option("name", ["Points", "Points1", "Points2", "Points3", "Points4",
+                                      "Points5", "Points6", "Points7", "Points8", "Points9"], "Points"),
+                     .option("resolution",
+                             ["810x1080", "945x1260", "1080x1440", "1350x1800", "1620x2160"], "1080x1440"),
+                     .option("orientation", ["3:4", "4:3"], "3:4"),
+                     .option("alpha", ["OFF", "ON"], "OFF"),
+                     .option("fps", ["30", "60"], "30"),
+                     .option("wired", ["OFF", "ON"], "OFF")],
+            execution: .render,
+            description: "Streams the finished render as an NDI® source named \"Points\" on the local network (OBS, TouchDesigner, NDI Studio Monitor). RESOLUTION + ORIENTATION set the frame; ALPHA keys out the background; FPS caps the rate; WIRED hints a USB-tether. Wire Output.image → here, or hit the NDI button in the menu."))
+
+        // Record — an image sink, like NDI. Takes ONE image wire, no output. Wire it from
+        // Output.image (or any node that outputs an image) so it can capture at different points
+        // in a multi-output network. Presence + RECORD=ON drive the renderer's capture pass.
+        register(NodeSpec(
+            id: "record", name: "Record", family: .output,
+            inputs: [PortSpec("image", .source)],
+            params: [.option("record", ["STOP", "START"], "STOP"),
+                     .option("resolution",
+                             ["810x1080", "1080x1440", "1350x1800", "1620x2160", "2160x2880"], "1080x1440"),
+                     .option("orientation", ["3:4", "4:3"], "3:4"),
+                     .option("alpha", ["OFF", "ON"], "OFF"),
+                     .option("fps", ["30", "60"], "60")],
+            execution: .render,
+            description: "Records the wired image to a video and saves it to Photos. RESOLUTION + ORIENTATION set the frame; ALPHA records a transparent background (HEVC-with-alpha); FPS sets the capture rate. Wire an image output (Output.image) → here; add several to capture different points of a larger network. RECORD=START begins, STOP saves."))
     }
 }
 

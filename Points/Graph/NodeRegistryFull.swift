@@ -1,6 +1,24 @@
 import Foundation
 import simd
 
+// Shared 'shape the signal before it drives anything' transform for continuous Vision control
+// nodes: gain → remap(in→out) → deadzone → invert → smoothing. `prev` is the node's persistent
+// smoothing memory (one state lane per output).
+nonisolated func shapeVisionValue(_ raw: Float, _ node: GraphNode, _ dt: Float, _ prev: inout Float) -> Float {
+    var v = raw * node.float("gain", 1)
+    let inLo = node.float("inMin", 0), inHi = node.float("inMax", 1)
+    v = (v - inLo) / max(inHi - inLo, 1e-4)
+    let dz = node.float("deadzone", 0)
+    if dz > 0 && abs(v - 0.5) < dz { v = 0.5 }
+    let outLo = node.float("outMin", 0), outHi = node.float("outMax", 1)
+    v = v * (outHi - outLo) + outLo
+    if node.float("invert", 0) > 0.5 { v = (outLo + outHi) - v }
+    let sm = node.float("smoothing", 0)
+    if sm > 0.001 { prev += (v - prev) * (1 - sm * 0.97); return prev }
+    prev = v
+    return v
+}
+
 // The rest of the Plans/03 catalog. Every node is REGISTERED (ports/params/descriptions power
 // the palette + future editor). Execution classes:
 //   • real      — full emitter / control eval, works today
@@ -33,9 +51,16 @@ extension NodeRegistry {
 
     private static let shapeNames = ["sphere", "cube", "tube", "slab", "cone", "ring", "disc", "spike"]
 
+    /// Shared richer settings for continuous Vision nodes (Hand Position, Head Pose, Pinch, Openness).
+    private static let visionParams: [ParamSpec] = [
+        .float("gain", 0...4, 1), .float("inMin", 0...1, 0), .float("inMax", 0...1, 1),
+        .float("outMin", 0...1, 0), .float("outMax", 0...1, 1),
+        .float("deadzone", 0...0.5, 0), .float("smoothing", 0...1, 0), .bool("invert", false)]
+
     // MARK: - SOURCE (rest)
 
     func registerFullCatalog() {
+        registerTriggerNodes()   // §13 v2 — control-rate trigger-layer nodes (nested triggerGraph)
         registerSpec(NodeSpec(
             id: "source", name: "Source", family: .source,
             outputs: [PortSpec("source", .source)],
@@ -142,22 +167,89 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "shape", name: "Shape", family: .shape,
             outputs: [PortSpec("shape", .fieldFloat)],
-            params: [.option("type", ["sphere", "cube"], "sphere")],
+            params: [.option("type", Self.shapeNames, "sphere")],
             execution: .interpreterOp,
-            description: "Pin cap shape: sphere or cube. Wire → Output.shape.",
+            description: "Pin cap shape — sphere · cube · tube · slab · cone · ring · disc · spike. Wire → Output.shape.",
             emit: { b, _, node in
-                [b.constant(SIMD4<Float>(node.option("type", "sphere") == "cube" ? 1 : 0, 0, 0, 0))]
+                let idx = Self.shapeNames.firstIndex(of: node.option("type", "sphere")) ?? 0
+                // pack targetIndex + morph(0.999 = full); sphere is the base → 0 (no morph)
+                let v: Float = idx == 0 ? 0.0 : Float(idx) + 0.999
+                return [b.constant(SIMD4<Float>(v, 0, 0, 0))]
             }))
         registerSpec(NodeSpec(
             id: "shape-morph", name: "Shape Morph", family: .shape,
             inputs: [PortSpec("blend", .fieldFloat)],
             outputs: [PortSpec("shape", .fieldFloat)],
-            params: [.float("blend", 0...1, 0)],
+            params: [.option("target", Self.shapeNames.filter { $0 != "sphere" }, "cube"),
+                     .float("blend", 0...1, 0)],
             execution: .interpreterOp,
-            description: "Sphere → cube morph (0-1). Drive BLEND with audio/depth/anything, or wire → Output.shape.",
+            description: "Morph the sphere TOWARD any target (cube/tube/cone…) by BLEND 0-1. Drive BLEND with audio/depth/gesture, or wire → Output.shape.",
             emit: { b, inputs, node in
-                [inputs[0] >= 0 ? inputs[0]
-                    : b.paramConstant("\(node.id).blend", SIMD4(repeating: node.float("blend", 0)))]
+                let ti = Self.shapeNames.firstIndex(of: node.option("target", "cube")) ?? 1
+                if inputs[0] >= 0 {   // value = clamp(blendField,0,1)*0.999 + targetIndex
+                    let r = b.reg()
+                    b.emit(PinInstruction(.clampOp, dst: r, a: inputs[0], imm: [0, 1, 0, 0]))
+                    b.emit(PinInstruction(.madd, dst: r, a: r, imm: [0.999, Float(ti), 0, 0]))
+                    return [r]
+                }
+                let blend = min(node.float("blend", 0), 0.999)
+                return [b.constant(SIMD4<Float>(Float(ti) + blend, 0, 0, 0))]
+            }))
+        registerSpec(NodeSpec(
+            id: "noise", name: "Noise", family: .signal,
+            inputs: [PortSpec("z", .fieldFloat)],
+            outputs: [PortSpec("out", .fieldFloat)],
+            params: [.option("type", ["perlin", "simplex", "random", "sparse", "hermite", "harmonic"], "perlin"),
+                     .float("seed", 0...9999, 1),
+                     .float("period", 0.02...4, 0.5),
+                     .float("harmonics", 1...6, 3),
+                     .float("harmonicSpread", 1...4, 2),
+                     .float("harmonicGain", 0...1, 0.5),
+                     .float("roughness", 0...1, 0.5),
+                     .float("exponent", 0.25...4, 1),
+                     .float("amplitude", 0...4, 1),
+                     .float("offset", -2...2, 0),
+                     .option("moveAxis", ["x", "y", "z"], "z"),
+                     .float("moveRate", -4...4, 0.3),
+                     .option("timeScale", ["ms", "s", "min"], "s"),
+                     .bool("moveNeg", false),
+                     .bool("aspectCorrect", true)],
+            execution: .interpreterOp,
+            description: "Animated 3D noise field, per pin (TouchDesigner-style). TYPE perlin/simplex/random/sparse/hermite/harmonic · PERIOD = feature size · HARMONICS/SPREAD/GAIN/ROUGHNESS build fractal detail · EXPONENT/AMPLITUDE/OFFSET shape the output. MOVE it along X/Y/Z off time (Z morphs the field through a hidden plane, like it's breathing). Wire OUT → Displace / Size / Palette / Output.z. Optional Z input drives the sample plane from a Time/other field.",
+            emit: { b, inputs, node in
+                let types = ["perlin", "simplex", "random", "sparse", "hermite", "harmonic"]
+                let ty = types.firstIndex(of: node.option("type", "perlin")) ?? 0
+                let axisI = ["x", "y", "z"].firstIndex(of: node.option("moveAxis", "z")) ?? 2
+                let aspect = node.float("aspectCorrect", 1) > 0.5 ? 1 : 0
+                let packed = Float(ty + axisI * 10 + aspect * 100)
+                let baseFreq = 1.0 / max(node.float("period", 0.5), 0.02)
+                let tScale: Float = node.option("timeScale", "s") == "ms" ? 0.001
+                                  : node.option("timeScale", "s") == "min" ? 60 : 1
+                let move = node.float("moveRate", 0.3) * (node.float("moveNeg") > 0.5 ? -1 : 1) / max(tScale, 1e-4)
+                let octs = max(1, min(Int(node.float("harmonics", 3)), 6))
+                let gain0 = node.float("harmonicGain", 0.5)
+                let persistence = gain0 + (1 - gain0) * node.float("roughness", 0.5)   // roughness → more high-freq energy
+                let zreg = inputs[0] >= 0 ? inputs[0] : b.constant(.zero)
+                let acc = b.reg(); let sc = b.reg(); let tmp = b.reg()
+                var f = baseFreq; var g: Float = 1
+                for i in 0..<octs {
+                    b.emit(PinInstruction(.noise3, dst: sc, a: zreg,
+                                          imm: [f, node.float("seed", 1) + Float(i) * 19, packed, move]))
+                    if i == 0 {
+                        b.emit(PinInstruction(.madd, dst: acc, a: sc, imm: [g, 0, 0, 0]))
+                    } else {
+                        b.emit(PinInstruction(.madd, dst: tmp, a: sc, imm: [g, 0, 0, 0]))
+                        b.emit(PinInstruction(.add, dst: acc, a: acc, b: tmp))
+                    }
+                    f *= max(node.float("harmonicSpread", 2), 1)
+                    g *= persistence
+                }
+                b.emit(PinInstruction(.madd, dst: acc, a: acc, imm: [0.5, 0.5, 0, 0]))   // [-1,1] → [0,1]
+                let ex = node.float("exponent", 1)
+                if abs(ex - 1) > 1e-4 { b.emit(PinInstruction(.powOp, dst: acc, a: acc, imm: [ex, 0, 0, 0])) }
+                b.emit(PinInstruction(.madd, dst: acc, a: acc,
+                                      imm: [node.float("amplitude", 1), node.float("offset", 0), 0, 0]))
+                return [acc]
             }))
         registerSpec(NodeSpec(
             id: "stretch", name: "Stretch", family: .shape,
@@ -328,13 +420,11 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "pin-color", name: "Pin Color", family: .color,
             inputs: [PortSpec("color", .fieldColor, default: [0.78, 0.78, 0.78, 1])],
-            outputs: [PortSpec("pins", .domain)],
+            outputs: [PortSpec("color", .fieldColor)],
             execution: .interpreterOp,
-            description: "Applies a color field to the pins directly (alternative to wiring Output.color).",
+            description: "A pin color field — passes a color through (default soft grey); wire into Output.color.",
             emit: { b, inputs, _ in
-                let c = b.materialize(inputs[0], default: [0.78, 0.78, 0.78, 1])
-                b.emit(PinInstruction(.writeColor, a: c))
-                return [c]
+                [b.materialize(inputs[0], default: [0.78, 0.78, 0.78, 1])]   // reachable color source (was an unconsumed .domain sink)
             }))
 
         registerSpec(NodeSpec(
@@ -652,12 +742,12 @@ extension NodeRegistry {
             [SIMD4(repeating: ctx.onsets.w)]
         }
         stubControl("midi-cc", "MIDI CC", .signal, [PortSpec("value", .signal)],
-                    "A MIDI control-change knob, 0-1. · Live when the MIDI engine lands.") { ctx in
+                    "A MIDI control-change knob, 0-1 (last CC received). · Live: CoreMIDI + RTP network.") { ctx in
             [SIMD4(repeating: ctx.midi.x)]
         }
         stubControl("midi-note", "MIDI Note", .signal,
                     [PortSpec("gate", .signal), PortSpec("velocity", .signal)],
-                    "Note on/off gate + velocity. · Live when the MIDI engine lands.") { ctx in
+                    "Note gate (1 while held) + velocity 0-1. · Live: CoreMIDI + RTP network.") { ctx in
             [SIMD4(repeating: ctx.midi.y), SIMD4(repeating: ctx.midi.z)]
         }
         stubControl("osc-in", "OSC In", .signal, [PortSpec("value", .signal)],
@@ -672,31 +762,74 @@ extension NodeRegistry {
 
         // MARK: - BODY (bus stubs + real region placeholders)
 
-        stubControl("hand-position", "Hand Position", .body,
-                    [PortSpec("x", .signal), PortSpec("y", .signal)],
-                    "Wrist position 0-1. · Live when body tracking lands.") { ctx in
-            [SIMD4(repeating: ctx.bodyA.z), SIMD4(repeating: ctx.bodyA.w)]
-        }
-        stubControl("pinch-amount", "Hand Pinch", .body, [PortSpec("distance", .signal)],
-                    "Distance between the index tip and thumb tip (0 = touching, 1 = wide) for the first hand seen — pinch to drive Z, size… · Live when hand tracking lands.") { ctx in
-            [SIMD4(repeating: ctx.bodyB.z)]
-        }
-        stubControl("hand-openness", "Hand Openness", .body, [PortSpec("amount", .signal)],
-                    "Fist 0 → open palm 1. · Live when hand tracking lands.") { ctx in
-            [SIMD4(repeating: ctx.bodyB.w)]
-        }
-        stubControl("head-pose", "Head Pose", .body,
-                    [PortSpec("x", .signal), PortSpec("y", .signal)],
-                    "Head position in frame. · Live when body tracking lands.") { ctx in
-            [SIMD4(repeating: ctx.bodyA.x), SIMD4(repeating: ctx.bodyA.y)]
-        }
-        stubControl("hand-gesture", "Hand Gesture", .body,
-                    [PortSpec("palm", .trigger), PortSpec("fist", .trigger),
-                     PortSpec("peace", .trigger), PortSpec("point", .trigger)],
-                    "Recognised hand shape as a trigger — palm · fist · peace · point.") { ctx in
-            [SIMD4(repeating: ctx.gestures.x), SIMD4(repeating: ctx.gestures.y),
-             SIMD4(repeating: ctx.gestures.z), SIMD4(repeating: ctx.gestures.w)]
-        }
+        registerSpec(NodeSpec(
+            id: "hand-position", name: "Hand Position", family: .body,
+            outputs: [PortSpec("x", .signal), PortSpec("y", .signal)],
+            params: Self.visionParams, execution: .control,
+            description: "Wrist position 0-1, SHAPED before it drives anything: GAIN · IN/OUT remap · DEADZONE · SMOOTHING · INVERT. Tune exactly how the hand moves things.",
+            controlEvalStateful: { node, _, ctx, state in
+                var px = state.x, py = state.y
+                let x = shapeVisionValue(ctx.bodyA.z, node, ctx.dt, &px)
+                let y = shapeVisionValue(ctx.bodyA.w, node, ctx.dt, &py)
+                state = SIMD4(px, py, 0, 0)
+                return [SIMD4(repeating: x), SIMD4(repeating: y)]
+            }))
+        registerSpec(NodeSpec(
+            id: "pinch-amount", name: "Hand Pinch", family: .body,
+            outputs: [PortSpec("distance", .signal)],
+            params: Self.visionParams, execution: .control,
+            description: "Index-tip↔thumb-tip distance (0 touching → 1 wide) for the first hand seen, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT. Drive Z, size…",
+            controlEvalStateful: { node, _, ctx, state in
+                var p = state.x
+                let d = shapeVisionValue(ctx.bodyB.z, node, ctx.dt, &p)
+                state = SIMD4(p, 0, 0, 0)
+                return [SIMD4(repeating: d)]
+            }))
+        registerSpec(NodeSpec(
+            id: "hand-openness", name: "Hand Openness", family: .body,
+            outputs: [PortSpec("amount", .signal)],
+            params: Self.visionParams, execution: .control,
+            description: "Fist 0 → open palm 1, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.",
+            controlEvalStateful: { node, _, ctx, state in
+                var p = state.x
+                let a = shapeVisionValue(ctx.bodyB.w, node, ctx.dt, &p)
+                state = SIMD4(p, 0, 0, 0)
+                return [SIMD4(repeating: a)]
+            }))
+        registerSpec(NodeSpec(
+            id: "head-pose", name: "Head Pose", family: .body,
+            outputs: [PortSpec("x", .signal), PortSpec("y", .signal)],
+            params: Self.visionParams, execution: .control,
+            description: "Head position in frame 0-1, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.",
+            controlEvalStateful: { node, _, ctx, state in
+                var px = state.x, py = state.y
+                let x = shapeVisionValue(ctx.bodyA.x, node, ctx.dt, &px)
+                let y = shapeVisionValue(ctx.bodyA.y, node, ctx.dt, &py)
+                state = SIMD4(px, py, 0, 0)
+                return [SIMD4(repeating: x), SIMD4(repeating: y)]
+            }))
+        registerSpec(NodeSpec(
+            id: "hand-gesture", name: "Hand Gesture", family: .body,
+            outputs: [PortSpec("palm", .trigger), PortSpec("fist", .trigger),
+                      PortSpec("peace", .trigger), PortSpec("point", .trigger)],
+            params: [.float("hold", 0...3, 0), .float("smoothing", 0...1, 0)],
+            execution: .control,
+            description: "Recognised hand shape — palm · fist · peace · point. HOLD keeps the output high (seconds) while you keep the gesture up, so a wired palette/effect STICKS instead of flashing; SMOOTHING eases the transition between states. HOLD 0 + SMOOTHING 0 = raw one-frame pulses.",
+            controlEvalStateful: { node, _, ctx, state in
+                let raw = SIMD4<Float>(ctx.gestures.x, ctx.gestures.y, ctx.gestures.z, ctx.gestures.w)
+                let hold = node.float("hold", 0)
+                let sm = node.float("smoothing", 0)
+                let atk: Float = sm > 0.001 ? (1 - sm * 0.97) : 1               // how fast it rises to the gesture
+                let rel: Float = hold > 0.001 ? (1 - exp(-ctx.dt / hold)) : 1    // linger ~HOLD seconds after it stops
+                var s = state
+                for i in 0..<4 {
+                    let t = raw[i]
+                    s[i] += (t - s[i]) * (t > s[i] ? atk : rel)
+                }
+                state = s
+                return [SIMD4(repeating: s.x), SIMD4(repeating: s.y),
+                        SIMD4(repeating: s.z), SIMD4(repeating: s.w)]
+            }))
         stubControl("person-present", "Person Present", .body,
                     [PortSpec("present", .signal), PortSpec("entered", .trigger)],
                     "Someone in frame?") { ctx in
@@ -864,12 +997,6 @@ extension NodeRegistry {
             ("vignette", "Vignette", [.float("amount", 0...1, 0.3)], "Darkens the frame corners."),
             ("render-settings", "Render Settings", [.option("blend", ["solid", "ghost"], "solid")] as [ParamSpec],
              "Solid depth-tested pins vs additive ghost blending (the classic cloud look)."),
-            ("ndi-out", "NDI Out", [.option("resolution", ["810x1080", "1080x1440", "1620x2160"], "1080x1440"),
-                                    .bool("alphaKey", false)],
-             "Streams the clean 3:4 render to the network."),
-            ("record", "Record", [.option("resolution", ["1080x1440", "1620x2160", "2880x3840"], "1620x2160"),
-                                  .option("fps", ["30", "60"], "60")],
-             "GPU-direct recording to Photos."),
         ] {
             registerSpec(NodeSpec(id: id, name: name, family: .stage, params: params,
                                   execution: .render,

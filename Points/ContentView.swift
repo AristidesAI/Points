@@ -276,6 +276,9 @@ struct ContentView: View {
                 let vis = s.vision
                 runtime.bodySource = { vis.current() }
                 s.vision.setRunning(runtime.usesBodyNodes)
+                let m = midi
+                runtime.midiSource = { m.current() }          // was never assigned → MIDI nodes read 0
+                if runtime.usesMidiNodes { midi.start() }
                 // NDI output tap — renderer pulls the live config each frame.
                 let n = ndi
                 renderer.ndi = n

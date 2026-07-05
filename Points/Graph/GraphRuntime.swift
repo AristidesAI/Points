@@ -65,7 +65,7 @@ final class GraphRuntime {
     var canRedo: Bool { !redoStack.isEmpty }
 
     private enum DynamicKind {
-        case lagAlpha, trailStep, rippleWave, springKdt, springDmp, springVdt, freezeHold
+        case lagAlpha, trailStep, rippleWave, springKdt, springDmp, springVdt, freezeHold, echoAlpha
         case controlPort(String)
     }
     private var dynamicKeys: [(key: String, nodeID: String, kind: DynamicKind)] = []
@@ -892,6 +892,7 @@ final class GraphRuntime {
             case ("spring", "dmp"): return (key, node.id, .springDmp)
             case ("spring", "vdt"): return (key, node.id, .springVdt)
             case ("freeze", "hold"): return (key, node.id, .freezeHold)
+            case ("echo", "alpha"), ("echo", "alpha2"): return (key, node.id, .echoAlpha)
             default:
                 if let spec = registry.spec(node.specID), spec.isControl,
                    spec.outputs.contains(where: { $0.name == suffix }) {
@@ -939,6 +940,9 @@ final class GraphRuntime {
                 lanes[0] = dt
             case .freezeHold:
                 lanes[0] = node.float("hold", 0)
+            case .echoAlpha:
+                // Longer DELAY → smaller follow coefficient → longer ghost tail.
+                lanes[0] = 1 - exp(-dt / max(node.float("delay", 0.25), 0.02))
             case .controlPort(let port):
                 let v = controlValues["\(nodeID).\(port)"] ?? .zero
                 lanes = [0: v.x, 1: v.y, 2: v.z, 3: v.w]
