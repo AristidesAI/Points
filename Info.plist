@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- NDI advertises over mDNS; iOS requires the service to be declared or it is blocked.
+	     The rest of Info.plist is still generated (GENERATE_INFOPLIST_FILE=YES) and merged in. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ndi._tcp</string>
+	</array>
+	<!-- Depth-video import: keep the metric-depth bake running (+ Dynamic Island progress) when the
+	     app is backgrounded, via BGContinuedProcessingTask. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.points.depthbake</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+</dict>
+</plist>

@@ -222,7 +222,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .sheet(item: $sheet) { which in
             switch which {
-            case .importMedia: ImportPlaceholderView()
+            case .importMedia: VideoImportView()
             case .settings: SettingsPlaceholderView()
             case .record: RecordPlaceholderView()
             case .ndi: NDIPlaceholderView()
