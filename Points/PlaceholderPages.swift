@@ -86,6 +86,8 @@ struct BrowserView: View {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())],
                               spacing: 12) {
                         Button { onOpen(nil) } label: { newCard }.buttonStyle(.plain)
+                        Button { onOpen("Max Complexity") } label: { maxComplexityCard }.buttonStyle(.plain)
+                        Button { onOpen("Trigger Test") } label: { triggerTestCard }.buttonStyle(.plain)
                         ForEach(projects, id: \.0) { p in
                             Button { onOpen(nil) } label: { projectCard(p.0, p.1) }.buttonStyle(.plain)
                         }
@@ -112,13 +114,45 @@ struct BrowserView: View {
         .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
     }
 
+    private var triggerTestCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(Color.black)
+                .overlay(Image(systemName: "bolt.horizontal.circle")
+                    .font(.system(size: 30)).foregroundStyle(Color(hex: 0xFFC24D).opacity(0.7)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TRIGGER TEST").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("nested triggers · Size pops on beat").font(.system(size: 8)).foregroundStyle(Theme.text2)
+            }
+            .padding(8)
+        }
+        .frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
+        .background(Theme.panel)
+        .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+    }
+
+    private var maxComplexityCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(Color.black)
+                .overlay(Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 30)).foregroundStyle(Theme.text2.opacity(0.55)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("MAX COMPLEXITY").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("demo · every lane wired").font(.system(size: 8)).foregroundStyle(Theme.text2)
+            }
+            .padding(8)
+        }
+        .frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
+        .background(Theme.panel)
+        .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+    }
+
     private var newCard: some View {
         VStack(spacing: 8) {
             Image(systemName: "plus").font(.system(size: 26, weight: .light)).foregroundStyle(Theme.text)
             Text("NEW PROJECT").font(.system(size: 9, weight: .semibold)).tracking(1)
                 .foregroundStyle(Theme.text2)
         }
-        .frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity).aspectRatio(1, contentMode: .fit)   // greedy → fills the W×W square (was short/wide)
         .background(Theme.panel)
         .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
     }
@@ -198,6 +232,8 @@ struct SettingsPlaceholderView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("tutorialDone") private var tutorialDone = false
     @AppStorage("wireStyle") private var wireStyle = 0   // 0 curved · 1 straight · 2 right-angle
+    @AppStorage("newNodeFromOutput") private var newNodeFromOutput = true
+    @AppStorage("newNodeFromInput") private var newNodeFromInput = true
     private let wireNames = ["CURVED", "STRAIGHT", "RIGHT ANGLE"]
 
     var body: some View {
@@ -222,6 +258,12 @@ struct SettingsPlaceholderView: View {
                         .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    FlatToggleRow(title: "New node from OUTPUT drop",
+                                  subtitle: "drop a wire off an output on empty → pick a node",
+                                  isOn: $newNodeFromOutput)
+                    FlatToggleRow(title: "New node from INPUT drop",
+                                  subtitle: "drop a wire off an input on empty → pick a source",
+                                  isOn: $newNodeFromInput)
                     row("Render frame rate", "30 · 60 · 120")
                     row("Marathon mode", "cap 100k / 30fps")
                     row("Thermal ladder", "auto")
@@ -257,6 +299,41 @@ struct SettingsPlaceholderView: View {
         .padding(12)
         .background(Theme.panel)
         .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+    }
+}
+
+/// Flat on/off switch in the app's own style — no Apple `Toggle`. Tap flips it.
+/// ON = white fill / black text · OFF = black fill / white text.
+struct FlatToggleRow: View {
+    let title: String
+    var subtitle: String? = nil
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            isOn.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 12)).foregroundStyle(Theme.text)
+                    if let subtitle {
+                        Text(subtitle).font(.system(size: 9)).foregroundStyle(Theme.text2).lineLimit(1)
+                    }
+                }
+                Spacer()
+                Text(isOn ? "ON" : "OFF")
+                    .font(.system(size: 10, weight: .bold)).tracking(1.5)
+                    .foregroundStyle(isOn ? Color.black : Theme.text)
+                    .frame(width: 52, height: 26)
+                    .background(isOn ? Theme.text : Color.black)
+                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+            }
+            .padding(12)
+            .background(Theme.panel)
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -307,6 +384,7 @@ private func infoSquare(_ symbol: String, _ text: String) -> some View {
 
 struct NodePaletteView: View {
     var acceptsType: PortType? = nil          // set when adding onto a dropped output wire
+    var producesType: PortType? = nil         // set when adding onto a dropped input wire (needs a matching output)
     var onAdd: ((NodeSpec) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @AppStorage("paletteGrid") private var gridMode = false   // list ↔ TouchDesigner OP-grid
@@ -316,8 +394,10 @@ struct NodePaletteView: View {
     @State private var gridFamily: NodeFamily = .source
 
     private func matches(_ s: NodeSpec) -> Bool {
-        (search.isEmpty || s.name.localizedCaseInsensitiveContains(search))
+        !NodeRegistry.triggerOnlyIDs.contains(s.id)   // flat model: Drive Param is obsolete → hidden
+            && (search.isEmpty || s.name.localizedCaseInsensitiveContains(search))
             && (acceptsType == nil || s.inputs.contains { $0.type.accepts(acceptsType!) })
+            && (producesType == nil || s.outputs.contains { producesType!.accepts($0.type) })
     }
 
     private var families: [(NodeFamily, [NodeSpec])] {
@@ -612,6 +692,7 @@ func familyColor(_ f: NodeFamily) -> Color {
     case .body: return Theme.famBody
     case .time: return Theme.famTime
     case .stage: return Theme.famStage
+    case .output: return Theme.famOutput
     case .tools: return Theme.famTools
     }
 }

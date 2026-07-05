@@ -42,26 +42,30 @@ final class EditorCamera {
 enum NodeMetrics {
     static let width: CGFloat = 168
     static let headerH: CGFloat = 24
-    static let portRowH: CGFloat = 20
+    static let portRowH: CGFloat = 24         // +4px so port squares are harder to misclick (§13)
     static let paramRowH: CGFloat = 16
     static let maxParamRows = 5
     static let portDot: CGFloat = 14          // 2× the old 7, half proud of the edge
 
     static func paramRows(_ spec: NodeSpec) -> Int { min(spec.params.count, maxParamRows) }
 
-    static func height(_ spec: NodeSpec) -> CGFloat {
-        headerH + CGFloat(spec.inputs.count) * portRowH
+    /// Total input-port rows = declared inputs + params exposed as ports (flat model).
+    static func inputRows(_ spec: NodeSpec, _ exposed: Int) -> Int { spec.inputs.count + exposed }
+
+    static func height(_ spec: NodeSpec, exposed: Int = 0) -> CGFloat {
+        headerH + CGFloat(inputRows(spec, exposed)) * portRowH
             + CGFloat(paramRows(spec)) * paramRowH
             + CGFloat(spec.outputs.count) * portRowH + 8
     }
 
     /// Port anchor offsets from the card's top-left. Dots stick 3pt past the edge.
+    /// Input index runs [0..<inputs] for declared ports then continues into exposed-param rows.
     static func inputAnchor(_ spec: NodeSpec, _ index: Int) -> CGPoint {
         CGPoint(x: -3, y: headerH + portRowH * (CGFloat(index) + 0.5))
     }
 
-    static func outputAnchor(_ spec: NodeSpec, _ index: Int) -> CGPoint {
-        let y = headerH + CGFloat(spec.inputs.count) * portRowH
+    static func outputAnchor(_ spec: NodeSpec, _ index: Int, exposed: Int = 0) -> CGPoint {
+        let y = headerH + CGFloat(inputRows(spec, exposed)) * portRowH
             + CGFloat(paramRows(spec)) * paramRowH + portRowH * (CGFloat(index) + 0.5)
         return CGPoint(x: width + 3, y: y)
     }
@@ -137,6 +141,9 @@ struct NodeEditorView: View {
     /// Pulling a NEW wire out of an OUTPUT and dropping on empty space → node creation,
     /// filtered to nodes that accept this port's type (source node, source port, drop world pos).
     var onDropOutput: ((String, String, SIMD2<Float>) -> Void)? = nil
+    /// Same for a NEW wire pulled out of an INPUT → node creation filtered to nodes whose
+    /// output can feed this input (target node, target port, drop world pos).
+    var onDropInput: ((String, String, SIMD2<Float>) -> Void)? = nil
 
     @AppStorage("wireStyle") private var wireStyle = 0   // 0 curved · 1 straight · 2 right-angle
 
@@ -153,8 +160,14 @@ struct NodeEditorView: View {
     @State private var inertia: Task<Void, Never>?
     @State private var selectedPort: PortRef?     // white-outlined port square
     @State private var portDraft: PortDraft?      // active port-column interaction
+    // Tap-and-HOLD (~0.5s) on an UNSELECTED node → select + grab it, move in the same motion.
+    // Moving before the timer fires means "pan" instead.
+    @State private var pendingNode: String?
+    @State private var pendingStart: CGPoint = .zero
+    @State private var pendingMoved = false
+    @State private var holdTask: Task<Void, Never>?
 
-    private enum CanvasDragMode { case none, pan, rubber, wire, moveNode, port }
+    private enum CanvasDragMode { case none, pan, rubber, wire, moveNode, port, pendingHold }
 
     struct PortRef: Equatable { let node: String; let isInput: Bool; let index: Int }
 
@@ -198,6 +211,8 @@ struct NodeEditorView: View {
                         ghostFinger = nil
                         portDraft = nil
                         draggingNode = nil
+                        holdTask?.cancel(); holdTask = nil
+                        pendingNode = nil
                         dragMode = .none
                     },
                     onEnded: { pinchActive = false }
@@ -239,7 +254,7 @@ struct NodeEditorView: View {
     }
 
     private func fitGraph(in size: CGSize) {
-        let nodes = runtime.graph.nodes
+        let nodes = runtime.activeGraph.nodes
         guard !nodes.isEmpty else { return }
         var minX = Float.greatestFiniteMagnitude, minY = minX, maxX = -minX, maxY = -minX
         for n in nodes {
@@ -278,7 +293,7 @@ struct NodeEditorView: View {
     private var nodeLayer: some View {
         // Cards are pure visuals — ALL interaction lives in canvasDrag, so tap/move/pan/wire
         // behave the same everywhere and a node above a wire never fights it.
-        ForEach(runtime.graph.nodes, id: \.id) { node in
+        ForEach(runtime.activeGraph.nodes, id: \.id) { node in
             if let spec = registry.spec(node.specID) {
                 let sp = camera.toScreen(node.position)
                 NodeCardView(node: node, spec: spec,
@@ -286,7 +301,7 @@ struct NodeEditorView: View {
                              dragged: draggingNode == node.id,
                              wiredInputs: wiredInputNames(node.id),
                              highlightPort: portHighlight(for: node.id))
-                    .frame(width: NodeMetrics.width, height: NodeMetrics.height(spec), alignment: .top)
+                    .frame(width: NodeMetrics.width, height: NodeMetrics.height(spec, exposed: node.exposedParams.count), alignment: .top)
                     .scaleEffect(camera.scale, anchor: .topLeading)
                     .offset(x: sp.x, y: sp.y)
                     .allowsHitTesting(false)
@@ -302,29 +317,29 @@ struct NodeEditorView: View {
     // MARK: wires
 
     private func wiredInputNames(_ nodeID: String) -> Set<String> {
-        Set(runtime.graph.wires.filter { $0.toNode == nodeID }.map(\.toPort))
+        Set(runtime.activeGraph.wires.filter { $0.toNode == nodeID }.map(\.toPort))
     }
 
     private func anchorScreen(_ nodeID: String, portIndex: Int, isInput: Bool) -> CGPoint {
-        guard let node = runtime.graph.node(nodeID), let spec = registry.spec(node.specID) else { return .zero }
+        guard let node = runtime.activeGraph.node(nodeID), let spec = registry.spec(node.specID) else { return .zero }
         let local = isInput ? NodeMetrics.inputAnchor(spec, portIndex)
-                            : NodeMetrics.outputAnchor(spec, portIndex)
+                            : NodeMetrics.outputAnchor(spec, portIndex, exposed: node.exposedParams.count)
         let sp = camera.toScreen(node.position)
         return CGPoint(x: sp.x + local.x * camera.scale, y: sp.y + local.y * camera.scale)
     }
 
     private func wireEndpoints(_ w: Wire) -> (CGPoint, CGPoint)? {
-        guard let from = runtime.graph.node(w.fromNode), let to = runtime.graph.node(w.toNode),
+        guard let from = runtime.activeGraph.node(w.fromNode), let to = runtime.activeGraph.node(w.toNode),
               let fs = registry.spec(from.specID), let ts = registry.spec(to.specID),
               let oi = fs.outputs.firstIndex(where: { $0.name == w.fromPort }),
-              let ii = ts.inputs.firstIndex(where: { $0.name == w.toPort }) else { return nil }
+              let ii = ts.inputPortNames(to.exposedParams).firstIndex(of: w.toPort) else { return nil }
         return (anchorScreen(w.fromNode, portIndex: oi, isInput: false),
                 anchorScreen(w.toNode, portIndex: ii, isInput: true))
     }
 
     private var wireCanvas: some View {
         Canvas { ctx, _ in
-            for w in runtime.graph.wires {
+            for w in runtime.activeGraph.wires {
                 if let dragging = wireDrag?.original, dragging == w { continue }
                 guard let (a, b) = wireEndpoints(w) else { continue }
                 let isSel = selectedWire == w
@@ -370,7 +385,7 @@ struct NodeEditorView: View {
     }
 
     private func specFamilyOf(_ nodeID: String) -> NodeFamily {
-        guard let node = runtime.graph.node(nodeID),
+        guard let node = runtime.activeGraph.node(nodeID),
               let spec = registry.spec(node.specID) else { return .tools }
         return spec.family
     }
@@ -378,7 +393,7 @@ struct NodeEditorView: View {
     /// Wire colour = the colour of its source-output port square (by port TYPE), so wires
     /// and the squares they leave always match.
     private func wireColor(_ w: Wire) -> Color {
-        guard let from = runtime.graph.node(w.fromNode),
+        guard let from = runtime.activeGraph.node(w.fromNode),
               let fs = registry.spec(from.specID),
               let t = fs.outputs.first(where: { $0.name == w.fromPort })?.type else { return Theme.text2 }
         return portColor(t)
@@ -415,6 +430,10 @@ struct NodeEditorView: View {
                     } else if let end = selectedWireEndHit(at: g.startLocation) {
                         pickUpWire(end.wire, seekInput: end.seekInput)   // rewire a SELECTED wire's end
                         dragMode = .wire
+                    } else if let id = nodeHit(at: g.startLocation) {
+                        // Unselected node: hold ~0.5s to select + grab; move sooner → pan.
+                        beginPendingHold(id, at: g.startLocation)
+                        dragMode = .pendingHold
                     } else {
                         dragMode = .pan
                         lastPan = .zero
@@ -434,6 +453,14 @@ struct NodeEditorView: View {
                     moveHeldNodes(to: g.location)
                 case .port:
                     updatePortDraft(to: g.location)
+                case .pendingHold:
+                    // Moved before the hold armed → this was a pan, not a grab.
+                    if hypot(g.location.x - pendingStart.x, g.location.y - pendingStart.y) > 10 {
+                        pendingMoved = true
+                        holdTask?.cancel(); holdTask = nil
+                        dragMode = .pan
+                        lastPan = g.translation
+                    }
                 case .none:
                     break
                 }
@@ -451,6 +478,11 @@ struct NodeEditorView: View {
                     draggingNode = nil; grabOffsets = [:]
                 case .port:
                     finishPortDraft(at: g.location)
+                case .pendingHold:
+                    // Released before the hold armed → treat as a plain tap (select).
+                    holdTask?.cancel(); holdTask = nil
+                    pendingNode = nil
+                    if moved < 8 { tapSelect(at: g.startLocation) }
                 case .pan:
                     if moved < 8 { tapSelect(at: g.startLocation) } else { startInertia(g.velocity) }
                 case .none:
@@ -484,6 +516,23 @@ struct NodeEditorView: View {
         return id
     }
 
+    /// Arm the hold-to-grab timer for an unselected node. Fires after ~0.5s if the finger
+    /// hasn't moved (a move cancels it and becomes a pan).
+    private func beginPendingHold(_ id: String, at loc: CGPoint) {
+        pendingNode = id
+        pendingStart = loc
+        pendingMoved = false
+        holdTask?.cancel()
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, dragMode == .pendingHold, !pendingMoved,
+                  let pid = pendingNode else { return }
+            selection = [pid]; selectedWire = nil; selectedPort = nil
+            beginNodeMove(pid, at: pendingStart)
+            dragMode = .moveNode
+        }
+    }
+
     private func beginNodeMove(_ id: String, at loc: CGPoint) {
         draggingNode = id
         stopInertia()
@@ -492,7 +541,7 @@ struct NodeEditorView: View {
         let moving = selection.contains(id) ? selection : [id]
         grabOffsets = Dictionary(uniqueKeysWithValues:
             moving.compactMap { mid in
-                runtime.graph.node(mid).map { (mid, $0.position - camera.toWorld(loc)) }
+                runtime.activeGraph.node(mid).map { (mid, $0.position - camera.toWorld(loc)) }
             })
     }
 
@@ -511,24 +560,30 @@ struct NodeEditorView: View {
 
     private func portColumnHit(at p: CGPoint) -> PortRef? {
         let cs = camera.scale
-        for node in runtime.graph.nodes.reversed() {
+        // Front-most first: a node drawn on top of another's port column captures the touch as
+        // a NODE (returns nil so the node is selected/moved), never the buried node's port.
+        for node in runtime.activeGraph.nodes.reversed() {
             guard let spec = registry.spec(node.specID) else { continue }
             let sp = camera.toScreen(node.position)
-            let cardH = NodeMetrics.height(spec) * cs
+            let cardH = NodeMetrics.height(spec, exposed: node.exposedParams.count) * cs
             guard p.y > sp.y - 10, p.y < sp.y + cardH + 10 else { continue }
             let leftX = sp.x, rightX = sp.x + NodeMetrics.width * cs
-            if !spec.inputs.isEmpty, abs(p.x - leftX) < 28 {
+            if !(spec.inputs.isEmpty && node.exposedParams.isEmpty), abs(p.x - leftX) < 26 {
                 return PortRef(node: node.id, isInput: true, index: nearestPort(spec, node.id, true, p.y))
             }
-            if !spec.outputs.isEmpty, abs(p.x - rightX) < 28 {
+            if !spec.outputs.isEmpty, abs(p.x - rightX) < 26 {
                 return PortRef(node: node.id, isInput: false, index: nearestPort(spec, node.id, false, p.y))
             }
+            // Over this (front) node's body but not its ports → it wins; don't fall through to
+            // a node behind it.
+            if p.x > leftX - 26, p.x < rightX + 26 { return nil }
         }
         return nil
     }
 
     private func nearestPort(_ spec: NodeSpec, _ nodeID: String, _ isInput: Bool, _ y: CGFloat) -> Int {
-        let count = isInput ? spec.inputs.count : spec.outputs.count
+        let exposed = runtime.activeGraph.node(nodeID)?.exposedParams.count ?? 0
+        let count = isInput ? spec.inputs.count + exposed : spec.outputs.count
         var best = 0, bestD = CGFloat.greatestFiniteMagnitude
         for i in 0..<count {
             let d = abs(anchorScreen(nodeID, portIndex: i, isInput: isInput).y - y)
@@ -538,15 +593,15 @@ struct NodeEditorView: View {
     }
 
     private func portColumnX(_ pr: PortRef) -> CGFloat {
-        guard let node = runtime.graph.node(pr.node) else { return 0 }
+        guard let node = runtime.activeGraph.node(pr.node) else { return 0 }
         let sp = camera.toScreen(node.position)
         return pr.isInput ? sp.x : sp.x + NodeMetrics.width * camera.scale
     }
 
     private func portName(_ nodeID: String, _ isInput: Bool, _ index: Int) -> String {
-        guard let node = runtime.graph.node(nodeID), let spec = registry.spec(node.specID) else { return "" }
-        let ports = isInput ? spec.inputs : spec.outputs
-        return index < ports.count ? ports[index].name : ""
+        guard let node = runtime.activeGraph.node(nodeID), let spec = registry.spec(node.specID) else { return "" }
+        let names = isInput ? spec.inputPortNames(node.exposedParams) : spec.outputs.map(\.name)
+        return index < names.count ? names[index] : ""
     }
 
     private func updatePortDraft(to p: CGPoint) {
@@ -591,7 +646,7 @@ struct NodeEditorView: View {
     }
 
     private func pickUpWire(_ w: Wire, seekInput: Bool) {
-        guard let from = runtime.graph.node(w.fromNode), let to = runtime.graph.node(w.toNode),
+        guard let from = runtime.activeGraph.node(w.fromNode), let to = runtime.activeGraph.node(w.toNode),
               let fs = registry.spec(from.specID), let ts = registry.spec(to.specID),
               let oi = fs.outputs.firstIndex(where: { $0.name == w.fromPort }),
               let ii = ts.inputs.firstIndex(where: { $0.name == w.toPort }) else { return }
@@ -607,7 +662,7 @@ struct NodeEditorView: View {
     }
 
     private func wirePathHit(at p: CGPoint) -> Wire? {
-        for w in runtime.graph.wires {
+        for w in runtime.activeGraph.wires {
             guard let (a, b) = wireEndpoints(w) else { continue }
             if wireDistance(a, b, p) < 14 { return w }
         }
@@ -659,13 +714,13 @@ struct NodeEditorView: View {
         let snapRange: CGFloat = 48
 
         if drag.seekInput {
-            guard let srcNode = runtime.graph.node(drag.fixedNode),
+            guard let srcNode = runtime.activeGraph.node(drag.fixedNode),
                   let srcSpec = registry.spec(srcNode.specID),
                   let outType = srcSpec.outputs.first(where: { $0.name == drag.fixedPort })?.type
             else { return }
             var best: (String, String)? = nil
             var bestD = snapRange
-            for node in runtime.graph.nodes where node.id != drag.fixedNode {
+            for node in runtime.activeGraph.nodes where node.id != drag.fixedNode {
                 guard let spec = registry.spec(node.specID) else { continue }
                 for (i, port) in spec.inputs.enumerated() where port.type.accepts(outType) {
                     let a = anchorScreen(node.id, portIndex: i, isInput: true)
@@ -687,13 +742,13 @@ struct NodeEditorView: View {
                 onDropOutput?(drag.fixedNode, drag.fixedPort, camera.toWorld(p))
             }
         } else {
-            guard let dstNode = runtime.graph.node(drag.fixedNode),
+            guard let dstNode = runtime.activeGraph.node(drag.fixedNode),
                   let dstSpec = registry.spec(dstNode.specID),
                   let inType = dstSpec.inputs.first(where: { $0.name == drag.fixedPort })?.type
             else { return }
             var best: (String, String)? = nil
             var bestD = snapRange
-            for node in runtime.graph.nodes where node.id != drag.fixedNode {
+            for node in runtime.activeGraph.nodes where node.id != drag.fixedNode {
                 guard let spec = registry.spec(node.specID) else { continue }
                 for (i, port) in spec.outputs.enumerated() where inType.accepts(port.type) {
                     let a = anchorScreen(node.id, portIndex: i, isInput: false)
@@ -708,6 +763,10 @@ struct NodeEditorView: View {
                 UIImpactFeedbackGenerator(style: ok ? .medium : .heavy).impactOccurred()
             } else if let orig = drag.original {
                 runtime.removeWire(orig)
+            } else {
+                // NEW wire pulled from an INPUT, dropped on empty → node creation, filtered
+                // to nodes whose output can feed this input, auto-connected on add.
+                onDropInput?(drag.fixedNode, drag.fixedPort, camera.toWorld(p))
             }
         }
     }
@@ -717,24 +776,24 @@ struct NodeEditorView: View {
         let rect = CGRect(x: min(r.start.x, r.current.x), y: min(r.start.y, r.current.y),
                           width: abs(r.current.x - r.start.x), height: abs(r.current.y - r.start.y))
         var hit: Set<String> = []
-        for node in runtime.graph.nodes {
+        for node in runtime.activeGraph.nodes {
             guard let spec = registry.spec(node.specID) else { continue }
             let sp = camera.toScreen(node.position)
             let frame = CGRect(x: sp.x, y: sp.y,
                                width: NodeMetrics.width * camera.scale,
-                               height: NodeMetrics.height(spec) * camera.scale)
+                               height: NodeMetrics.height(spec, exposed: node.exposedParams.count) * camera.scale)
             if rect.intersects(frame) { hit.insert(node.id) }
         }
         if !hit.isEmpty { selection = hit }
     }
 
     private func nodeHit(at p: CGPoint) -> String? {
-        for node in runtime.graph.nodes.reversed() {
+        for node in runtime.activeGraph.nodes.reversed() {
             guard let spec = registry.spec(node.specID) else { continue }
             let sp = camera.toScreen(node.position)
             let frame = CGRect(x: sp.x, y: sp.y,
                                width: NodeMetrics.width * camera.scale,
-                               height: NodeMetrics.height(spec) * camera.scale)
+                               height: NodeMetrics.height(spec, exposed: node.exposedParams.count) * camera.scale)
             if frame.contains(p) { return node.id }
         }
         return nil
@@ -797,7 +856,7 @@ struct MinimapView: View {
 
     /// World-space bounds of the graph, plus the minimap→world scale for a given size.
     private func bounds() -> (minX: Float, minY: Float, maxX: Float, maxY: Float) {
-        let nodes = runtime.graph.nodes
+        let nodes = runtime.activeGraph.nodes
         guard let f = nodes.first else { return (0, 0, 1, 1) }
         var minX = f.position.x, minY = f.position.y, maxX = minX + 1, maxY = minY + 1
         for n in nodes {
@@ -814,7 +873,7 @@ struct MinimapView: View {
                 let b = bounds()
                 let s = min(size.width / CGFloat(max(b.maxX - b.minX, 1)),
                             size.height / CGFloat(max(b.maxY - b.minY, 1)))
-                for n in runtime.graph.nodes {
+                for n in runtime.activeGraph.nodes {
                     let x = CGFloat(n.position.x - b.minX) * s
                     let y = CGFloat(n.position.y - b.minY) * s
                     let sel = selection.contains(n.id)
@@ -898,6 +957,24 @@ struct NodeCardView: View {
                         .padding(.trailing, 7)
                         .frame(height: NodeMetrics.portRowH)
                     }
+                    // Flat model — params exposed as ports (amber dot). Wire a Signal node in to drive them.
+                    ForEach(Array(node.exposedParams.enumerated()), id: \.element) { j, param in
+                        let idx = spec.inputs.count + j
+                        HStack(spacing: 6) {
+                            Rectangle().fill(Color(hex: 0xFFC24D))
+                                .frame(width: NodeMetrics.portDot, height: NodeMetrics.portDot)
+                                .overlay(Rectangle().stroke(portHi(true, idx) ? Color.white : .black.opacity(0.55),
+                                                            lineWidth: portHi(true, idx) ? 2 : 1))
+                            Text(param).font(.system(size: 9.5)).foregroundStyle(Color(hex: 0xFFC24D).opacity(0.95))
+                            Spacer(minLength: 0)
+                            if wiredInputs.contains(param) {
+                                Rectangle().fill(Theme.text2).frame(width: 5, height: 5)
+                            }
+                        }
+                        .padding(.leading, -NodeMetrics.portDot / 2 - 3)
+                        .padding(.trailing, 7)
+                        .frame(height: NodeMetrics.portRowH)
+                    }
                     ForEach(spec.params.prefix(NodeMetrics.maxParamRows), id: \.name) { p in
                         HStack {
                             Text(p.name).font(.system(size: 9)).foregroundStyle(Theme.text2)
@@ -932,13 +1009,23 @@ struct NodeCardView: View {
         .overlay(Rectangle().stroke(selected ? Theme.accent : Theme.line, lineWidth: selected ? 1.5 : 1))
         .opacity(selected || dragged ? 1.0 : 0.82)
         .shadow(color: dragged ? .white.opacity(0.55) : .clear, radius: dragged ? 10 : 0)
+        .overlay(alignment: .topTrailing) {
+            if let c = statusDot { PulsingDot(color: c).offset(x: 5, y: -5) }
+        }
+    }
+
+    /// Red (recording) / blue (NDI streaming) live indicator, read from the node's own arm param.
+    private var statusDot: Color? {
+        if spec.id == "record", node.option("record", "STOP") == "START" { return Theme.recActive }
+        if spec.id == "ndi-out", node.option("stream", "STOP") == "START" { return Theme.ndiActive }
+        return nil
     }
 
     /// The node's internal picture: input rows flow to the output row. Multi-input nodes
     /// converge on an op glyph; 1-in-1-out draws a single line; sources draw nothing.
     private var flowCanvas: some View {
         Canvas { ctx, _ in
-            let ins = spec.inputs.count, outs = spec.outputs.count
+            let ins = spec.inputs.count + node.exposedParams.count, outs = spec.outputs.count
             guard ins >= 1, outs >= 1 else { return }
             // Row centers in this ZStack's space (which starts below the header).
             func inY(_ i: Int) -> CGFloat { NodeMetrics.portRowH * (CGFloat(i) + 0.5) }
@@ -1004,7 +1091,7 @@ struct NodeSettingsBar: View {
     @Binding var selection: Set<String>
 
     private var primaryID: String? { selection.count == 1 ? selection.first : nil }
-    private var node: GraphNode? { primaryID.flatMap { runtime.graph.node($0) } }
+    private var node: GraphNode? { primaryID.flatMap { runtime.activeGraph.node($0) } }
     private var spec: NodeSpec? { node.flatMap { NodeRegistry.shared.spec($0.specID) } }
 
     var body: some View {
@@ -1026,12 +1113,36 @@ struct NodeSettingsBar: View {
                         CamJogRow(runtime: runtime, label: "POSITION",
                                   xParam: "centerX", yParam: "centerY", step: 0.1, limit: 1.0)
                     }
-                    let floats = spec.params.filter { $0.range != nil }
-                    ForEach(floats, id: \.name) { p in     // ALL float params (was capped at 4)
-                        ParamSliderRow(runtime: runtime, nodeID: node.id, param: p)
+                    if spec.id == "noise" {
+                        NoisePreview(runtime: runtime, nodeID: node.id)
+                            .padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 4)
                     }
+                    if spec.id == "value-display" {
+                        ValueReadout(runtime: runtime, nodeID: node.id)
+                            .padding(.horizontal, 12).padding(.vertical, 4)
+                    }
+                    // Camera's orbit/center are driven by the jog rows above — don't duplicate them as sliders.
+                    let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY"] : []
+                    let floats = spec.params.filter { $0.range != nil && !jogged.contains($0.name) }
+                    ForEach(floats, id: \.name) { p in     // ALL float params (was capped at 4)
+                        HStack(spacing: 2) {
+                            ExposeToggle(runtime: runtime, nodeID: node.id, param: p.name)
+                            ParamSliderRow(runtime: runtime, nodeID: node.id, param: p)
+                        }
+                    }
+                    // NDI + Record share the standard renderer so they look identical; their
+                    // arm param (STOP/START) shows as one coloured button, not a 2-way switcher.
                     ForEach(spec.params.filter { $0.options != nil }, id: \.name) { p in
-                        OptionSegmentRow(runtime: runtime, nodeID: node.id, param: p)
+                        if let tint = ArmToggleButton.tint(specID: spec.id, param: p.name) {
+                            ArmToggleButton(runtime: runtime, nodeID: node.id, param: p, tint: tint)
+                        } else if spec.id == "ndi-out" && p.name == "name" {
+                            OptionCycleRow(runtime: runtime, nodeID: node.id, param: p)  // 10 names → cycler
+                        } else {
+                            HStack(spacing: 2) {   // free/pinout & other mode options are drivable → expose toggle
+                                ExposeToggle(runtime: runtime, nodeID: node.id, param: p.name)
+                                OptionSegmentRow(runtime: runtime, nodeID: node.id, param: p)
+                            }
+                        }
                     }
                     if floats.isEmpty && spec.params.allSatisfy({ $0.options == nil }) && spec.id != "camera" {
                         Text(spec.description)
@@ -1053,13 +1164,15 @@ struct NodeSettingsBar: View {
                 Text(id).font(.system(size: 9).monospaced()).foregroundStyle(Theme.text2)
             }
             Spacer()
-            actionButton("trash", "REMOVE") {
-                runtime.removeNodes(selection)
-                selection.removeAll()
-            }
-            actionButton("plus.square.on.square", "DUP") {
-                let new = runtime.duplicateNodes(selection)
-                if !new.isEmpty { selection = Set(new) }
+            if spec?.id != "trigger-drive" {   // §13 — permanent per-param sinks: RESET only, no remove/dup
+                actionButton("trash", "REMOVE") {
+                    runtime.removeNodes(selection)
+                    selection.removeAll()
+                }
+                actionButton("plus.square.on.square", "DUP") {
+                    let new = runtime.duplicateNodes(selection)
+                    if !new.isEmpty { selection = Set(new) }
+                }
             }
             actionButton("arrow.counterclockwise", "RESET") {
                 runtime.resetNodeParams(selection)
@@ -1082,6 +1195,138 @@ struct NodeSettingsBar: View {
             .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Flat model — a small ◇ that exposes/hides a param as a wireable input port on the node's card.
+/// Amber (filled) when exposed, matching the amber port dot; wire a Signal node into that port to drive it.
+struct ExposeToggle: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let param: String
+    var body: some View {
+        let on = runtime.isExposed(nodeID, param)
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            runtime.toggleExposed(nodeID, param)
+        } label: {
+            Image(systemName: on ? "diamond.fill" : "diamond")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(on ? Color(hex: 0xFFC24D) : Theme.text2)
+                .frame(width: 22, height: 24)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - NDI node panel — switches (STREAM/ALPHA/WIRED) + nav switchers (NAME/RES/ORIENT/FPS),
+// in the app's own flat style (no Apple controls).
+
+struct NDINodePanel: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    private let resList = ["810x1080", "945x1260", "1080x1440", "1350x1800", "1620x2160"]
+    private let nameList = ["Points", "Points1", "Points2", "Points3", "Points4",
+                            "Points5", "Points6", "Points7", "Points8", "Points9"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            NDISwitchRow(runtime: runtime, nodeID: nodeID, label: "STREAM",
+                         param: "stream", onValue: "START", offValue: "STOP",
+                         onText: "LIVE", offText: "OFF")
+            NDINavRow(runtime: runtime, nodeID: nodeID, label: "NAME",
+                      param: "name", options: nameList, def: "Points")
+            NDINavRow(runtime: runtime, nodeID: nodeID, label: "RESOLUTION",
+                      param: "resolution", options: resList, def: "1080x1440",
+                      display: { $0.replacingOccurrences(of: "x", with: "×") })
+            NDINavRow(runtime: runtime, nodeID: nodeID, label: "ORIENT",
+                      param: "orientation", options: ["3:4", "4:3"], def: "3:4")
+            NDINavRow(runtime: runtime, nodeID: nodeID, label: "FPS",
+                      param: "fps", options: ["30", "60"], def: "30")
+            NDISwitchRow(runtime: runtime, nodeID: nodeID, label: "ALPHA KEY",
+                         param: "alpha", onValue: "ON", offValue: "OFF")
+            NDISwitchRow(runtime: runtime, nodeID: nodeID, label: "WIRED",
+                         param: "wired", onValue: "ON", offValue: "OFF")
+        }
+        .padding(.top, 2)
+    }
+}
+
+/// `< value >` stepper bound to an option param — for RESOLUTION / NAME / ORIENT / FPS.
+struct NDINavRow: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let label: String
+    let param: String
+    let options: [String]
+    let def: String
+    var display: (String) -> String = { $0 }
+
+    var body: some View {
+        let cur = runtime.nodeOption(nodeID, param, def)
+        let idx = options.firstIndex(of: cur) ?? 0
+        HStack(spacing: 10) {
+            Text(label).font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                .foregroundStyle(Theme.text2).frame(width: 70, alignment: .leading)
+            HStack(spacing: 0) {
+                navButton("chevron.left") { step(idx, -1) }
+                Text(display(cur))
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
+                    .frame(maxWidth: .infinity).padding(.vertical, 7).background(Theme.panel)
+                navButton("chevron.right") { step(idx, +1) }
+            }
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 4)
+    }
+
+    private func step(_ idx: Int, _ d: Int) {
+        let n = (idx + d + options.count) % options.count
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        runtime.setOption(nodeID, param, options[n])
+    }
+
+    private func navButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.text)
+                .frame(width: 34, height: 30).background(Theme.panel)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// App-styled ON/OFF switch bound to a two-value option param — for STREAM / ALPHA / WIRED.
+/// White fill + black text = ON, black fill + white text = OFF.
+struct NDISwitchRow: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let label: String
+    let param: String
+    let onValue: String
+    let offValue: String
+    var onText: String = "ON"
+    var offText: String = "OFF"
+
+    var body: some View {
+        let isOn = runtime.nodeOption(nodeID, param, offValue) == onValue
+        Button {
+            UIImpactFeedbackGenerator(style: isOn ? .light : .rigid).impactOccurred()
+            runtime.setOption(nodeID, param, isOn ? offValue : onValue)
+        } label: {
+            HStack(spacing: 10) {
+                Text(label).font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                    .foregroundStyle(Theme.text2).frame(width: 70, alignment: .leading)
+                Spacer()
+                Text(isOn ? onText : offText)
+                    .font(.system(size: 10, weight: .bold)).tracking(1.5)
+                    .foregroundStyle(isOn ? Color.black : Theme.text)
+                    .frame(width: 66, height: 26)
+                    .background(isOn ? Theme.text : Color.black)
+                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16).padding(.vertical, 4)
     }
 }
 
@@ -1145,6 +1390,7 @@ struct ParamSliderRow: View {
     let param: ParamSpec
     @State private var value: Float = 0
     @State private var dragBegan = false
+    @State private var grabbed = false
 
     private var range: ClosedRange<Float> { param.range ?? 0...1 }
 
@@ -1172,12 +1418,19 @@ struct ParamSliderRow: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { gg in
-                            if !dragBegan { dragBegan = true; runtime.pushUndo() }
+                            if !dragBegan {
+                                // Grab ONLY when the touch starts on the handle — a tap on the bare
+                                // line does nothing (so you can scroll/miss without moving it).
+                                grabbed = abs(gg.startLocation.x - x) <= 26
+                                guard grabbed else { return }
+                                dragBegan = true; runtime.pushUndo()
+                            }
+                            guard grabbed else { return }
                             let n = Float(min(max((gg.location.x - 22) / (g.size.width - 44), 0), 1))
                             value = range.lowerBound + n * (range.upperBound - range.lowerBound)
                             runtime.setParam(nodeID, param.name, value)
                         }
-                        .onEnded { _ in dragBegan = false }
+                        .onEnded { _ in dragBegan = false; grabbed = false }
                 )
             }
             .frame(height: 24)
@@ -1194,6 +1447,82 @@ struct ParamSliderRow: View {
 }
 
 /// Flat segmented control for option params (e.g. Point Display FREE ↔ PINOUT).
+// MARK: - Noise node live preview (CPU value-noise mirror of the GPU field)
+
+private func nHash13(_ x: Int, _ y: Int, _ z: Int) -> Float {
+    var n = x &* 374761393 &+ y &* 668265263 &+ z &* 1274126177
+    n = (n ^ (n >> 13)) &* 1274126177
+    return Float((n ^ (n >> 16)) & 0x00FFFFFF) / 16777215.0
+}
+private func nMix(_ a: Float, _ b: Float, _ t: Float) -> Float { a + (b - a) * t }
+private func nValue3(_ px: Float, _ py: Float, _ pz: Float) -> Float {
+    let ix = px.rounded(.down), iy = py.rounded(.down), iz = pz.rounded(.down)
+    func sm(_ t: Float) -> Float { t * t * (3 - 2 * t) }
+    let ux = sm(px - ix), uy = sm(py - iy), uz = sm(pz - iz)
+    let cx = Int(ix), cy = Int(iy), cz = Int(iz)
+    func h(_ dx: Int, _ dy: Int, _ dz: Int) -> Float { nHash13(cx + dx, cy + dy, cz + dz) }
+    let nx00 = nMix(h(0,0,0), h(1,0,0), ux), nx10 = nMix(h(0,1,0), h(1,1,0), ux)
+    let nx01 = nMix(h(0,0,1), h(1,0,1), ux), nx11 = nMix(h(0,1,1), h(1,1,1), ux)
+    return nMix(nMix(nx00, nx10, uy), nMix(nx01, nx11, uy), uz)   // 0..1
+}
+
+/// Tiny animated preview shown inside the Noise node's settings bar. Reads the node's live params
+/// so it updates as you drag sliders. (CPU value-noise approximation of the GPU field.)
+/// Live control-value readout for the Value Display node — makes body/audio/trigger values observable
+/// (e.g. wire Hand Pinch → Value Display to confirm the body node is producing).
+struct ValueReadout: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 20.0)) { _ in
+            let v = runtime.liveControlValue(nodeID, "out")
+            HStack(spacing: 8) {
+                Text("LIVE VALUE").font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                    .foregroundStyle(Theme.text2)
+                Spacer()
+                Text(String(format: "%.3f", v))
+                    .font(.system(size: 20, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color(hex: 0xFFC24D))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Theme.panel)
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+    }
+}
+
+struct NoisePreview: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 18.0)) { tl in
+            Canvas { ctx, size in
+                guard let node = runtime.activeGraph.node(nodeID) else { return }
+                let freq = 1.0 / max(node.float("period", 0.5), 0.02)
+                let move = node.float("moveRate", 0.3) * (node.float("moveNeg") > 0.5 ? -1 : 1)
+                let z = Float(tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1000)) * move
+                let seed = node.float("seed", 1) * 13.1
+                let amp = node.float("amplitude", 1), off = node.float("offset", 0)
+                let N = 34
+                let cw = size.width / CGFloat(N), ch = size.height / CGFloat(N)
+                for gy in 0..<N {
+                    for gx in 0..<N {
+                        let u = (Float(gx) / Float(N - 1) - 0.5) * 2 * freq + seed
+                        let v = (Float(gy) / Float(N - 1) - 0.5) * 2 * freq + seed
+                        let n = nValue3(u, v, z + seed) * amp + off
+                        let c = Double(max(0, min(1, n)))
+                        ctx.fill(Path(CGRect(x: CGFloat(gx) * cw, y: CGFloat(gy) * ch,
+                                             width: cw + 1, height: ch + 1)),
+                                 with: .color(Color(white: c)))
+                    }
+                }
+            }
+            .frame(height: 68)
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+    }
+}
+
 struct OptionSegmentRow: View {
     let runtime: GraphRuntime
     let nodeID: String
@@ -1207,23 +1536,45 @@ struct OptionSegmentRow: View {
                 .font(.system(size: 8, weight: .semibold)).tracking(1.1)
                 .foregroundStyle(Theme.text2)
                 .frame(width: 70, alignment: .leading)
-            HStack(spacing: 1) {
-                ForEach(options, id: \.self) { opt in
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        runtime.setOption(nodeID, param.name, opt)
-                    } label: {
-                        Text(opt.uppercased())
-                            .font(.system(size: 9, weight: .semibold)).tracking(0.8)
-                            .foregroundStyle(current == opt ? Color.black : Theme.text2)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(current == opt ? Theme.text : Theme.panel)
+            if options.count > 4 {
+                // Many options → horizontal-scroll picker, boxes fitted to text (memory: points-hscroll-option-picker).
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(options, id: \.self) { opt in
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                runtime.setOption(nodeID, param.name, opt)
+                            } label: {
+                                Text(opt.uppercased())
+                                    .font(.system(size: 9, weight: .semibold)).tracking(0.8)
+                                    .foregroundStyle(current == opt ? Color.black : Theme.text)
+                                    .padding(.horizontal, 9).padding(.vertical, 7)
+                                    .background(current == opt ? Theme.text : Color.black)
+                                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
+            } else {
+                HStack(spacing: 1) {
+                    ForEach(options, id: \.self) { opt in
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            runtime.setOption(nodeID, param.name, opt)
+                        } label: {
+                            Text(opt.uppercased())
+                                .font(.system(size: 9, weight: .semibold)).tracking(0.8)
+                                .foregroundStyle(current == opt ? Color.black : Theme.text2)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .background(current == opt ? Theme.text : Theme.panel)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
             }
-            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
@@ -1232,5 +1583,112 @@ struct OptionSegmentRow: View {
     private var defaultOption: String {
         if case .option(let s) = param.defaultValue { return s }
         return param.options?.first ?? ""
+    }
+}
+
+/// Compact cycling switcher for long option lists (e.g. NDI name Points…Points9) — one row,
+/// ‹ VALUE › with tap-to-advance, instead of a wide many-segment switcher.
+struct OptionCycleRow: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let param: ParamSpec
+
+    var body: some View {
+        let options = param.options ?? []
+        let current = runtime.nodeOption(nodeID, param.name, options.first ?? "")
+        let idx = options.firstIndex(of: current) ?? 0
+        HStack(spacing: 10) {
+            Text(param.name.uppercased())
+                .font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                .foregroundStyle(Theme.text2)
+                .frame(width: 70, alignment: .leading)
+            HStack(spacing: 0) {
+                cycleButton("chevron.left") { set(options, (idx - 1 + options.count) % max(options.count, 1)) }
+                Text(current.uppercased())
+                    .font(.system(size: 9, weight: .semibold)).tracking(0.8)
+                    .foregroundStyle(Theme.text)
+                    .frame(maxWidth: .infinity)
+                cycleButton("chevron.right") { set(options, (idx + 1) % max(options.count, 1)) }
+            }
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 4)
+    }
+
+    private func set(_ opts: [String], _ i: Int) {
+        guard opts.indices.contains(i) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        runtime.setOption(nodeID, param.name, opts[i])
+    }
+
+    private func cycleButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Theme.text2)
+                .frame(width: 30, height: 22)
+                .background(Theme.panel)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A soft pulsing status dot — recording (red) / NDI (blue) live indicator on a node.
+struct PulsingDot: View {
+    let color: Color
+    @State private var on = false
+    var body: some View {
+        Circle().fill(color).frame(width: 9, height: 9)
+            .shadow(color: color, radius: on ? 4 : 1)
+            .opacity(on ? 1 : 0.4)
+            .scaleEffect(on ? 1.15 : 0.8)
+            .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: on)
+            .onAppear { on = true }
+    }
+}
+
+/// One arm button for NDI / Record (STOP ↔ START). Red = record, blue = NDI. Replaces the
+/// 2-segment switcher so both sinks read the same everywhere. See Theme.recActive / .ndiActive.
+struct ArmToggleButton: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let param: ParamSpec
+    let tint: Color
+
+    /// The arm param → its tint, or nil for a normal option param.
+    static func tint(specID: String, param: String) -> Color? {
+        switch (specID, param) {
+        case ("record", "record"): return Theme.recActive
+        case ("ndi-out", "stream"): return Theme.ndiActive
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        let on = runtime.nodeOption(nodeID, param.name, "STOP") == "START"
+        HStack(spacing: 10) {
+            Text(param.name.uppercased())
+                .font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                .foregroundStyle(Theme.text2)
+                .frame(width: 70, alignment: .leading)
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                runtime.setOption(nodeID, param.name, on ? "STOP" : "START")
+            } label: {
+                HStack(spacing: 6) {
+                    Circle().fill(on ? Color.white : Theme.text2).frame(width: 7, height: 7)
+                    Text(on ? "LIVE — TAP TO STOP" : "TAP TO START")
+                        .font(.system(size: 9, weight: .semibold)).tracking(0.8)
+                        .foregroundStyle(on ? Color.white : Theme.text2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(on ? tint : Theme.panel)
+                .overlay(Rectangle().stroke(on ? tint : Theme.line, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 4)
     }
 }

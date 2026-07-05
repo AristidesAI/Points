@@ -2,11 +2,21 @@ import Foundation
 
 // Graph document model: nodes + wires, validation, topological order, persistence.
 
-struct GraphNode: Identifiable, Codable, Sendable {
+nonisolated struct GraphNode: Identifiable, Codable, Sendable {
     let id: String                       // instance id, unique per graph
     let specID: String                   // NodeRegistry key
     var params: [String: ParamValue]
     var position: SIMD2<Float> = .zero   // canvas placement (editor)
+    // Flat model — folded params (Depth near/far, Size min/max, Point Display's 7, options…) that the
+    // user has "exposed" as real input ports on this card. Wire a Signal node into one → it drives that
+    // param. Decodes to [] when the key is absent (old graphs). Undo covered by whole-Graph snapshots.
+    var exposedParams: [String] = []
+    // Dormant: the old nested trigger subgraph. Flattened to exposedParams; field kept so old saves decode.
+    // ponytail: remove in a later cleanup once no serialized graphs carry it.
+    var triggerGraph: Graph? = nil
+
+    /// True when this node carries authored trigger logic (drives the port's filled/pulsing state).
+    var hasTriggers: Bool { !(triggerGraph?.nodes.isEmpty ?? true) }
 
     func param(_ name: String) -> ParamValue? { params[name] }
     func float(_ name: String, _ fallback: Float = 0) -> Float {

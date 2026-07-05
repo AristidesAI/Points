@@ -43,12 +43,13 @@ enum PortType: String, Codable, Sendable {
 enum NodeFamily: String, Codable, CaseIterable, Sendable {
     case source = "SOURCE", grid = "GRID", filter = "FILTER", shape = "SHAPE", move = "MOVE"
     case color = "COLOR", signal = "SIGNAL", body = "BODY", time = "TIME", stage = "STAGE"
+    case output = "OUTPUT"   // sinks that tap the finished image: NDI, Record
     case tools = "TOOLS"
 }
 
 // MARK: - Params
 
-enum ParamValue: Codable, Equatable, Sendable {
+nonisolated enum ParamValue: Codable, Equatable, Sendable {
     case float(Float)
     case int(Int)
     case bool(Bool)
@@ -144,6 +145,9 @@ struct NodeSpec: Sendable {
     }
 
     var isControl: Bool { controlEval != nil || controlEvalStateful != nil }
+
+    /// Input-port names shown on a node's card = declared inputs + params exposed as ports (flat model).
+    func inputPortNames(_ exposed: [String]) -> [String] { inputs.map(\.name) + exposed }
 }
 
 /// Per-frame context handed to control-rate nodes.
@@ -158,7 +162,7 @@ struct ControlContext: Sendable {
     // Live-input buses — zeros until their engines land (audio / MIDI / Vision body).
     var audio: SIMD4<Float> = .zero    // bass, mid, high, rms (0-1)
     var onsets: SIMD4<Float> = .zero   // drumLow, drumMid, drumHigh, burst (pulse 0/1)
-    var midi: SIMD4<Float> = .zero     // last CC value, last note, velocity, bend
+    var midi: SIMD4<Float> = .zero     // last CC value (0-1), note gate (0/1), velocity (0-1), pitch bend (-1…1)
     var bodyA: SIMD4<Float> = .zero    // headX, headY, handLX, handLY (0-1)
     var bodyB: SIMD4<Float> = .zero    // handRX, handRY, pinchAmount, handOpenness
     var gestures: SIMD4<Float> = .zero // palm, fist, peace, point (hand-gesture triggers)

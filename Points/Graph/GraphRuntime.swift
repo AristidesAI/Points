@@ -81,6 +81,11 @@ final class GraphRuntime {
     private static let audioIDs: Set<String> = ["audio-levels", "beat-trigger", "fft-band", "audio-rms", "burst"]
     var usesAudioNodes: Bool { graph.nodes.contains { Self.audioIDs.contains($0.specID) } }
 
+    // Live MIDI (CoreMIDI), supplied by ContentView while a MIDI node exists.
+    @ObservationIgnored var midiSource: (@Sendable () -> SIMD4<Float>)?
+    private static let midiIDs: Set<String> = ["midi-cc", "midi-note"]
+    var usesMidiNodes: Bool { graph.nodes.contains { Self.midiIDs.contains($0.specID) } }
+
     // Live body/hand tracking (Vision), supplied by ContentView while a body node exists.
     @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>))?
     private static let bodyFamily: Set<String> = ["hand-position", "pinch-amount", "hand-openness",
@@ -92,6 +97,9 @@ final class GraphRuntime {
     private var controlOrder: [GraphNode] = []
     private var controlValues: [String: SIMD4<Float>] = [:]   // "nodeID.port" → value
     private var controlState: [String: SIMD4<Float>] = [:]
+    // §13 v2 — per-host nested trigger subgraphs: cached control order + persistent per-host state.
+    private var nestedOrders: [String: [GraphNode]] = [:]                       // hostID → nested control order
+    private var nestedControlState: [String: [String: SIMD4<Float>]] = [:]      // hostID → nestedID → state
 
     private let startTime = CACurrentMediaTime()
     private var lastTime: CFTimeInterval
@@ -121,12 +129,14 @@ final class GraphRuntime {
             node.position = [x, y]
             return node
         }
+        // Clean left→right flow, evenly spaced; Camera sits ABOVE Output (its render target),
+        // never overlapping. Self-plumbed nodes (shockwave/freeze) are placed clear at runtime.
         g.nodes = [
-            n("cam", "camera", 40, 40),
-            n("d1", "depth", 40, 280),
-            n("pd", "point-display", 330, 160),
-            n("sz", "size", 330, 480),
-            n("out", "output", 620, 280),
+            n("d1", "depth", 60, 130),
+            n("pd", "point-display", 330, 110),
+            n("sz", "size", 330, 410),
+            n("cam", "camera", 620, 60),
+            n("out", "output", 620, 320),
         ]
         g.wires = [
             Wire(fromNode: "d1", fromPort: "depth", toNode: "pd", toPort: "depth"),
@@ -162,6 +172,71 @@ final class GraphRuntime {
         case "Kick Shatter":                                   // depth-driven scatter of the grid
             node("sc", "scatter", 470, 380, ["amount": .float(0.5), "seed": .float(5)])
             wire("pd", "z", "sc", "amount"); wire("sc", "offset", "out", "position")
+        case "Max Complexity":                                 // every lane wired — the current node/trigger system at full stretch
+            // depth cleanup: Depth → Grazing Cull → EMA Smooth → Point Display (stems ON)
+            node("gz", "grazing-cull", 60, 300, ["cull": .float(0.3), "edge": .float(0.1)])
+            node("em", "ema-smooth", 60, 430, ["amount": .float(0.3)])
+            wire("d1", "depth", "gz", "depth"); wire("gz", "out", "em", "depth"); wire("em", "out", "pd", "depth")
+            if let i = g.nodes.firstIndex(where: { $0.id == "pd" }) { g.nodes[i].params["arms"] = .bool(true) }
+
+            // TRIGGER SOURCES + LOGIC (control-rate — the current trigger toolkit on show)
+            node("clk", "clock", 60, 560)
+            node("ons", "on-start", 60, 680)
+            node("hg", "hand-gesture", 60, 800, ["hold": .float(0.4), "smoothing": .float(0.4)])
+            node("tg", "toggle", 230, 800)
+            node("cnt", "counter", 230, 560, ["wrap": .float(8)])
+            node("chn", "chance", 230, 680, ["probability": .float(0.6)])
+            wire("clk", "quarter", "cnt", "count"); wire("ons", "fired", "cnt", "reset")
+            wire("clk", "bar", "chn", "trigger"); wire("hg", "fist", "tg", "flip")
+
+            // Z SURFACE: Trail + Radial Ripple + animated Noise (plane stepped by Wander→S&H), summed
+            node("tr", "trail", 470, 300, ["decay": .float(3)])
+            node("rp", "radial-ripple", 470, 430, ["amp": .float(0.4), "wavelength": .float(0.12), "speed": .float(2)])
+            node("wd", "wander", 470, 800, ["speed": .float(0.6)])
+            node("shd", "sample-hold", 640, 800)
+            node("nz", "noise", 470, 560,
+                 ["type": .option("perlin"), "period": .float(0.4), "harmonics": .float(3),
+                  "amplitude": .float(0.5), "offset": .float(-0.25), "moveAxis": .option("z"), "moveRate": .float(0.4)])
+            node("zad1", "add", 640, 360); node("zad2", "add", 780, 360)
+            wire("pd", "z", "tr", "in")
+            wire("wd", "out", "shd", "in"); wire("clk", "eighth", "shd", "trigger"); wire("shd", "out", "nz", "z")
+            wire("tr", "out", "zad1", "a"); wire("rp", "height", "zad1", "b")
+            wire("zad1", "out", "zad2", "a"); wire("nz", "out", "zad2", "b"); wire("zad2", "out", "out", "z")
+
+            // SIZE: Size × LFO wobble
+            node("lf", "lfo", 230, 430, ["rate": .float(2), "shape": .option("triangle")])
+            node("szm", "multiply", 470, 160)
+            wire("sz", "out", "szm", "a"); wire("lf", "out", "szm", "b"); wire("szm", "out", "out", "size")
+
+            // COLOUR: thermal palette by depth, white-flashed on the beat (Clock → Envelope → strobe)
+            node("env", "envelope", 230, 300, ["attack": .float(0.01), "release": .float(0.3)])
+            node("pl", "palette", 640, 560, ["map": .option("thermal"), "shift": .float(-0.25)])
+            node("st", "strobe-color", 780, 560)
+            wire("clk", "quarter", "env", "trigger")
+            wire("em", "out", "pl", "t"); wire("pl", "color", "st", "color")
+            wire("env", "out", "st", "flash"); wire("st", "out", "out", "color")
+
+            // SHAPE + SPIN: open hand morphs sphere→cube, pins spin continuously
+            node("ho", "hand-openness", 640, 680)
+            node("shp", "shape-morph", 780, 680, ["target": .option("cube")])
+            node("spn", "spin", 780, 800, ["z": .float(0.25)])
+            wire("ho", "amount", "shp", "blend"); wire("shp", "shape", "out", "shape")
+            wire("spn", "rot", "out", "rotation")
+        case "Trigger Test":                                   // §13 v2 — Size.base driven by a NESTED trigger graph (beat pop)
+            var tg = Graph()
+            tg.nodes = [
+                GraphNode(id: "ck", specID: "clock", params: [:], position: [60, 80]),
+                GraphNode(id: "ev", specID: "t-envelope",
+                          params: ["attack": .float(0.01), "release": .float(0.28)], position: [300, 80]),
+                GraphNode(id: "dv", specID: "trigger-drive",
+                          params: ["target": .option("base"), "mode": .option("offset"), "amount": .float(1.2)],
+                          position: [540, 80]),
+            ]
+            tg.wires = [
+                Wire(fromNode: "ck", fromPort: "quarter", toNode: "ev", toPort: "trig"),
+                Wire(fromNode: "ev", fromPort: "out", toNode: "dv", toPort: "value"),
+            ]
+            if let i = g.nodes.firstIndex(where: { $0.id == "sz" }) { g.nodes[i].triggerGraph = tg }
         default:                                               // "Pure Pins" / unknown → default
             break
         }
@@ -175,19 +250,17 @@ final class GraphRuntime {
 
     /// Slider path: apply + recompile (state layout is stable → memory survives).
     func setParam(_ nodeID: String, _ name: String, _ value: Float) {
-        guard graph.node(nodeID) != nil else { return }
-        graph.setParam(nodeID, name, .float(value))
-        recompile()
+        guard activeGraph.node(nodeID) != nil else { return }
+        editActive { $0.setParam(nodeID, name, .float(value)) }
     }
 
     /// Option/segment path (e.g. Point Display FREE ↔ PINOUT).
     func setOption(_ nodeID: String, _ name: String, _ value: String) {
-        guard graph.node(nodeID) != nil else { return }
+        guard activeGraph.node(nodeID) != nil else { return }
         pushUndo()
-        graph.setParam(nodeID, name, .option(value))
-        // Switching Point Display mode reshapes the whole look: PINOUT = flat/locked/telephoto,
-        // FREE = the registry cloud defaults. (One undo step covers the preset.)
-        if graph.node(nodeID)?.specID == "point-display", name == "mode" {
+        editActive(recompileAfter: false) { $0.setParam(nodeID, name, .option(value)) }
+        // Point Display mode is a root-scope preset (it also nudges the shared camera).
+        if editScopeNodeID == nil, graph.node(nodeID)?.specID == "point-display", name == "mode" {
             applyDisplayMode(nodeID, value)
         }
         recompile()
@@ -214,22 +287,45 @@ final class GraphRuntime {
     }
 
     func setBool(_ nodeID: String, _ name: String, _ value: Bool) {
-        guard graph.node(nodeID) != nil else { return }
-        graph.setParam(nodeID, name, .bool(value))
-        recompile()
+        guard activeGraph.node(nodeID) != nil else { return }
+        pushUndo()                        // a discrete toggle → one undo step
+        editActive { $0.setParam(nodeID, name, .bool(value)) }
+    }
+
+    /// Flat model — toggle a param's exposed input port on the card. Un-exposing drops any wire into it.
+    func toggleExposed(_ nodeID: String, _ param: String) {
+        pushUndo()
+        editActive { g in
+            guard let i = g.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+            if let j = g.nodes[i].exposedParams.firstIndex(of: param) {
+                g.nodes[i].exposedParams.remove(at: j)
+                g.wires.removeAll { $0.toNode == nodeID && $0.toPort == param }
+            } else {
+                g.nodes[i].exposedParams.append(param)
+            }
+        }
+    }
+
+    func isExposed(_ nodeID: String, _ param: String) -> Bool {
+        activeGraph.node(nodeID)?.exposedParams.contains(param) ?? false
     }
 
     /// Live path for dynamic lanes (freeze hold): no recompile at all.
     func setParamLive(_ nodeID: String, _ name: String, _ value: Float) {
-        graph.setParam(nodeID, name, .float(value))
+        editActive(recompileAfter: false) { $0.setParam(nodeID, name, .float(value)) }
     }
 
     func nodeParam(_ nodeID: String, _ name: String, _ fallback: Float) -> Float {
-        graph.node(nodeID)?.float(name, fallback) ?? fallback
+        activeGraph.node(nodeID)?.float(name, fallback) ?? fallback
     }
 
     func nodeOption(_ nodeID: String, _ name: String, _ fallback: String) -> String {
-        graph.node(nodeID)?.option(name, fallback) ?? fallback
+        activeGraph.node(nodeID)?.option(name, fallback) ?? fallback
+    }
+
+    /// Live control-rate value of a node's output port this frame (Value Display / body-node readout).
+    func liveControlValue(_ nodeID: String, _ port: String) -> Float {
+        controlValues["\(nodeID).\(port)"]?.x ?? 0
     }
 
     // MARK: - Pads (incremental graph edits — user wiring survives)
@@ -257,6 +353,7 @@ final class GraphRuntime {
 
     func setColorMode(_ mode: ColorMode) {
         guard mode != colorMode else { return }
+        pushUndo()                        // structural (adds/removes the colour node) → undoable
         colorMode = mode
         removeNodeInternal("vc")
         removeNodeInternal("pal")
@@ -315,7 +412,7 @@ final class GraphRuntime {
         pushUndo()
         var fz = GraphNode(id: "fz", specID: "freeze", params: [:])
         let outPos = graph.node("out")?.position ?? [620, 280]
-        fz.position = outPos + [-220, -160]
+        fz.position = clearPosition(outPos + [-220, -160], specID: "freeze")
         graph.nodes.append(fz)
         if let w = zFeed() {
             graph.wires.removeAll { $0 == w }
@@ -332,11 +429,11 @@ final class GraphRuntime {
         pushUndo()
         let outPos = graph.node("out")?.position ?? [620, 280]
         var sw = GraphNode(id: "sw", specID: "shockwave", params: [:])
-        sw.position = outPos + [-220, 180]
+        sw.position = clearPosition(outPos + [-220, 180], specID: "shockwave")
         graph.nodes.append(sw)
         if let w = zFeed() {
             var adder = GraphNode(id: "swa", specID: "add", params: [:])
-            adder.position = outPos + [-110, 40]
+            adder.position = clearPosition(outPos + [-110, 40], specID: "add")
             graph.nodes.append(adder)
             graph.wires.removeAll { $0 == w }
             graph.wires.append(Wire(fromNode: w.fromNode, fromPort: w.fromPort, toNode: "swa", toPort: "a"))
@@ -348,9 +445,149 @@ final class GraphRuntime {
         recompile()
     }
 
+    // MARK: - NDI output (global sink, presence + START drive the renderer's NDI pass)
+
+    /// The NDI node's live config, or nil when there's no node or streaming is stopped.
+    /// The renderer only does its offscreen pass while this is non-nil.
+    func ndiRenderConfig() -> NDIRenderConfig? {
+        guard let n = graph.nodes.first(where: { $0.specID == "ndi-out" }),
+              nodeOption(n.id, "stream", "STOP") == "START" else { return nil }
+        let base: (Int, Int)
+        switch nodeOption(n.id, "resolution", "1080x1440") {
+        case "810x1080": base = (810, 1080)
+        case "945x1260": base = (945, 1260)
+        case "1350x1800": base = (1350, 1800)
+        case "1620x2160": base = (1620, 2160)
+        default: base = (1080, 1440)
+        }
+        let landscape = nodeOption(n.id, "orientation", "3:4") == "4:3"
+        let w = landscape ? base.1 : base.0
+        let h = landscape ? base.0 : base.1
+        let fps60 = nodeOption(n.id, "fps", "30") == "60"
+        return NDIRenderConfig(width: w, height: h,
+                               alpha: nodeOption(n.id, "alpha", "OFF") == "ON",
+                               fpsN: fps60 ? 60_000 : 30_000, fpsD: 1_000,
+                               name: nodeOption(n.id, "name", "Points"),
+                               wired: nodeOption(n.id, "wired", "OFF") == "ON")
+    }
+
+    var hasNDINode: Bool { graph.nodes.contains { $0.specID == "ndi-out" } }
+    var ndiStreaming: Bool { ndiRenderConfig() != nil }
+
+    /// Menu NDI button: create the NDI node (stopped) wired from Output.image, or select the
+    /// existing one. The user hits START in its settings.
+    @discardableResult
+    func ensureNDIOut() -> String {
+        if let existing = graph.nodes.first(where: { $0.specID == "ndi-out" }) { return existing.id }
+        pushUndo()
+        var id = shortID("ndi-out")
+        while graph.node(id) != nil { id = shortID("ndi-out") }
+        var node = GraphNode(id: id, specID: "ndi-out", params: [:])
+        let outPos = graph.node("out")?.position ?? [620, 320]
+        node.position = clearPosition(outPos + [260, 0], specID: "ndi-out")
+        graph.nodes.append(node)
+        if graph.node("out") != nil {
+            graph.wires.append(Wire(fromNode: "out", fromPort: "image", toNode: id, toPort: "image"))
+        }
+        recompile()
+        return id
+    }
+
+    /// Lifecycle guard (background / lock / call / alarm): force streaming off so it never
+    /// runs unattended and does not auto-resume on return (sets the node's own STOP state).
+    func stopNDIStreaming() {
+        guard let n = graph.nodes.first(where: { $0.specID == "ndi-out" }),
+              nodeOption(n.id, "stream", "STOP") == "START" else { return }
+        setOption(n.id, "stream", "STOP")
+    }
+
+    // MARK: - Record output (image sink, like NDI: presence + RECORD=START drive the capture pass)
+
+    /// The Record node's live config, or nil when there's no node or it's stopped.
+    /// The renderer records only while this is non-nil (and finalizes when it goes nil).
+    func recordRenderConfig() -> RecordConfig? {
+        guard let n = graph.nodes.first(where: { $0.specID == "record" }),
+              nodeOption(n.id, "record", "STOP") == "START" else { return nil }
+        let parts = nodeOption(n.id, "resolution", "1080x1440").split(separator: "x").compactMap { Int($0) }
+        let pw = parts.first ?? 1080, ph = parts.count > 1 ? parts[1] : 1440
+        let landscape = nodeOption(n.id, "orientation", "3:4") == "4:3"
+        let fps60 = nodeOption(n.id, "fps", "60") == "60"
+        return RecordConfig(width: landscape ? ph : pw, height: landscape ? pw : ph,
+                            alpha: nodeOption(n.id, "alpha", "OFF") == "ON",
+                            fpsN: fps60 ? 60_000 : 30_000, fpsD: 1_000)
+    }
+
+    var hasRecordNode: Bool { graph.nodes.contains { $0.specID == "record" } }
+
+    /// Menu Record button: create the Record node (stopped) wired from Output.image, or select
+    /// the existing one. The user hits START in its settings.
+    @discardableResult
+    func ensureRecord() -> String {
+        if let existing = graph.nodes.first(where: { $0.specID == "record" }) { return existing.id }
+        pushUndo()
+        var id = shortID("record")
+        while graph.node(id) != nil { id = shortID("record") }
+        var node = GraphNode(id: id, specID: "record", params: [:])
+        let outPos = graph.node("out")?.position ?? [620, 320]
+        node.position = clearPosition(outPos + [260, 140], specID: "record")
+        graph.nodes.append(node)
+        if graph.node("out") != nil {
+            graph.wires.append(Wire(fromNode: "out", fromPort: "image", toNode: id, toPort: "image"))
+        }
+        recompile()
+        return id
+    }
+
+    /// Lifecycle guard (background / lock / call): force recording off so it never runs
+    /// unattended (saves the current take) and does not auto-resume on return.
+    func stopRecording() {
+        guard let n = graph.nodes.first(where: { $0.specID == "record" }),
+              nodeOption(n.id, "record", "STOP") == "START" else { return }
+        setOption(n.id, "record", "STOP")
+    }
+
     /// x/y normalized 0-1 in viewport space (top-left origin).
     func setTouch(x: Float, y: Float, pressed: Bool) {
         touchValue = SIMD4(x, y, pressed ? 1 : 0, 0)
+    }
+
+    // MARK: - Editor scope (§13 v2 — nested trigger subgraphs)
+
+    /// nil = editing the root graph; else a node's nested trigger subgraph (TOX, one level down).
+    var editScopeNodeID: String?
+
+    /// The graph the editor currently acts on (root, or a node's triggerGraph). Read by the subviews.
+    var activeGraph: Graph {
+        guard let s = editScopeNodeID, graph.node(s) != nil else { return graph }
+        return graph.node(s)?.triggerGraph ?? Graph()   // empty = a fresh nested canvas
+    }
+
+    /// Host node's display name while a nested trigger graph is open (for the breadcrumb).
+    var editScopeName: String? {
+        guard let s = editScopeNodeID, let n = graph.node(s) else { return nil }
+        return registry.spec(n.specID)?.name ?? n.specID
+    }
+
+    /// Mutate the scoped graph in place, then recompile the root (which also rebuilds nested orders).
+    private func editActive(recompileAfter: Bool = true, _ body: (inout Graph) -> Void) {
+        if let s = editScopeNodeID, let i = graph.nodes.firstIndex(where: { $0.id == s }) {
+            var g = graph.nodes[i].triggerGraph ?? Graph()
+            body(&g)
+            graph.nodes[i].triggerGraph = g
+        } else {
+            body(&graph)
+        }
+        if recompileAfter { recompile() }
+    }
+
+    /// Commit a fully-formed scoped graph (connect/rewire, after validation).
+    private func setActiveGraph(_ g: Graph) {
+        if let s = editScopeNodeID, let i = graph.nodes.firstIndex(where: { $0.id == s }) {
+            graph.nodes[i].triggerGraph = g
+        } else {
+            graph = g
+        }
+        recompile()
     }
 
     // MARK: - Editor mutations (all undoable)
@@ -375,105 +612,132 @@ final class GraphRuntime {
         recompile()
     }
 
+    // MARK: - Non-overlap placement (nodes never stack on top of each other)
+
+    /// Rough card size from the spec — mirrors NodeMetrics without importing the UI layer.
+    private func estimatedSize(_ specID: String) -> SIMD2<Float> {
+        guard let s = registry.spec(specID) else { return [170, 120] }
+        let rows = s.inputs.count + s.outputs.count
+        let params = min(s.params.count, 5)
+        return [170, 32 + Float(rows) * 20 + Float(params) * 16]
+    }
+
+    private func overlapsAny(_ pos: SIMD2<Float>, _ size: SIMD2<Float>, ignoring: Set<String>) -> Bool {
+        let pad: Float = 14
+        for nn in activeGraph.nodes where !ignoring.contains(nn.id) {
+            let s2 = estimatedSize(nn.specID)
+            if pos.x < nn.position.x + s2.x + pad, pos.x + size.x + pad > nn.position.x,
+               pos.y < nn.position.y + s2.y + pad, pos.y + size.y + pad > nn.position.y {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Nudge `desired` down (then across) until it clears every existing node.
+    private func clearPosition(_ desired: SIMD2<Float>, specID: String,
+                               ignoring: Set<String> = []) -> SIMD2<Float> {
+        let size = estimatedSize(specID)
+        var p = desired
+        var tries = 0
+        while overlapsAny(p, size, ignoring: ignoring), tries < 60 {
+            tries += 1
+            p = [desired.x, desired.y + Float(tries) * 40]
+            if tries % 8 == 0 { p = [desired.x + Float(tries / 8) * 210, desired.y] }
+        }
+        return p
+    }
+
     /// Add a node from the palette. Returns the new node's id.
     @discardableResult
     func addNode(_ specID: String, at position: SIMD2<Float>) -> String? {
         guard registry.spec(specID) != nil else { return nil }
+        let g0 = activeGraph
         pushUndo()
         var id = shortID(specID)
-        while graph.node(id) != nil { id = shortID(specID) }
+        while g0.node(id) != nil { id = shortID(specID) }
         var node = GraphNode(id: id, specID: specID, params: [:])
-        node.position = position
-        graph.nodes.append(node)
-        recompile()
+        node.position = clearPosition(position, specID: specID)
+        editActive { $0.nodes.append(node) }
         return id
     }
 
     func removeNodes(_ ids: Set<String>) {
-        let removable = ids.filter { $0 != "out" }   // the Output sink must survive
+        let removable = ids.filter { $0 != "out" && activeGraph.node($0)?.specID != "trigger-drive" }   // Output + trigger sinks survive
         guard !removable.isEmpty else { return }
         pushUndo()
-        for id in removable { removeNodeInternal(id) }
-        recompile()
+        editActive { g in
+            for id in removable {
+                g.nodes.removeAll { $0.id == id }
+                g.wires.removeAll { $0.fromNode == id || $0.toNode == id }
+            }
+        }
     }
 
     @discardableResult
     func duplicateNodes(_ ids: Set<String>) -> [String] {
-        let sources = graph.nodes.filter { ids.contains($0.id) && $0.specID != "output" }
+        let sources = activeGraph.nodes.filter { ids.contains($0.id) && $0.specID != "output" && $0.specID != "trigger-drive" }
         guard !sources.isEmpty else { return [] }
         pushUndo()
         var newIDs: [String] = []
-        for src in sources {
-            var id = shortID(src.specID)
-            while graph.node(id) != nil { id = shortID(src.specID) }
-            var copy = GraphNode(id: id, specID: src.specID, params: src.params)
-            copy.position = src.position + [40, 40]
-            graph.nodes.append(copy)
-            newIDs.append(id)
+        editActive { g in
+            for src in sources {
+                var id = self.shortID(src.specID)
+                while g.node(id) != nil { id = self.shortID(src.specID) }
+                var copy = GraphNode(id: id, specID: src.specID, params: src.params)
+                copy.position = src.position + [40, 40]
+                g.nodes.append(copy)
+                newIDs.append(id)
+            }
         }
-        recompile()
         return newIDs
     }
 
     func resetNodeParams(_ ids: Set<String>) {
         pushUndo()
-        for i in graph.nodes.indices where ids.contains(graph.nodes[i].id) {
-            graph.nodes[i].params = [:]
+        editActive { g in
+            for i in g.nodes.indices where ids.contains(g.nodes[i].id) { g.nodes[i].params = [:] }
         }
-        recompile()
     }
 
     /// Position-only — no recompile, no undo (drag pushes undo once at gesture start).
     func moveNode(_ id: String, to p: SIMD2<Float>) {
-        guard let i = graph.nodes.firstIndex(where: { $0.id == id }) else { return }
-        graph.nodes[i].position = p
+        editActive(recompileAfter: false) { g in
+            if let i = g.nodes.firstIndex(where: { $0.id == id }) { g.nodes[i].position = p }
+        }
     }
 
     /// Wire (from.fromPort → to.toPort). Replaces whatever fed that input. Validates the
     /// whole graph first — on type mismatch or cycle the edit is rolled back.
     @discardableResult
     func connect(from: String, fromPort: String, to: String, toPort: String) -> Bool {
-        let candidate = Wire(fromNode: from, fromPort: fromPort, toNode: to, toPort: toPort)
-        let before = graph
+        var g = activeGraph
+        g.wires.removeAll { $0.toNode == to && $0.toPort == toPort }
+        g.wires.append(Wire(fromNode: from, fromPort: fromPort, toNode: to, toPort: toPort))
+        guard (try? g.validate(registry: registry)) != nil else { return false }   // mismatch/cycle → no-op
         pushUndo()
-        graph.wires.removeAll { $0.toNode == to && $0.toPort == toPort }
-        graph.wires.append(candidate)
-        do {
-            try graph.validate(registry: registry)
-            recompile()
-            return true
-        } catch {
-            graph = before
-            _ = undoStack.popLast()   // failed edit leaves no undo entry
-            return false
-        }
+        setActiveGraph(g)
+        return true
     }
 
     func removeWire(_ w: Wire) {
-        guard graph.wires.contains(w) else { return }
+        guard activeGraph.wires.contains(w) else { return }
         pushUndo()
-        graph.wires.removeAll { $0 == w }
-        recompile()
+        editActive { $0.wires.removeAll { $0 == w } }
     }
 
     /// Re-route in ONE undo step: optionally drop `original`, then wire from → to.
     @discardableResult
     func rewire(dropping original: Wire?, from: String, fromPort: String,
                 to: String, toPort: String) -> Bool {
-        let before = graph
+        var g = activeGraph
+        if let original { g.wires.removeAll { $0 == original } }
+        g.wires.removeAll { $0.toNode == to && $0.toPort == toPort }
+        g.wires.append(Wire(fromNode: from, fromPort: fromPort, toNode: to, toPort: toPort))
+        guard (try? g.validate(registry: registry)) != nil else { return false }
         pushUndo()
-        if let original { graph.wires.removeAll { $0 == original } }
-        graph.wires.removeAll { $0.toNode == to && $0.toPort == toPort }
-        graph.wires.append(Wire(fromNode: from, fromPort: fromPort, toNode: to, toPort: toPort))
-        do {
-            try graph.validate(registry: registry)
-            recompile()
-            return true
-        } catch {
-            graph = before
-            _ = undoStack.popLast()
-            return false
-        }
+        setActiveGraph(g)
+        return true
     }
 
     private func removeNodeInternal(_ id: String) {
@@ -496,6 +760,11 @@ final class GraphRuntime {
             workingInstructions = program.instructions
             classifyDynamicKeys()
             controlOrder = (try? graph.topoOrder().filter { registry.spec($0.specID)?.isControl == true }) ?? []
+            nestedOrders.removeAll(keepingCapacity: true)   // §13 v2 — cache each node's nested control order
+            for n in graph.nodes {
+                guard let tg = n.triggerGraph, !tg.nodes.isEmpty else { continue }
+                nestedOrders[n.id] = (try? tg.topoOrder().filter { registry.spec($0.specID)?.isControl == true }) ?? []
+            }
             controlState.removeAll()
             compileError = nil
             generation += 1
@@ -508,26 +777,87 @@ final class GraphRuntime {
     /// through the memo, so envelopes can follow beat triggers, S&H can sample LFOs, etc.
     private func evaluateControlGraph(_ ctx: ControlContext) {
         controlValues.removeAll(keepingCapacity: true)
-        for node in controlOrder {
+        Self.evalControl(graph, order: controlOrder, ctx: ctx,
+                         values: &controlValues, state: &controlState, registry: registry)
+    }
+
+    /// Pure control-rate evaluator over ANY graph — reused for the host and nested trigger graphs (§13E).
+    static func evalControl(_ g: Graph, order: [GraphNode], ctx: ControlContext,
+                            values: inout [String: SIMD4<Float>],
+                            state: inout [String: SIMD4<Float>], registry: NodeRegistry) {
+        for node in order {
             guard let spec = registry.spec(node.specID) else { continue }
             let inputs = spec.inputs.map { port -> SIMD4<Float> in
-                guard let wire = graph.wireInto(node.id, port.name) else { return port.defaultValue }
-                return controlValues["\(wire.fromNode).\(wire.fromPort)"] ?? port.defaultValue
+                guard let wire = g.wireInto(node.id, port.name) else { return port.defaultValue }
+                return values["\(wire.fromNode).\(wire.fromPort)"] ?? port.defaultValue
             }
             let outs: [SIMD4<Float>]
             if let stateful = spec.controlEvalStateful {
-                var s = controlState[node.id] ?? .zero
+                var s = state[node.id] ?? .zero
                 outs = stateful(node, inputs, ctx, &s)
-                controlState[node.id] = s
+                state[node.id] = s
             } else if let eval = spec.controlEval {
                 outs = eval(node, inputs, ctx)
-            } else {
-                continue
-            }
+            } else { continue }
             for (i, out) in outs.enumerated() where i < spec.outputs.count {
-                controlValues["\(node.id).\(spec.outputs[i].name)"] = out
+                values["\(node.id).\(spec.outputs[i].name)"] = out
             }
         }
+    }
+
+    /// Flat model — drive exposed params from the Signal node wired into each param's port. Runs AFTER
+    /// the dynamic-lane loop so driven values sit on top of baked/control values. Float params write their
+    /// patch lane directly (no recompile); option params flip the selection only when the index changes.
+    private func applyExposedParams() {
+        // 1. Option ports — flip when the wired signal crosses a bucket boundary. Recompiles, so it's rare:
+        //    gather flips first, apply after. // ponytail: one-frame revert of other driven lanes on a flip
+        //    (recompile rebakes them); invisible for a discrete mode change, self-corrects next frame.
+        var flips: [(node: String, param: String, value: String)] = []
+        for node in graph.nodes where !node.exposedParams.isEmpty {
+            guard let spec = registry.spec(node.specID) else { continue }
+            for param in node.exposedParams {
+                guard let ps = spec.params.first(where: { $0.name == param }), let opts = ps.options, opts.count > 1,
+                      let w = graph.wires.first(where: { $0.toNode == node.id && $0.toPort == param }) else { continue }
+                let raw = (controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero).x
+                let idx = min(max(Int(min(max(raw, 0), 0.9999) * Float(opts.count)), 0), opts.count - 1)
+                if opts[idx] != node.option(param) { flips.append((node.id, param, opts[idx])) }
+            }
+        }
+        for f in flips { driveOption(f.node, f.param, f.value) }
+
+        // 2. Float ports — write the driven value into the param's patch lane(s).
+        for node in graph.nodes where !node.exposedParams.isEmpty {
+            guard let spec = registry.spec(node.specID) else { continue }
+            for param in node.exposedParams {
+                let key = "\(node.id).\(param)"
+                guard let refs = compiled.patches[key],
+                      let w = graph.wires.first(where: { $0.toNode == node.id && $0.toPort == param }) else { continue }
+                let raw = (controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero).x
+                // Beginner default: map the source as 0..1 across the param's full range, so a raw
+                // 0..1 source (pinch, audio level, gesture) sweeps the whole slider out of the box.
+                // Bipolar/other ranges: insert a Remap node before the port.
+                var value = raw
+                if let range = spec.params.first(where: { $0.name == param })?.range {
+                    let t = min(max(raw, 0), 1)
+                    value = range.lowerBound + (range.upperBound - range.lowerBound) * t
+                }
+                for ref in refs where workingInstructions.indices.contains(ref.instruction) {
+                    switch ref.lane {
+                    case 0: workingInstructions[ref.instruction].imm.x = value
+                    case 1: workingInstructions[ref.instruction].imm.y = value
+                    case 2: workingInstructions[ref.instruction].imm.z = value
+                    default: workingInstructions[ref.instruction].imm.w = value
+                    }
+                }
+            }
+        }
+    }
+
+    /// Set an option param + recompile without pushing undo — used by option-port driving each flip frame.
+    private func driveOption(_ nodeID: String, _ param: String, _ value: String) {
+        graph.setParam(nodeID, param, .option(value))
+        if graph.node(nodeID)?.specID == "point-display", param == "mode" { applyDisplayMode(nodeID, value) }
+        recompile()
     }
 
     private func classifyDynamicKeys() {
@@ -563,6 +893,7 @@ final class GraphRuntime {
         let beat = (time * bpm / 60).truncatingRemainder(dividingBy: 1)
         var ctx = ControlContext(time: time, dt: dt, beatPhase: beat, bpm: bpm, touch: touchValue)
         if let a = audioSource?() { ctx.audio = a.bands; ctx.onsets = a.onsets }   // live mic
+        if let m = midiSource?() { ctx.midi = m }                                  // live MIDI
         if let b = bodySource?() {                                                 // live Vision
             ctx.bodyA = b.bodyA; ctx.bodyB = b.bodyB; ctx.gestures = b.gestures; ctx.present = b.present
         }
@@ -604,6 +935,8 @@ final class GraphRuntime {
                 }
             }
         }
+
+        applyExposedParams()   // flat model — wired Signal nodes drive exposed params (on top of baked/control)
 
         // Shockwave uniforms (expired waves pruned lazily)
         waveBirths.removeAll { time - $0.t > 6 }
