@@ -614,18 +614,19 @@ final class GraphRuntime {
 
     // MARK: - Non-overlap placement (nodes never stack on top of each other)
 
-    /// Rough card size from the spec — mirrors NodeMetrics without importing the UI layer.
-    private func estimatedSize(_ specID: String) -> SIMD2<Float> {
+    /// Rough card size from the spec — mirrors NodeMetrics (headerH 24, portRow 24, paramRow 16, +8)
+    /// without importing the UI layer. Exposed params add a port row and drop their value row.
+    private func estimatedSize(_ specID: String, exposed: Int = 0) -> SIMD2<Float> {
         guard let s = registry.spec(specID) else { return [170, 120] }
-        let rows = s.inputs.count + s.outputs.count
-        let params = min(s.params.count, 5)
-        return [170, 32 + Float(rows) * 20 + Float(params) * 16]
+        let portRows = s.inputs.count + exposed + s.outputs.count
+        let paramRows = max(min(s.params.count - exposed, 5), 0)
+        return [170, 24 + Float(portRows) * 24 + Float(paramRows) * 16 + 8]
     }
 
-    private func overlapsAny(_ pos: SIMD2<Float>, _ size: SIMD2<Float>, ignoring: Set<String>) -> Bool {
-        let pad: Float = 14
+    /// pad > 0 enforces a gap (new-node placement); pad < 0 tolerates that much edge overlap (drag).
+    private func overlapsAny(_ pos: SIMD2<Float>, _ size: SIMD2<Float>, ignoring: Set<String>, pad: Float = 14) -> Bool {
         for nn in activeGraph.nodes where !ignoring.contains(nn.id) {
-            let s2 = estimatedSize(nn.specID)
+            let s2 = estimatedSize(nn.specID, exposed: nn.exposedParams.count)
             if pos.x < nn.position.x + s2.x + pad, pos.x + size.x + pad > nn.position.x,
                pos.y < nn.position.y + s2.y + pad, pos.y + size.y + pad > nn.position.y {
                 return true
@@ -635,17 +636,35 @@ final class GraphRuntime {
     }
 
     /// Nudge `desired` down (then across) until it clears every existing node.
-    private func clearPosition(_ desired: SIMD2<Float>, specID: String,
-                               ignoring: Set<String> = []) -> SIMD2<Float> {
-        let size = estimatedSize(specID)
+    private func clearPosition(_ desired: SIMD2<Float>, specID: String, exposed: Int = 0,
+                               ignoring: Set<String> = [], pad: Float = 14) -> SIMD2<Float> {
+        let size = estimatedSize(specID, exposed: exposed)
         var p = desired
         var tries = 0
-        while overlapsAny(p, size, ignoring: ignoring), tries < 60 {
+        while overlapsAny(p, size, ignoring: ignoring, pad: pad), tries < 60 {
             tries += 1
             p = [desired.x, desired.y + Float(tries) * 40]
             if tries % 8 == 0 { p = [desired.x + Float(tries / 8) * 210, desired.y] }
         }
         return p
+    }
+
+    /// After a drag, nudge dropped nodes out of overlap — up to 5px edge overlap is tolerated.
+    func resolveOverlaps(_ ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        var fixes: [String: SIMD2<Float>] = [:]
+        for id in ids {
+            guard let n = activeGraph.node(id) else { continue }
+            let cleared = clearPosition(n.position, specID: n.specID, exposed: n.exposedParams.count,
+                                        ignoring: ids, pad: -5)
+            if cleared != n.position { fixes[id] = cleared }
+        }
+        guard !fixes.isEmpty else { return }
+        editActive { g in
+            for (id, pos) in fixes where g.nodes.contains(where: { $0.id == id }) {
+                g.nodes[g.nodes.firstIndex(where: { $0.id == id })!].position = pos
+            }
+        }
     }
 
     /// Add a node from the palette. Returns the new node's id.

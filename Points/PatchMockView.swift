@@ -479,6 +479,7 @@ struct NodeEditorView: View {
                 case .wire:
                     finishWireDrag(at: g.location)
                 case .moveNode:
+                    runtime.resolveOverlaps(Set(grabOffsets.keys))   // no-overlap on drop (≤5px tolerated)
                     draggingNode = nil; grabOffsets = [:]
                 case .port:
                     finishPortDraft(at: g.location)
@@ -826,10 +827,10 @@ struct EditorToolStrip: View {
             }
             Spacer(minLength: 8)
             MinimapView(runtime: runtime, camera: camera, selection: selection)
-                .frame(width: 104, height: 56)
+                .frame(width: 148, height: 80)   // 2× the old 104×56 area
                 .padding(.trailing, 10)
         }
-        .frame(height: 64)
+        .frame(height: 88)
         .background(Theme.bg)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
     }
