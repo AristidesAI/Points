@@ -654,7 +654,7 @@ struct NodeEditorView: View {
         guard let from = runtime.activeGraph.node(w.fromNode), let to = runtime.activeGraph.node(w.toNode),
               let fs = registry.spec(from.specID), let ts = registry.spec(to.specID),
               let oi = fs.outputs.firstIndex(where: { $0.name == w.fromPort }),
-              let ii = ts.inputs.firstIndex(where: { $0.name == w.toPort }) else { return }
+              let ii = ts.inputPortNames(to.exposedParams).firstIndex(of: w.toPort) else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if seekInput {
             wireDrag = WireDragState(original: w, fixedNode: w.fromNode, fixedPort: w.fromPort,
@@ -732,6 +732,14 @@ struct NodeEditorView: View {
                     let d = hypot(a.x - p.x, a.y - p.y)
                     if d < bestD { bestD = d; best = (node.id, port.name) }
                 }
+                // Diamond ports (exposed params) also accept a control source (signal/trigger).
+                if PortType.trigger.accepts(outType) {
+                    for (j, param) in node.exposedParams.enumerated() {
+                        let a = anchorScreen(node.id, portIndex: spec.inputs.count + j, isInput: true)
+                        let d = hypot(a.x - p.x, a.y - p.y)
+                        if d < bestD { bestD = d; best = (node.id, param) }
+                    }
+                }
             }
             if let (toNode, toPort) = best {
                 if let orig = drag.original, orig.toNode == toNode, orig.toPort == toPort { return }
@@ -748,9 +756,13 @@ struct NodeEditorView: View {
             }
         } else {
             guard let dstNode = runtime.activeGraph.node(drag.fixedNode),
-                  let dstSpec = registry.spec(dstNode.specID),
-                  let inType = dstSpec.inputs.first(where: { $0.name == drag.fixedPort })?.type
-            else { return }
+                  let dstSpec = registry.spec(dstNode.specID) else { return }
+            let inType: PortType
+            if let t = dstSpec.inputs.first(where: { $0.name == drag.fixedPort })?.type {
+                inType = t
+            } else if dstNode.exposedParams.contains(drag.fixedPort) {
+                inType = .trigger   // diamond port accepts any control source
+            } else { return }
             var best: (String, String)? = nil
             var bestD = snapRange
             for node in runtime.activeGraph.nodes where node.id != drag.fixedNode {

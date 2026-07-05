@@ -99,9 +99,12 @@ struct ContentView: View {
                                        palette = PaletteContext(acceptsType: t)
                                    },
                                    onDropInput: { node, port, world in
-                                       guard newNodeFromInput,
-                                             let t = NodeRegistry.shared.spec(runtime.activeGraph.node(node)?.specID ?? "")?
-                                           .inputs.first(where: { $0.name == port })?.type else { return }
+                                       guard newNodeFromInput, let gn = runtime.activeGraph.node(node),
+                                             let spec = NodeRegistry.shared.spec(gn.specID) else { return }
+                                       let t: PortType
+                                       if let it = spec.inputs.first(where: { $0.name == port })?.type { t = it }
+                                       else if gn.exposedParams.contains(port) { t = .trigger }  // diamond port
+                                       else { return }
                                        pendingConnectInput = (node, port, t, world)
                                        palette = PaletteContext(producesType: t)
                                    })

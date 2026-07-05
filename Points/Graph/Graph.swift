@@ -82,10 +82,20 @@ struct Graph: Codable, Sendable {
             guard let to = node(w.toNode) else { throw GraphError.unknownNode(w.toNode) }
             guard let outSpec = registry.spec(from.specID)?.outputs.first(where: { $0.name == w.fromPort })
             else { throw GraphError.badPort("\(w.fromNode).\(w.fromPort)") }
-            guard let inSpec = registry.spec(to.specID)?.inputs.first(where: { $0.name == w.toPort })
-            else { throw GraphError.badPort("\(w.toNode).\(w.toPort)") }
-            guard inSpec.type.accepts(outSpec.type) else {
-                throw GraphError.typeMismatch("\(outSpec.type.rawValue) → \(inSpec.type.rawValue) at \(w.toNode).\(w.toPort)")
+            let toSpec = registry.spec(to.specID)
+            if let inSpec = toSpec?.inputs.first(where: { $0.name == w.toPort }) {
+                guard inSpec.type.accepts(outSpec.type) else {
+                    throw GraphError.typeMismatch("\(outSpec.type.rawValue) → \(inSpec.type.rawValue) at \(w.toNode).\(w.toPort)")
+                }
+            } else if to.exposedParams.contains(w.toPort),
+                      toSpec?.params.contains(where: { $0.name == w.toPort }) == true {
+                // Diamond port: an exposed param driven by a control source. Modelled as a
+                // trigger input (accepts .signal/.trigger via rising-edge coercion).
+                guard PortType.trigger.accepts(outSpec.type) else {
+                    throw GraphError.typeMismatch("\(outSpec.type.rawValue) → param at \(w.toNode).\(w.toPort)")
+                }
+            } else {
+                throw GraphError.badPort("\(w.toNode).\(w.toPort)")
             }
         }
         _ = try topoOrder()

@@ -393,8 +393,12 @@ struct NodePaletteView: View {
     @State private var search = ""
     @State private var detail: NodeSpec?
     @State private var holdingID: String?
-    @State private var gridFamily: NodeFamily = .source
-    @State private var gridQuick = true        // grid mode lands on the Recent+Favourites group
+    // Grid-mode family bar: one selectable tab, RECENT included in the looping strip (not pinned).
+    private enum PaletteTab: Hashable { case recent, family(NodeFamily) }
+    @State private var gridTab: PaletteTab = .recent
+    @State private var leadingTag: Int?        // scrollPosition anchor for the infinite family strip
+    private var gridQuick: Bool { gridTab == .recent }
+    private var gridFamily: NodeFamily { if case .family(let f) = gridTab { f } else { .source } }
 
     private var recentIDs: [String] { recentCSV.split(separator: ",").map(String.init) }
     private var favIDs: [String] { favCSV.split(separator: ",").map(String.init) }
@@ -475,8 +479,11 @@ struct NodePaletteView: View {
         }
         .animation(.easeOut(duration: 0.15), value: detail?.id)
         .onAppear {
-            // Land the grid on the first family that actually has matches.
-            if let first = families.first?.0 { gridFamily = first }
+            // Wire-filtered picker (dropped a wire) → land straight on the matching family,
+            // skipping RECENT, so e.g. an image wire opens right on OUTPUT (NDI / Record).
+            if acceptsType != nil || producesType != nil, let first = families.first?.0 {
+                gridTab = .family(first)
+            }
         }
     }
 
@@ -551,25 +558,12 @@ struct NodePaletteView: View {
 
     private var gridBody: some View {
         let fams = families.map(\.0)   // non-empty families (already respects search / wire-type filter)
+        let tabs: [PaletteTab] = [.recent] + fams.map(PaletteTab.family)
+        // Loop only when there's a real strip to loop; a wire-filtered picker (few families)
+        // shows its tabs once — no duplicated OUTPUT copies. // ponytail: 4 is plenty.
+        let looping = tabs.count > 4
         return VStack(spacing: 0) {
-            // Family bar: a fixed ★ Recent+Favourites tab, then an infinitely-looping family strip.
-            HStack(spacing: 6) {
-                quickTab
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            // Tripled so the strip wraps past either end — reach the last family by
-                            // scrolling either way. // ponytail: no edge-recenter; tripling is plenty for ~12.
-                            ForEach(0 ..< (max(fams.count, 1) * 3), id: \.self) { i in
-                                if !fams.isEmpty { familyTab(fams[i % fams.count], tag: i) }
-                            }
-                        }
-                        .padding(.trailing, 16)
-                    }
-                    .onAppear { if !fams.isEmpty { proxy.scrollTo(fams.count, anchor: .leading) } }
-                }
-            }
-            .padding(.leading, 16).padding(.vertical, 8)
+            familyBar(tabs: tabs, looping: looping)
             Rectangle().fill(Theme.line).frame(height: 1)
             // 3 across, scrolling DOWN in rows of 3.
             ScrollView {
@@ -595,28 +589,50 @@ struct NodePaletteView: View {
         }
     }
 
-    private var quickTab: some View {
-        Button { gridQuick = true } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "star.fill").font(.system(size: 8))
-                Text("RECENT").font(.system(size: 10, weight: .bold)).tracking(1)
+    // Family bar: RECENT + every family in one horizontal strip. Tripled + recentered on settle
+    // so it scrolls around and around in either direction; RECENT sits before SOURCE / after TOOLS.
+    @ViewBuilder private func familyBar(tabs: [PaletteTab], looping: Bool) -> some View {
+        let n = max(tabs.count, 1)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(0 ..< (n * (looping ? 3 : 1)), id: \.self) { i in
+                    tabButton(tabs[i % n]).id(i)
+                }
             }
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .foregroundStyle(gridQuick ? Color.black : Theme.text)
-            .background(gridQuick ? Theme.text : Theme.panel)
-            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+            .padding(.horizontal, 16)
+            .scrollTargetLayout()
         }
-        .buttonStyle(.plain)
+        .scrollPosition(id: $leadingTag, anchor: .leading)
+        .onAppear { if looping, leadingTag == nil { leadingTag = n } }   // land on the middle band
+        .onScrollPhaseChange { _, phase in
+            guard looping, phase == .idle, let tag = leadingTag else { return }
+            let band = tag / n
+            if band == 0 { leadingTag = tag + n }          // drifted off the left → jump a band right
+            else if band >= 2 { leadingTag = tag - n }     // …or off the right → a band left
+        }
+        .padding(.vertical, 8)
     }
 
-    private func familyTab(_ fam: NodeFamily, tag: Int) -> some View {
-        let count = NodeRegistry.shared.allSpecs.filter { $0.family == fam && matches($0) }.count
-        let sel = !gridQuick && gridFamily == fam
-        return Button { gridQuick = false; gridFamily = fam } label: {
+    private func tabButton(_ tab: PaletteTab) -> some View {
+        let sel: Bool
+        let label: String
+        let count: Int?
+        switch tab {
+        case .recent:
+            sel = gridQuick; label = "RECENT"; count = nil
+        case .family(let fam):
+            sel = !gridQuick && gridFamily == fam; label = fam.rawValue
+            count = NodeRegistry.shared.allSpecs.filter { $0.family == fam && matches($0) }.count
+        }
+        return Button { gridTab = tab } label: {
             HStack(spacing: 5) {
-                Rectangle().fill(familyColor(fam)).frame(width: 8, height: 8)
-                Text(fam.rawValue).font(.system(size: 10, weight: .bold)).tracking(1)
-                Text("\(count)").font(.system(size: 8).monospacedDigit())
+                if case .family(let fam) = tab {
+                    Rectangle().fill(familyColor(fam)).frame(width: 8, height: 8)
+                } else {
+                    Image(systemName: "star.fill").font(.system(size: 8))
+                }
+                Text(label).font(.system(size: 10, weight: .bold)).tracking(1)
+                if let count { Text("\(count)").font(.system(size: 8).monospacedDigit()) }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
             .foregroundStyle(sel ? Color.black : Theme.text)
@@ -624,7 +640,6 @@ struct NodePaletteView: View {
             .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .id(tag)
     }
 
     /// Recent / Favourites block for the grid's quick group — mini-title above a 3-wide cube grid.
