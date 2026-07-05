@@ -1039,6 +1039,22 @@ extension NodeRegistry {
             description: "Shows a live number on the canvas; passes the value through.",
             controlEval: { _, inputs, _ in [inputs.first ?? .zero] }))
         registerSpec(NodeSpec(
+            id: "binary-display", name: "Binary Display", family: .tools,
+            inputs: [PortSpec("in", .signal)], outputs: [PortSpec("out", .signal)],
+            execution: .control,
+            description: "Shows YES while the wired trigger/value is high (>0.5), NO while it's low — a quick check that a gesture actually fires. Passes a clean 0/1 through.",
+            controlEval: { _, inputs, _ in
+                [SIMD4<Float>((inputs.first ?? .zero).x > 0.5 ? 1 : 0, 0, 0, 0)]
+            }))
+        registerSpec(NodeSpec(
+            id: "live-update", name: "Live Update", family: .tools,
+            inputs: [PortSpec("in1", .trigger), PortSpec("in2", .trigger), PortSpec("in3", .trigger),
+                     PortSpec("in4", .trigger), PortSpec("in5", .trigger), PortSpec("in6", .trigger)],
+            outputs: [PortSpec("out", .signal)],
+            execution: .control,
+            description: "Wire several triggers in (e.g. every Hand Gesture output). Shows the NAME of whichever input is active right now — so palm→fist reads \"PALM\" then \"FIST\". Outputs the active value.",
+            controlEval: { _, inputs, _ in [inputs.max(by: { $0.x < $1.x }) ?? .zero] }))
+        registerSpec(NodeSpec(
             id: "macro", name: "Macro", family: .tools,
             execution: .render,
             description: "A reusable group of nodes collapsed into one. · Collapse/expand lands with the editor."))

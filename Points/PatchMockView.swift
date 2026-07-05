@@ -300,7 +300,7 @@ struct NodeEditorView: View {
         ForEach(runtime.activeGraph.nodes, id: \.id) { node in
             if let spec = registry.spec(node.specID) {
                 let sp = camera.toScreen(node.position)
-                NodeCardView(node: node, spec: spec,
+                NodeCardView(runtime: runtime, node: node, spec: spec,
                              selected: selection.contains(node.id),
                              dragged: draggingNode == node.id,
                              wiredInputs: wiredInputNames(node.id),
@@ -871,17 +871,22 @@ struct MinimapView: View {
     let camera: EditorCamera
     var selection: Set<String> = []
 
-    /// World-space bounds of the graph, plus the minimap→world scale for a given size.
+    /// World-space bounds fitted to the UNION of the node bounding box and the current
+    /// viewport. Fitting the viewport too (not just the nodes) keeps the 3:4 view rectangle
+    /// correctly scaled and always inside the minimap at any node-space size.
     private func bounds() -> (minX: Float, minY: Float, maxX: Float, maxY: Float) {
-        let nodes = runtime.activeGraph.nodes
-        guard let f = nodes.first else { return (0, 0, 1, 1) }
-        var minX = f.position.x, minY = f.position.y, maxX = minX + 1, maxY = minY + 1
-        for n in nodes {
+        let tl = camera.toWorld(.zero)
+        let br = camera.toWorld(CGPoint(x: camera.viewSize.width, y: camera.viewSize.height))
+        var minX = min(tl.x, br.x), minY = min(tl.y, br.y)
+        var maxX = max(tl.x, br.x), maxY = max(tl.y, br.y)
+        for n in runtime.activeGraph.nodes {
             minX = min(minX, n.position.x); minY = min(minY, n.position.y)
             maxX = max(maxX, n.position.x + Float(NodeMetrics.width))
             maxY = max(maxY, n.position.y + 180)
         }
-        return (minX, minY, maxX, maxY)
+        // 8% margin so content never sits flush against the frame.
+        let mx = max((maxX - minX) * 0.08, 1), my = max((maxY - minY) * 0.08, 1)
+        return (minX - mx, minY - my, maxX + mx, maxY + my)
     }
 
     var body: some View {
@@ -928,12 +933,16 @@ struct MinimapView: View {
 // internal flow drawing (inputs converging on the output with an op glyph) behind them.
 
 struct NodeCardView: View {
+    let runtime: GraphRuntime
     let node: GraphNode
     let spec: NodeSpec
     let selected: Bool
     let dragged: Bool
     let wiredInputs: Set<String>
     var highlightPort: (isInput: Bool, index: Int)? = nil
+
+    /// Nodes that paint a big live readout in their centre (in addition to the node-bar one).
+    static let displayIDs: Set<String> = ["value-display", "binary-display", "live-update"]
 
     /// White outline on the currently-picked port square (slide-to-select feedback).
     private func portHi(_ isInput: Bool, _ i: Int) -> Bool {
@@ -1028,6 +1037,12 @@ struct NodeCardView: View {
         .shadow(color: dragged ? .white.opacity(0.55) : .clear, radius: dragged ? 10 : 0)
         .overlay(alignment: .topTrailing) {
             if let c = statusDot { PulsingDot(color: c).offset(x: 5, y: -5) }
+        }
+        .overlay(alignment: .center) {
+            if NodeCardView.displayIDs.contains(spec.id) {
+                NodeLiveReadout(runtime: runtime, node: node, spec: spec)
+                    .padding(.top, NodeMetrics.headerH)   // sit in the body, not over the header
+            }
         }
     }
 
@@ -1136,6 +1151,11 @@ struct NodeSettingsBar: View {
                     }
                     if spec.id == "value-display" {
                         ValueReadout(runtime: runtime, nodeID: node.id)
+                            .padding(.horizontal, 12).padding(.vertical, 4)
+                    } else if spec.id == "binary-display" || spec.id == "live-update" {
+                        NodeLiveReadout(runtime: runtime, node: node, spec: spec)
+                            .frame(maxWidth: .infinity).frame(height: 40)
+                            .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
                             .padding(.horizontal, 12).padding(.vertical, 4)
                     }
                     // Camera's orbit/center are driven by the jog rows above — don't duplicate them as sliders.
@@ -1487,6 +1507,46 @@ private func nValue3(_ px: Float, _ py: Float, _ pz: Float) -> Float {
 /// so it updates as you drag sliders. (CPU value-noise approximation of the GPU field.)
 /// Live control-value readout for the Value Display node — makes body/audio/trigger values observable
 /// (e.g. wire Hand Pinch → Value Display to confirm the body node is producing).
+/// The big yellow readout painted in the centre of a display node's card, polled live at 20 Hz
+/// like the node-bar ValueReadout. Value Display → the number; Binary Display → YES/NO;
+/// Live Update → the NAME of whichever wired input is currently active.
+struct NodeLiveReadout: View {
+    let runtime: GraphRuntime
+    let node: GraphNode
+    let spec: NodeSpec
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 20.0)) { _ in
+            Text(text)
+                .font(.system(size: 18, weight: .heavy).monospacedDigit())
+                .foregroundStyle(Color(hex: 0xFFC24D))
+                .lineLimit(1).minimumScaleFactor(0.4)
+                .shadow(color: .black, radius: 2)
+                .padding(.horizontal, 6)
+        }
+    }
+    private var text: String {
+        switch spec.id {
+        case "value-display": return String(format: "%.3f", runtime.liveControlValue(node.id, "out"))
+        case "binary-display": return runtime.liveControlValue(node.id, "out") > 0.5 ? "YES" : "NO"
+        case "live-update":
+            var best: Wire?, bestV: Float = 0.35   // the active input must clear this to show
+            for w in runtime.activeGraph.wires where w.toNode == node.id {
+                let v = runtime.liveControlValue(w.fromNode, w.fromPort)
+                if v > bestV { bestV = v; best = w }
+            }
+            guard let w = best else { return "—" }
+            // Prefer the source port's name (e.g. Hand Gesture's "palm"/"fist"); if it's a generic
+            // "out", fall back to the source node's name (e.g. "Hand Pinch").
+            let generic: Set<String> = ["out", "in", "value", "signal"]
+            if !generic.contains(w.fromPort.lowercased()) { return w.fromPort.uppercased() }
+            if let n = runtime.activeGraph.node(w.fromNode),
+               let s = NodeRegistry.shared.spec(n.specID) { return s.name.uppercased() }
+            return w.fromPort.uppercased()
+        default: return ""
+        }
+    }
+}
+
 struct ValueReadout: View {
     let runtime: GraphRuntime
     let nodeID: String

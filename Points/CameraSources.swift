@@ -35,6 +35,31 @@ nonisolated final class TrueDepthCamera: NSObject, AVCaptureDataOutputSynchroniz
         queue.async { [self] in depthOut.isFilteringEnabled = on }
     }
 
+    /// Recovery: kick the capture session back to life (menu reset button / after an
+    /// interruption). Config is kept — nodes/settings are unaffected.
+    func restart() {
+        queue.async { [self] in
+            if session.isRunning { session.stopRunning() }
+            configure()                                  // no-op if already configured
+            if !session.isRunning { session.startRunning() }
+        }
+    }
+
+    /// Auto-recover from a runtime error / a resolved interruption (a modal covering the app,
+    /// a call, system pressure). Without this the front feed dies and never comes back.
+    private func observeSession() {
+        let nc = NotificationCenter.default
+        for name in [AVCaptureSession.runtimeErrorNotification,
+                     AVCaptureSession.interruptionEndedNotification] {
+            nc.addObserver(forName: name, object: session, queue: nil) { [weak self] _ in
+                self?.queue.async {
+                    guard let self, !self.session.isRunning else { return }
+                    self.session.startRunning()
+                }
+            }
+        }
+    }
+
     private func configure() {
         guard !configured else { return }
         guard let dev = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front),
@@ -82,6 +107,7 @@ nonisolated final class TrueDepthCamera: NSObject, AVCaptureDataOutputSynchroniz
         s.setDelegate(self, queue: queue)
         sync = s
         session.commitConfiguration()
+        observeSession()
     }
 
     private func dims(_ f: AVCaptureDevice.Format) -> Int {
@@ -130,6 +156,15 @@ nonisolated final class LiDARCamera: NSObject, ARSessionDelegate {
         completion?()
     }
 
+    /// Recovery: re-run the AR session from scratch.
+    func restart() {
+        guard Self.isSupported else { return }
+        session.pause()
+        let cfg = ARWorldTrackingConfiguration()
+        cfg.frameSemantics = .sceneDepth
+        session.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+    }
+
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard let sd = frame.sceneDepth else { return }
         // Extract pixel buffers only — never retain the ARFrame past this call.
@@ -142,10 +177,13 @@ nonisolated final class LiDARCamera: NSObject, ARSessionDelegate {
 final class SourceManager {
     enum Facing: String { case front = "FRONT DEPTH", back = "BACK LIDAR" }
 
-    /// Per-camera sensor→grid orientation (bits: 1 swapUV, 2 flipU, 4 flipV).
-    /// Back sensor needs the horizontal flip the front (mirrored) feed doesn't.
+    /// Per-camera sensor→grid orientation (bits: 1 swapUV, 2 flipU, 4 flipV). The swapUV
+    /// transpose runs first, so a landscape sensor → portrait grid is a 90° turn = transpose +
+    /// exactly one flip; bits 3 and 5 are the two opposite turns. Back (ARKit landscape) read
+    /// upside-down at 3, so 5 is the right-way-up turn. // ponytail: calibration knob — if the
+    /// back feed still reads wrong on-device, 3↔5 flips top/bottom, +4 mirrors left/right.
     static let frontOrient: UInt32 = 1
-    static let backOrient: UInt32 = 3
+    static let backOrient: UInt32 = 5
 
     private(set) var facing: Facing = .front
     private(set) var permissionDenied = false
@@ -219,6 +257,17 @@ final class SourceManager {
         switch f {
         case .front: front.start()
         case .back: back.start()
+        }
+    }
+
+    /// Menu recovery button: restart the live capture engine + clear the depth/EMA scratch so a
+    /// stalled or frozen feed comes back fresh. The graph, nodes and settings are untouched.
+    func restart() {
+        started = true
+        renderer.resetFilter()
+        switch facing {
+        case .front: front.restart()
+        case .back: back.restart()
         }
     }
 }
