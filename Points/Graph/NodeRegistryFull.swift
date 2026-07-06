@@ -1228,9 +1228,9 @@ extension NodeRegistry {
             emit: { b, _, _ in [b.constant(.zero)] }))   // compiler intercepts + pairs; this is the empty-channel fallback
 
         registerSpec(NodeSpec(
-            id: "comment", name: "Sticky Note", family: .tools,
+            id: "comment", name: "Annotations", family: .tools,
             execution: .render,
-            description: "A teaching note pinned to the canvas — select it and type your note in the bar below. No ports, no effect on the render."))
+            description: "A background frame that groups part of your network — drag a corner to resize, drag the frame to move everything inside it with it. Type a label in the bar below. No ports, no effect on the render."))
         registerSpec(NodeSpec(
             id: "value-display", name: "Value Display", family: .tools,
             inputs: [PortSpec("in", .signal)], outputs: [PortSpec("out", .signal)],

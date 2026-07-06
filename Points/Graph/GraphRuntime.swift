@@ -361,6 +361,19 @@ final class GraphRuntime {
         }
     }
 
+    /// Node ids whose top-left sits within an Annotation's rectangle — the nodes a drag of that
+    /// Annotation carries with it (TD-style). Other annotations are excluded.
+    func nodesInside(_ noteID: String) -> Set<String> {
+        guard let note = activeGraph.node(noteID), note.specID == "comment" else { return [] }
+        let size = note.noteSize ?? [200, 120]
+        let lo = note.position, hi = note.position + size
+        return Set(activeGraph.nodes.filter {
+            $0.id != noteID && $0.specID != "comment"
+                && $0.position.x >= lo.x && $0.position.x <= hi.x
+                && $0.position.y >= lo.y && $0.position.y <= hi.y
+        }.map(\.id))
+    }
+
     /// Live path for dynamic lanes (freeze hold): no recompile at all.
     func setParamLive(_ nodeID: String, _ name: String, _ value: Float) {
         editActive(recompileAfter: false) { $0.setParam(nodeID, name, .float(value)) }

@@ -228,6 +228,7 @@ struct NodeEditorView: View {
                     },
                     onEnded: { pinchActive = false; startZoomInertia() }
                 )
+                annotationLayer   // background frames — behind wires + nodes
                 wireCanvas
                     .allowsHitTesting(false)
                 nodeLayer
@@ -328,13 +329,30 @@ struct NodeEditorView: View {
         // Cards are pure visuals — ALL interaction lives in canvasDrag, so tap/move/pan/wire
         // behave the same everywhere and a node above a wire never fights it.
         let hidden = hiddenIDs
-        return ForEach(runtime.activeGraph.nodes.filter { !hidden.contains($0.id) }, id: \.id) { node in
+        return ForEach(runtime.activeGraph.nodes.filter { !hidden.contains($0.id) && $0.specID != "comment" }, id: \.id) { node in
             if let spec = registry.spec(node.specID) {
                 let sp = camera.toScreen(node.position)
-                let isNote = node.specID == "comment"
-                let cw: CGFloat = isNote ? CGFloat(node.noteSize?.x ?? 200) : NodeMetrics.width
-                let ch: CGFloat = isNote ? CGFloat(node.noteSize?.y ?? 120)
-                                         : NodeMetrics.height(spec, exposed: node.exposedParams.count)
+                NodeCardView(runtime: runtime, node: node, spec: spec,
+                             selected: selection.contains(node.id),
+                             dragged: draggingNode == node.id,
+                             wiredInputs: wiredInputNames(node.id),
+                             highlightPort: portHighlight(for: node.id))
+                    .frame(width: NodeMetrics.width, height: NodeMetrics.height(spec, exposed: node.exposedParams.count), alignment: .top)
+                    .scaleEffect(camera.scale, anchor: .topLeading)
+                    .offset(x: sp.x, y: sp.y)
+                    .allowsHitTesting(false)   // all interaction lives in canvasDrag
+            }
+        }
+    }
+
+    /// Annotations render BEHIND wires + nodes (a background frame). Dragging one carries every node
+    /// inside its rectangle (see beginNodeMove). Resizable by the bottom-right handle when selected.
+    private var annotationLayer: some View {
+        let hidden = hiddenIDs
+        return ForEach(runtime.activeGraph.nodes.filter { !hidden.contains($0.id) && $0.specID == "comment" }, id: \.id) { node in
+            if let spec = registry.spec(node.specID) {
+                let sp = camera.toScreen(node.position)
+                let cw = CGFloat(node.noteSize?.x ?? 200), ch = CGFloat(node.noteSize?.y ?? 120)
                 NodeCardView(runtime: runtime, node: node, spec: spec,
                              selected: selection.contains(node.id),
                              dragged: draggingNode == node.id,
@@ -344,11 +362,9 @@ struct NodeEditorView: View {
                     .frame(width: cw, height: ch, alignment: .top)
                     .scaleEffect(camera.scale, anchor: .topLeading)
                     .offset(x: sp.x, y: sp.y)
-                    // Cards are canvas-controlled visuals — EXCEPT a selected Sticky Note,
-                    // which takes touches so its inline text field can be edited in place.
-                    .allowsHitTesting(isNote && selection.contains(node.id))
-                // Sticky Note: drag the bottom-right handle to resize the rectangle (marquee-style).
-                if isNote && selection.contains(node.id) {
+                    // Selected → take touches for inline text; unselected → canvasDrag moves it + contents.
+                    .allowsHitTesting(selection.contains(node.id))
+                if selection.contains(node.id) {
                     NoteResizeHandle(runtime: runtime, nodeID: node.id, scale: camera.scale)
                         .offset(x: sp.x + cw * camera.scale - 11, y: sp.y + ch * camera.scale - 11)
                 }
@@ -622,7 +638,11 @@ struct NodeEditorView: View {
         stopInertia()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         runtime.pushUndo()
-        let moving = selection.contains(id) ? selection : [id]
+        var moving = selection.contains(id) ? selection : [id]
+        // TD-style Annotation: dragging a frame carries every node inside its rectangle.
+        for mid in moving where runtime.activeGraph.node(mid)?.specID == "comment" {
+            moving.formUnion(runtime.nodesInside(mid))
+        }
         grabOffsets = Dictionary(uniqueKeysWithValues:
             moving.compactMap { mid in
                 runtime.activeGraph.node(mid).map { (mid, $0.position - camera.toWorld(loc)) }
