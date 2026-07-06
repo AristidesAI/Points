@@ -22,6 +22,9 @@ struct VMParams {
     float4 waveT;    // shockwave birth times (P.time clock); < -1e5 = inactive
     float4 waveCA;   // wave 0 center (xy), wave 1 center (zw) — view units
     float4 waveCB;   // wave 2 center (xy), wave 3 center (zw)
+    float4 uvT;      // UV Transform node: offsetX, offsetY, scale, rotate (turns)
+    float4 edge;     // Edge Policy node: mode (0 none / 1 fade / 2 clamp), margin, 0, 0
+    float4 domain;   // Domain node: topologyA, topologyB, morph, 0
 };
 
 // Field order MUST match PinInstruction in PinProgram.swift. 32 bytes.
@@ -59,6 +62,32 @@ static inline float hash01(float x) {
     n = (n ^ 61u) ^ (n >> 16u);
     n *= 9u; n = n ^ (n >> 4u); n *= 0x27d4eb2du; n = n ^ (n >> 15u);
     return float(n & 0x00FFFFFFu) / 16777215.0;
+}
+
+// Domain node — topology warps of the canonical grid uv. 0 rect · 1 hex · 2 radial ·
+// 3 spiral · 4 scatter · 5 perspective. Pure remap of each pin's HOME uv; depth/color
+// sampling follows the pin to its new home.
+static inline float2 topoUV(float2 g, int t, uint gid, uint cols, uint count) {
+    if (t == 1) {                        // hex: odd rows offset half a cell
+        if ((gid / cols) & 1u) g.x += 0.5 / float(max(cols - 1u, 1u));
+        return g;
+    } else if (t == 2) {                 // radial: x = angle, y = ring radius
+        float a = g.x * 6.2831853;
+        float r = 0.5 * (0.08 + 0.92 * g.y);
+        return float2(0.5 + r * cos(a), 0.5 + r * sin(a));
+    } else if (t == 3) {                 // spiral: golden-angle sunflower
+        float tt = float(gid) / float(max(count - 1u, 1u));
+        float r = 0.5 * sqrt(tt);
+        float a = float(gid) * 2.39996323;
+        return float2(0.5 + r * cos(a), 0.5 + r * sin(a));
+    } else if (t == 4) {                 // scatter: stable per-pin hash
+        return float2(hash01(float(gid) * 0.6180339 + 7.0),
+                      hash01(float(gid) * 1.1134 + 31.7));
+    } else if (t == 5) {                 // perspective: rows bunch toward the top
+        float v = g.y * g.y;
+        return float2(0.5 + (g.x - 0.5) * mix(0.35, 1.0, v), v);
+    }
+    return g;                            // rect
 }
 
 // ---- 3D noise field (Noise node) — value + gradient(Perlin), animatable off P.time ----
@@ -120,7 +149,21 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
     uint row = gid / U.cols;
     float2 guv = float2(float(col) / float(max(U.cols - 1u, 1u)),
                         float(row) / float(max(U.rows - 1u, 1u)));
+    // Domain node: warp each pin's home uv through topology A→B (morph blends them).
+    if (P.domain.x > 0.5 || (P.domain.y > 0.5 && P.domain.z > 0.001)) {
+        float2 gA = topoUV(guv, int(P.domain.x + 0.5), gid, U.cols, U.count);
+        float2 gB = topoUV(guv, int(P.domain.y + 0.5), gid, U.cols, U.count);
+        guv = mix(gA, gB, clamp(P.domain.z, 0.0, 1.0));
+    }
     float2 duv = mapUV(guv, U.orient);
+    // UV Transform node: pan/zoom/rotate the source image under the pins.
+    if (P.uvT.x != 0.0 || P.uvT.y != 0.0 || P.uvT.z != 1.0 || P.uvT.w != 0.0) {
+        float2 c = duv - 0.5;
+        float ang = P.uvT.w * 6.2831853;
+        float cs = cos(ang), sn = sin(ang);
+        c = float2(c.x * cs - c.y * sn, c.x * sn + c.y * cs);
+        duv = c / max(P.uvT.z, 0.05) + 0.5 - P.uvT.xy;
+    }
     float2 baseXY = float2(mix(-U.extX, U.extX, guv.x), mix(U.extY, -U.extY, guv.y));
 
     float4 regs[32];
@@ -378,6 +421,20 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             default: write = false; break;
         }
         if (write) regs[min(ins.dst, 31u)] = r;
+    }
+
+    // Edge Policy node: what happens when warps push pins past the frame border.
+    if (P.edge.x > 0.5) {
+        float2 fxy = baseXY + posOff.xy;
+        float2 lim = float2(U.extX, U.extY);
+        if (P.edge.x > 1.5) {                                   // clamp: pins pile up at the border
+            float2 cl = clamp(fxy, -lim, lim);
+            posOff.xy += cl - fxy;
+        } else {                                                // fade: size falls off across MARGIN
+            float m = max(P.edge.y, 0.01) * 3.0;                // margin (uv) → view units
+            float over = max(max(fabs(fxy.x) - lim.x, fabs(fxy.y) - lim.y), 0.0);
+            keep *= clamp(1.0 - over / m, 0.0, 1.0);
+        }
     }
 
     outBuf[gid].posSize = float4(baseXY + posOff.xy, max(posOff.z, 0.0), sizeMul * keep);

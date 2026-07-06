@@ -39,16 +39,6 @@ extension NodeRegistry {
                               controlEval: { _, _, ctx in bus(ctx) }))
     }
 
-    private func passthrough(_ id: String, _ name: String, _ family: NodeFamily,
-                             params: [ParamSpec], _ desc: String) {
-        registerSpec(NodeSpec(
-            id: id, name: name, family: family,
-            inputs: [PortSpec("pins", .domain)], outputs: [PortSpec("pins", .domain)],
-            params: params, execution: .render,
-            description: desc + " · Takes effect when its render feature lands.",
-            emit: { b, inputs, _ in [b.materialize(inputs.first ?? -1, default: .zero)] }))
-    }
-
     /// Palm/fist/peace/point trigger node reading a chosen gesture bus (all hands / left / right),
     /// with HOLD (linger) + SMOOTHING. Source is continuous while the gesture is recognised.
     private func gestureShapeNode(_ id: String, _ name: String, _ desc: String,
@@ -190,12 +180,11 @@ extension NodeRegistry {
             id: "domain", name: "Domain", family: .grid,
             inputs: [PortSpec("morph", .signal)],
             outputs: [PortSpec("pins", .domain)],
-            params: [.float("count", 64...307_200, 30_000, modSafe: false),
-                     .option("topologyA", ["rect", "hex", "radial", "spiral", "scatter", "perspective"], "rect"),
+            params: [.option("topologyA", ["rect", "hex", "radial", "spiral", "scatter", "perspective"], "rect"),
                      .option("topologyB", ["rect", "hex", "radial", "spiral", "scatter", "perspective"], "radial"),
                      .float("morphAmount", 0...1, 0)],
             execution: .render,
-            description: "The pin lattice: topology warps of one canonical grid, morphable per pin. · Rect is live; the warp family lands with the domain kernel.",
+            description: "The pin lattice: rect · hex · radial (rings) · spiral (sunflower) · scatter · perspective. MORPH blends topology A → B per pin — wire an LFO or Hand Openness into morph and the whole lattice reflows live. Depth/color sampling follows each pin to its new home. Pin COUNT lives in the render settings.",
             emit: { b, inputs, _ in [b.materialize(inputs.first ?? -1, default: .zero)] }))
 
         registerSpec(NodeSpec(
@@ -237,14 +226,18 @@ extension NodeRegistry {
                 return [m]
             }))
 
-        passthrough("uv-transform", "UV Transform", .grid,
-                    params: [.float("offsetX", -1...1, 0), .float("offsetY", -1...1, 0),
-                             .float("scale", 0.25...4, 1), .float("rotate", -0.5...0.5, 0)],
-                    "Pans/zooms/rotates the source image under the pins without moving them.")
-        passthrough("edge-policy", "Edge Policy", .grid,
-                    params: [.option("mode", ["none", "fade", "clamp"], "fade"),
-                             .float("margin", 0...0.3, 0.05)],
-                    "What happens when warps push pins past the frame border.")
+        registerSpec(NodeSpec(
+            id: "uv-transform", name: "UV Transform", family: .grid,
+            params: [.float("offsetX", -1...1, 0), .float("offsetY", -1...1, 0),
+                     .float("scale", 0.25...4, 1), .float("rotate", -0.5...0.5, 0)],
+            execution: .render,
+            description: "Pans (OFFSET), zooms (SCALE) and ROTATEs the camera image under the pins without moving them — the cloud stays put while the world slides through it. Just add the node; expose OFFSETX and wire an LFO for a slow drift."))
+        registerSpec(NodeSpec(
+            id: "edge-policy", name: "Edge Policy", family: .grid,
+            params: [.option("mode", ["none", "fade", "clamp"], "fade"),
+                     .float("margin", 0...0.3, 0.05)],
+            execution: .render,
+            description: "What happens when warps (Scatter, Twist, Orbit…) push pins past the frame border: FADE shrinks them away across MARGIN, CLAMP piles them up at the edge, NONE lets them fly out. Just add the node."))
 
         // MARK: - SHAPE (REAL geometry — feed Output.shape / .rotation / .stretch)
 

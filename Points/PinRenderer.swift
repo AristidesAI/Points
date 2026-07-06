@@ -19,6 +19,9 @@ struct VMParamsSwift {
     var waveT: SIMD4<Float> = SIMD4(repeating: -1e6)
     var waveCA: SIMD4<Float> = .zero
     var waveCB: SIMD4<Float> = .zero
+    var uvT: SIMD4<Float> = [0, 0, 1, 0]    // UV Transform: offset, scale, rotate
+    var edge: SIMD4<Float> = .zero          // Edge Policy: mode, margin
+    var domain: SIMD4<Float> = .zero        // Domain: topoA, topoB, morph
 }
 
 // Field order MUST match FillParams in Shaders.metal.
@@ -325,7 +328,8 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         var vm = VMParamsSwift(instrCount: UInt32(instrs.count), stateStride: UInt32(strideNeeded),
                                colorIsLuma: lumaOnly ? 1 : 0, colorEnabled: colorOn ? 1 : 0,
                                time: frame.time, beatPhase: frame.beatPhase, dt: frame.dt, pad: 0,
-                               waveT: frame.waveT, waveCA: frame.waveCA, waveCB: frame.waveCB)
+                               waveT: frame.waveT, waveCA: frame.waveCA, waveCB: frame.waveCB,
+                               uvT: frame.uvTransform, edge: frame.edgePolicy, domain: frame.domain)
         if let enc = cmd.makeComputeCommandEncoder() {
             enc.setComputePipelineState(vmPipeline)
             enc.setBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 0)

@@ -37,6 +37,9 @@ struct ProgramFrame {
     var material: SIMD4<Float> = [1, 1, 0, 0]     // Material node: mode, roughness, metallic, lightCount
     var lookAt: SIMD4<Float> = .zero              // Look At node: target xyz + amount
     var stem: SIMD4<Float> = [0, 0, 1, 0]         // Stem node: profile, taper, thickness×
+    var uvTransform: SIMD4<Float> = [0, 0, 1, 0]  // UV Transform node: offset, scale, rotate
+    var edgePolicy: SIMD4<Float> = .zero          // Edge Policy node: mode, margin
+    var domain: SIMD4<Float> = .zero              // Domain node: topoA, topoB, morph
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -1090,6 +1093,27 @@ final class GraphRuntime {
             // thickness param 0-1, default 0.3 → 1× the base pitch-derived thickness
             stem = [profile, s.float("taper", 0.2), s.float("thickness", 0.3) / 0.3, 0]
         }
+        var uvT = SIMD4<Float>(0, 0, 1, 0)
+        if let t = graph.nodes.first(where: { $0.specID == "uv-transform" }) {
+            uvT = [t.float("offsetX", 0), t.float("offsetY", 0), t.float("scale", 1), t.float("rotate", 0)]
+        }
+        var edge = SIMD4<Float>.zero
+        if let e = graph.nodes.first(where: { $0.specID == "edge-policy" }) {
+            let mode: Float = e.option("mode", "fade") == "clamp" ? 2
+                            : e.option("mode", "fade") == "none" ? 0 : 1
+            edge = [mode, e.float("margin", 0.05), 0, 0]
+        }
+        var domain = SIMD4<Float>.zero
+        if let d = graph.nodes.first(where: { $0.specID == "domain" }) {
+            let names = ["rect", "hex", "radial", "spiral", "scatter", "perspective"]
+            domain.x = Float(names.firstIndex(of: d.option("topologyA", "rect")) ?? 0)
+            domain.y = Float(names.firstIndex(of: d.option("topologyB", "radial")) ?? 2)
+            var m = d.float("morphAmount", 0)
+            if let w = graph.wireInto(d.id, "morph") {   // wired control drives the morph live
+                m = (controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero).x
+            }
+            domain.z = min(max(m, 0), 1)
+        }
         var post = SIMD4<Float>.zero   // (bloomThreshold, bloomIntensity, grain, vignette)
         if let n = graph.nodes.first(where: { $0.specID == "bloom" }) {
             post.x = n.float("threshold", 0.7); post.y = n.float("intensity", 0.4)
@@ -1111,7 +1135,8 @@ final class GraphRuntime {
                             background: bg,
                             lights: lights,
                             post: post, ghost: ghost,
-                            material: material, lookAt: lookAt, stem: stem)
+                            material: material, lookAt: lookAt, stem: stem,
+                            uvTransform: uvT, edgePolicy: edge, domain: domain)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.
