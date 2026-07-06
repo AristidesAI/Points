@@ -45,6 +45,10 @@ struct ContentView: View {
     @State private var rgbCam: RGBCameraSource?  // live RGB feed for the Live Depth Model node
     @State private var liveEngine: LiveDepthEngine?
     @State private var importForLiveNode: String?   // live-depth node id when its media button opened import
+    @State private var liveDepthLoading = false      // model warming up → show the loading overlay
+    @State private var hadLiveDepthNode = false      // track presence so delete can free the models
+    @State private var importCover = false           // the bake screen — a FULL-screen cover (not a sheet)
+                                                     // so the edge-loop progress can wrap the very top.
     @State private var palette: PaletteContext?
     // A NEW wire pulled from an output and dropped on empty → open the palette filtered to
     // compatible inputs; the chosen node auto-connects to this source.
@@ -120,7 +124,8 @@ struct ContentView: View {
                                 .onTapGesture { menuOpen = false }
                         }
                         CornerMenu(sources: sources, runtime: runtime,
-                                   onSheet: { sheet = $0 }, onBrowser: onBrowser,
+                                   onSheet: { s in if s == .importMedia { importForLiveNode = nil; importCover = true } else { sheet = s } },
+                                   onBrowser: onBrowser,
                                    onNDI: { let id = runtime.ensureNDIOut(); selection = [id] },
                                    onRecord: { let id = runtime.ensureRecord(); selection = [id] },
                                    onReset: { sources.restart() },
@@ -224,19 +229,24 @@ struct ContentView: View {
         }
         .background(Theme.bg)   // paints the home-indicator gap — bar keeps the normal bottom space
         .preferredColorScheme(.dark)
-        .sheet(item: $sheet, onDismiss: { importForLiveNode = nil }) { which in
+        .overlay { if liveDepthLoading { LiveDepthLoadingOverlay() } }
+        .sheet(item: $sheet) { which in
             switch which {
-            case .importMedia:
-                VideoImportView(
-                    onBaked: { isVideo in
-                        if let ln = importForLiveNode { runtime.setBool(ln, "media", true) }   // node loops its baked media
-                        else { addImportedNode(isVideo) }
-                    },
-                    preselectModel: importForLiveNode.flatMap { runtime.activeGraph.node($0)?.option("model", "Metric Video DA S") })
+            case .importMedia: EmptyView()   // presented as a full-screen cover below, not a sheet
             case .settings: SettingsPlaceholderView()
             case .record: RecordPlaceholderView()
             case .ndi: NDIPlaceholderView()
             }
+        }
+        // The bake screen is FULL screen (not a card) so its clockwise edge-loop progress can trace
+        // the very top of the display, above where the status bar sits (hidden while baking).
+        .fullScreenCover(isPresented: $importCover, onDismiss: { importForLiveNode = nil }) {
+            VideoImportView(
+                onBaked: { isVideo in
+                    if let ln = importForLiveNode { runtime.setBool(ln, "media", true) }   // node loops its baked media
+                    else { addImportedNode(isVideo) }
+                },
+                preselectModel: importForLiveNode.flatMap { runtime.activeGraph.node($0)?.option("model", "Metric Video DA S") })
         }
         // Full screen, square corners — the palette IS a screen, not a card.
         .fullScreenCover(item: $palette,
@@ -261,13 +271,26 @@ struct ContentView: View {
             //  • Live Depth Model node → run the RGB camera through the chosen CoreML model
             //  • Still Image / Video Source → play the baked clip
             //  • Depth (or nothing) → live TrueDepth / LiDAR
+            // Live Depth lifecycle: preload the model as soon as the NODE EXISTS (async, warm cache)
+            // so wiring it into Point Display never freezes on a cold ViT build; free every model
+            // when the last node is deleted. `load` re-runs here whenever the model option changes.
+            if let node = runtime.firstLiveDepthNode {
+                let model = LiveModel.named(node.option("model", "Metric Video DA S"))
+                if liveEngine?.needsLoad(model) == true {
+                    liveDepthLoading = true
+                    liveEngine?.load(model) { _ in liveDepthLoading = false }
+                }
+                hadLiveDepthNode = true
+            } else if hadLiveDepthNode {
+                hadLiveDepthNode = false; liveDepthLoading = false
+                DepthModelRunner.purgeCache()                        // last node gone → free the models
+            }
             if let ln = runtime.liveDepthNode {
                 sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR (shares the camera)
                 if ln.bool("media") && !ImportedDepthStore.shared.isEmpty {
                     rgbCam?.stop(); player?.start()                  // loop the baked media through this node's model
                 } else {
-                    player?.stop()
-                    liveEngine?.load(LiveModel.named(ln.option("model", "Metric Video DA S")))
+                    player?.stop()                                   // model (pre)loads above; just point the camera
                     rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide)
                 }
             } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
@@ -306,7 +329,7 @@ struct ContentView: View {
                 let cam = RGBCameraSource()
                 cam.onFrame = { pb, _ in eng.process(pb) }   // each RGB frame → model → point cloud
                 rgbCam = cam
-                runtime.requestMedia = { nodeID in importForLiveNode = nodeID; sheet = .importMedia }
+                runtime.requestMedia = { nodeID in importForLiveNode = nodeID; importCover = true }
                 let rt = runtime
                 renderer.programProvider = { rt.frameProgram() }
                 let ae = audio
@@ -467,6 +490,25 @@ private struct EdgeSwitchHandle: View {
                 withAnimation(.easeOut(duration: 0.4)) { anim = false }
             }
         }
+    }
+}
+
+/// Shown while a Live Depth model is warming up (a cold ViT is ~1–9 s). Blocks the "wraps around
+/// itself" garbage that a not-yet-ready model would otherwise flash. Warm switches skip this.
+private struct LiveDepthLoadingOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.72).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().controlSize(.large).tint(.white)
+                Text("Loading depth model…")
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                Text("First load compiles for the Neural Engine — a few seconds.")
+                    .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .transition(.opacity)
+        .allowsHitTesting(true)   // swallow taps while loading
     }
 }
 

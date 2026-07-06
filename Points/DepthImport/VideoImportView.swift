@@ -32,6 +32,10 @@ struct VideoImportView: View {
             if bake.isRunning { ScreenEdgeProgress(progress: bake.progress) }   // the clockwise edge loop
         }
         .foregroundStyle(Theme.text)
+        // While baking, go full-bleed: hide the status bar + home indicator so the clockwise loop
+        // traces the whole display edge (incl. above the clock/Island), then restore on completion.
+        .statusBarHidden(bake.isRunning)
+        .persistentSystemOverlays(bake.isRunning ? .hidden : .automatic)
         .onAppear { if let p = preselectModel { modelName = p } }
         .sheet(isPresented: $showPicker) {
             MediaPicker { url, isVideo in picked = (url, isVideo) }.ignoresSafeArea()
