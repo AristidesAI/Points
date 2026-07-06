@@ -396,11 +396,14 @@ struct NodeEditorView: View {
                 if let dragging = wireDrag?.original, dragging == w { continue }
                 guard let (a, b) = wireEndpoints(w) else { continue }
                 let isSel = selectedWire == w
-                let color = wireColor(w)   // matches the port square (by port TYPE)
+                // Selector (Switch) wires: the active branch glows amber, inactive branches dim.
+                let selState = selectorWireState(w)
+                let dim: Double = selState == false ? 0.25 : 1
+                let color = selState == true ? Color(hex: 0xFFC24D) : wireColor(w)   // active branch → amber
                 let p = wirePath(a, b)
-                ctx.stroke(p, with: .color(isSel ? .white.opacity(0.35) : color.opacity(0.2)),
+                ctx.stroke(p, with: .color(isSel ? .white.opacity(0.35) : color.opacity(0.2 * dim)),
                            lineWidth: isSel ? 6 : 4)
-                ctx.stroke(p, with: .color(isSel ? .white : color.opacity(0.9)),
+                ctx.stroke(p, with: .color(isSel ? .white : color.opacity(0.9 * dim)),
                            lineWidth: isSel ? 2.2 : 1.6)
             }
             // Live ghost: the fixed anchor is recomputed every frame, so panning/zooming
@@ -441,6 +444,14 @@ struct NodeEditorView: View {
         guard let node = runtime.activeGraph.node(nodeID),
               let spec = registry.spec(node.specID) else { return .tools }
         return spec.family
+    }
+
+    /// For a wire into a Selector (Switch): true = the active branch, false = an inactive branch,
+    /// nil = not a selector wire. Drives the amber-active / dimmed-inactive wire hueing.
+    private func selectorWireState(_ w: Wire) -> Bool? {
+        guard let to = runtime.activeGraph.node(w.toNode),
+              let sel = registry.spec(to.specID)?.selectorParam else { return nil }
+        return w.toPort == "in\(to.option(sel, "1"))"
     }
 
     /// Wire colour = the colour of its source-output port square (by port TYPE), so wires

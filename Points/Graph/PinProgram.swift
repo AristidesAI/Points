@@ -211,8 +211,12 @@ struct PinProgramCompiler {
                 throw PinCompileError.unsupportedNode(node.specID)
             }
             // Resolve inputs first (recursion bottoms out at generators). -1 = unwired.
+            // Selector nodes (N-way Switch) compile ONLY their active input's branch — inactive
+            // branches are left unwired so they cost no ops/registers (recompile-on-switch).
+            let activeIdx: Int? = spec.selectorParam.map { max(0, (Int(node.option($0, "1")) ?? 1) - 1) }
             var inputRegs: [Int32] = []
-            for input in spec.inputs {
+            for (i, input) in spec.inputs.enumerated() {
+                if let a = activeIdx, i != a { inputRegs.append(-1); continue }
                 if let wire = graph.wireInto(node.id, input.name) {
                     if let upstream = graph.node(wire.fromNode),
                        registry.spec(upstream.specID)?.emit != nil {

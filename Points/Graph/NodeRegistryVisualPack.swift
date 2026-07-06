@@ -404,5 +404,27 @@ extension NodeRegistry {
                               key: "\(node.id).falloff", lanes: [2])
                 return [r]
             }))
+
+        // ─────────────────────────────  UTILITY  ─────────────────────────────
+
+        // N-way Switch — passes ONE of 4 inputs through; ACTIVE picks which. Only the active branch
+        // compiles (recompile-on-switch via selectorParam), so wiring a whole rig into each input is
+        // cheap. fieldVec3 ports carry color / position / float alike. Expose ◇ ACTIVE + drive it
+        // (Pad / LFO / logic) for one-tap or automated switching; wire one control into several
+        // Switches to flip a whole look at once.
+        registerSpec(NodeSpec(
+            id: "multi-switch", name: "Multi Switch", family: .tools,
+            inputs: [PortSpec("in1", .fieldVec3), PortSpec("in2", .fieldVec3),
+                     PortSpec("in3", .fieldVec3), PortSpec("in4", .fieldVec3)],
+            outputs: [PortSpec("out", .fieldVec3)],
+            params: [.option("active", ["1", "2", "3", "4"], "1")],
+            execution: .interpreterOp,
+            description: "A gate: passes ONE input (ACTIVE 1-4) straight to its output — switch between whole rendering methods. Only the active branch runs. Expose ◇ ACTIVE and drive it for one-tap / automated switching; wire the same control into several Switches to flip a whole look at once.",
+            selectorParam: "active",
+            emit: { b, inputs, node in
+                let a = max(0, (Int(node.option("active", "1")) ?? 1) - 1)
+                let sel = a < inputs.count ? inputs[a] : -1
+                return [b.materialize(sel, default: .zero)]
+            }))
     }
 }

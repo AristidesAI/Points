@@ -129,11 +129,16 @@ struct NodeSpec: Sendable {
     /// instance across frames (zeroed on graph rebuild).
     let controlEvalStateful: (@Sendable (_ node: GraphNode, _ inputs: [SIMD4<Float>], _ ctx: ControlContext, _ state: inout SIMD4<Float>) -> [SIMD4<Float>])?
 
+    /// Selector nodes (N-way Switch): the compiler resolves ONLY the input whose 1-based index equals this
+    /// option param, leaving the rest unwired — so inactive branches never compile (recompile-on-switch).
+    let selectorParam: String?
+
     init(id: String, name: String, family: NodeFamily,
          inputs: [PortSpec] = [], outputs: [PortSpec] = [],
          params: [ParamSpec] = [], statePerPin: Int = 0,
          execution: ExecutionClass,
          description: String = "",
+         selectorParam: String? = nil,
          emit: (@Sendable (inout PinProgramBuilder, [Int32], GraphNode) -> [Int32])? = nil,
          controlEval: (@Sendable (GraphNode, [SIMD4<Float>], ControlContext) -> [SIMD4<Float>])? = nil,
          controlEvalStateful: (@Sendable (GraphNode, [SIMD4<Float>], ControlContext, inout SIMD4<Float>) -> [SIMD4<Float>])? = nil) {
@@ -141,6 +146,7 @@ struct NodeSpec: Sendable {
         self.inputs = inputs; self.outputs = outputs; self.params = params
         self.statePerPin = statePerPin; self.execution = execution
         self.description = description
+        self.selectorParam = selectorParam
         self.emit = emit; self.controlEval = controlEval
         self.controlEvalStateful = controlEvalStateful
     }
