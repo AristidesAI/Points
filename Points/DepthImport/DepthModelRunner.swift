@@ -16,15 +16,11 @@ struct LiveModel: Sendable, Equatable {
     var metric: Bool = false // METRIC models output true metres (kept for reference; still normalised)
     var orient: UInt32 = 0  // per-model sensor→grid orientation bits (1 swapUV, 2 flipU, 4 flipV) —
                             // some conversions come out rotated/180°; calibration knob (see below).
+    // Kept the two that perform: the metric video model (the one that "sort of works") + DA V3 S.
+    // Removed the slow ones (DA2 Metric Indoor/Outdoor, MoGe-2, DA V2 S) per testing — all sluggish.
     static let all: [LiveModel] = [
-        // Metric (real metres — converted small models). Still robust-normalised for the stage.
         LiveModel(name: "Metric Video DA S",    resource: "MetricVideoDA_S",    inverse: false, metric: true, orient: 0),
-        LiveModel(name: "DA2 Metric Outdoor S", resource: "DAv2MetricOutdoor_S", inverse: false, metric: true, orient: 0),
-        LiveModel(name: "DA2 Metric Indoor S",  resource: "DAv2MetricIndoor_S",  inverse: false, metric: true, orient: 0),
-        // Relative (disparity → flip so near maps to the front of the stage):
-        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",    inverse: false, orient: 6), // bake read 180°
-        LiveModel(name: "Depth Anything V3 S", resource: "DepthAnythingV3_small_504", inverse: false, orient: 0), // was reading inverted at inverse:true
-        LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",  inverse: true,  orient: 6), // read 180°
+        LiveModel(name: "Depth Anything V3 S", resource: "DepthAnythingV3_small_504", inverse: false, orient: 0),
     ]
     static func named(_ n: String) -> LiveModel { all.first { $0.name == n } ?? all[0] }
     /// The models offered in the import page + live node pickers (display names).

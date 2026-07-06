@@ -19,12 +19,22 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         }
     }
 
+    /// The exact capture device for a lens, via DiscoverySession (more reliable than
+    /// `AVCaptureDevice.default(deviceType:…)`, which can return nil for ultra-wide / tele and
+    /// silently fall back to wide → "the back lenses don't switch"). Falls back to wide if absent.
+    static func device(for lens: Lens) -> AVCaptureDevice? {
+        let ds = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [lens.deviceType, .builtInWideAngleCamera],
+            mediaType: .video, position: lens.position)
+        return ds.devices.first { $0.deviceType == lens.deviceType } ?? ds.devices.first
+    }
+
     /// Lenses this device actually has (so the node's camera switcher only shows real cameras).
     static func availableLenses() -> [Lens] {
-        let want: [(Lens, AVCaptureDevice.DeviceType, AVCaptureDevice.Position)] = [
-            (.ultraWide, .builtInUltraWideCamera, .back), (.wide, .builtInWideAngleCamera, .back),
-            (.tele, .builtInTelephotoCamera, .back), (.front, .builtInWideAngleCamera, .front)]
-        let found = want.filter { AVCaptureDevice.default($0.1, for: .video, position: $0.2) != nil }.map(\.0)
+        let found = Lens.allCases.filter { lens in
+            AVCaptureDevice.DiscoverySession(deviceTypes: [lens.deviceType], mediaType: .video,
+                                             position: lens.position).devices.isEmpty == false
+        }
         return found.isEmpty ? [.wide, .front] : found
     }
 
@@ -68,8 +78,7 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         session.beginConfiguration()
         session.sessionPreset = .high
         for i in session.inputs { session.removeInput(i) }
-        if let dev = AVCaptureDevice.default(lens.deviceType, for: .video, position: lens.position)
-            ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: lens.position),
+        if let dev = Self.device(for: lens),
            let input = try? AVCaptureDeviceInput(device: dev), session.canAddInput(input) {
             session.addInput(input)
         }

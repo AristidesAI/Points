@@ -48,6 +48,7 @@ struct ContentView: View {
     @State private var importForLiveNode: String?   // live-depth node id when its media button opened import
     @State private var liveDepthLoading = false      // model warming up → show the loading overlay
     @State private var hadLiveDepthNode = false      // track presence so delete can free the models
+    @State private var liveCamOn = false             // RGB session live → lens changes reconfigure in place
     @State private var importCover = false           // the bake screen — a FULL-screen cover (not a sheet)
                                                      // so the edge-loop progress can wrap the very top.
     @State private var palette: PaletteContext?
@@ -291,16 +292,27 @@ struct ContentView: View {
             if let ln = runtime.liveDepthNode {
                 sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR (shares the camera)
                 if ln.bool("media") && !ImportedDepthStore.shared.isEmpty {
-                    rgbCam?.stop(); player?.start()                  // loop the baked media through this node's model
+                    liveCamOn = false; rgbCam?.stop(); player?.start()   // loop the baked media through this node's model
                 } else {
-                    player?.stop()                                   // model (pre)loads above; just point the camera
-                    rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide)
+                    player?.stop()
+                    let model = LiveModel.named(ln.option("model", "Metric Video DA S"))
+                    renderer.setOrient(model.orient)                 // model orient ONLY while RGB drives the display
+                    let lens = RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide
+                    if liveCamOn {
+                        rgbCam?.start(lens: lens)                    // already live → just switch the lens
+                    } else {
+                        liveCamOn = true
+                        // Handoff: TrueDepth/LiDAR and the RGB session can't share the physical camera —
+                        // let the depth session release before RGB grabs it, or RGB comes up on a
+                        // contested camera (garble / wrong lens). ~0.45 s matches the sibling app.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { rgbCam?.start(lens: lens) }
+                    }
                 }
             } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
-                rgbCam?.stop()
+                liveCamOn = false; rgbCam?.stop()
                 sources?.setMediaMode(true); player?.start()
             } else {
-                rgbCam?.stop(); player?.stop(); sources?.setMediaMode(false)
+                liveCamOn = false; rgbCam?.stop(); player?.stop(); sources?.setMediaMode(false)
             }
             // NDI streams only while the NDI node's START is active (asks Local Network on first send).
             if runtime.ndiStreaming {
