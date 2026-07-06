@@ -611,4 +611,30 @@ switch it's environmental — I'll add an on-screen readout of the actual active
 lens intrinsics, so near points always collapse to the axis. The real fix (both the live models AND a true
 1:1 TrueDepth face) is [MonocularDepthPC-Plan.md](../MonocularDepthPC-Plan.md) **Part B: unproject with the
 real camera intrinsics into metric XYZ**. It's a real build but it's *the* thing that makes it look like
-TDLiDAR. **Say go and I build it** — further freeXY tuning is diminishing returns. 
+TDLiDAR. **Say go and I build it** — further freeXY tuning is diminishing returns.
+
+### Part B — METRIC mode (real-intrinsics unprojection) BUILT (commit `57ebe10`)
+
+Your diagnosis was exactly right: we only built a Z axis; XY didn't scale with distance so the head kept
+its size. Implemented a new **Point Display `mode` → `metric`** that unprojects each depth pixel to real
+metric XYZ with the camera's intrinsics:
+`worldX = (u−cx)/fx · Z`, `worldY = (v−cy)/fy · Z`, `worldZ = (FOCUS − Z)·scale`.
+Because X/Y are TRUE metres, an object keeps its real size — move it away (Z grows) and the fixed
+perspective camera shrinks it, like TDLidar. Intrinsics are the REAL ones: TrueDepth `AVDepthData`
+calibration + LiDAR `ARFrame.camera.intrinsics` (normalized, so they transfer to any depth-map size);
+RGB models use a nominal FOV (they're relative depth, not true metres).
+
+**To use it: select the Point Display node → `mode` → `metric`.** (I did NOT make it the default — didn't
+want to change your default file again. If it looks right we make it default.) Switching seeds a working
+preset (SEPARATION = metres→view scale, FOCUS = reference depth, DEPTHPUSH 1 = the metric Z multiplier).
+
+⚠ **On device — this is the big one to check:**
+- Front TrueDepth in `metric` mode: does the head now **shrink as you move away** + look 1:1 proportioned
+  like TDLidar (head vs shoulders)?
+- Knobs: **SEPARATION** = overall size (metres→view scale). **FOCUS** = the depth that sits at the wall;
+  content **farther than FOCUS flattens** (a Z clamp) so raise FOCUS to ~3 for room-scale **back LiDAR**.
+  **DEPTHPUSH** must be ≥ 1 (it multiplies the metric Z; 0 = flat).
+- Orientation: I mirrored freeXY's orient handling, but the metric XY flip/mirror is my best guess from
+  here — if the face is mirrored or sideways in metric mode, tell me and it's a one-line sign fix.
+- If it's close, I'll (a) make metric the default, (b) drop the far-clamp so deep scenes keep ordering,
+  (c) calibrate the RGB-model intrinsics per lens. 
