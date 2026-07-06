@@ -61,3 +61,22 @@ These wire + validate, read 0 / pass through until their subsystem lands. None c
 ## Next
 1. **Body Region segmentation mask** (device-tune the orientation) — confine any effect to the body.
 2. **MIDI / OSC** (small, mechanical). 3. Look At / Material shading.
+
+## Round 4 — DONE
+
+- Detail Upsample real: JBU — depth resampled at FACTOR× res, edges snapped to the RGB image
+- Macro grouping real: GROUP collapses a selection into one card (wires re-anchor on it,
+  dragging moves the group), EXPAND/delete restores
+- Sticky Note: inline text editing on the card while selected
+- Speculars use the real camera eye — highlights track the orbit
+- Testing templates (Max Complexity, Trigger Test) removed from the project page; new
+  **Device Test** project wires the on-device checklist with numbered Sticky Notes
+  (depth cleanup, shapes, stage/post, face tracking, proximity)
+
+## Remaining backlog
+
+- Confidence texture — AVFoundation depth exposes no confidence map; needs ARKit (the node
+  reads a constant 1.0 and its description says so)
+- OSC broadcast may need the multicast entitlement on device; receiving on :9000 is unaffected
+- On-device check: hand chirality may be swapped on the mirrored front camera (code comment flags where to swap)
+- Live Depth model issues (from Plans/TESTINGDoc.md §Live Depth) — separate work item
