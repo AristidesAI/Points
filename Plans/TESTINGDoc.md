@@ -578,3 +578,37 @@ itself, but it's why a flat surface reads as a hard grid next to the fanning mid
 ⚠ **Full checklist this round:** (1) lens switch live incl. front↔back w/o model change; (2) node-add
 doesn't rotate live LiDAR; (3) steady cloud (EMA); (4) baked video upright; (5) orbit/move work again on
 any camera. Then: is the live cloud close enough, or do we go for real-intrinsics parity (Part B)?
+
+
+Lidar notes testing:
+
+Camera switch still doesnt work. - Lidar is now horizontal on the front camera now its 90deg rotated. Whatever change you made to the lidar truedepth/point cloud - Now the face is completely flat like the points arent 3D anymore and moving my hand infront of my face it barely has any depth - Figure out how you broke it and fix it. - The lidar should be a 1:1 realistic recreation of my face based on the infrared truedepth TOF information, not just a flat point cloud render. you also remove the Moge2 from the live depth node options. I wanted that one still there. - and for some reason the video and DAv2 models are running slower than before - I kept them because they were the fastest.
+
+### Regression-fix feedback (commits `c8237dd`, `5a0fc0f`)
+
+You were right — I broke things. Undone:
+
+**Flat face.** Two parts: (a) I seeded the default file's Point Display **`focus = 0.5`**, which *doubles*
+the XY spread so the same Z relief reads as flat — **reverted to 1.0** (+ reverted the freeXY near-cull).
+(b) Your Camera bar (IMG_8895) shows **DEPTHPUSH = 0.00** — `world-Z = z × depthPush`, so 0 is a **hard
+flat**, and that's the slider (default 1), not code. **To get the 1:1 face:** raise **DEPTHPUSH**, and pull
+the **Depth node's FAR down to ~0.6 m** — at FAR 2.5 m a 0.4 m face fills only ~4 % of the depth window so
+its relief is tiny; at ~0.6 m the nose/cheeks get real depth.
+
+**Front LiDAR 90°-rotated — fixed.** A Live Depth node sets the renderer orient to 0; the return-to-camera
+path only reset it on a state *change*, so a stale 0 leaked. `setMediaMode(false)` now restores the
+live-camera orient unconditionally.
+
+**MoGe-2 + DA V2 S — restored** (only DA2 Metric Indoor/Outdoor stay out — those were zoomed/broken).
+
+**Camera switch — 3rd attempt, new mechanism:** the RGB session now does a full **stop → reconfigure →
+start** on a lens change (swapping the input on a *running* session silently failed). ⚠ If it STILL won't
+switch it's environmental — I'll add an on-screen readout of the actual active device to see it.
+
+**Slower models — clawed back:** I'd added a per-frame percentile **sort**; coarsened it (every 32nd px).
+
+**The live-depth cloud still vortexes and that's not tunable** — `freeXY` unprojects XY ∝ depth with no
+lens intrinsics, so near points always collapse to the axis. The real fix (both the live models AND a true
+1:1 TrueDepth face) is [MonocularDepthPC-Plan.md](../MonocularDepthPC-Plan.md) **Part B: unproject with the
+real camera intrinsics into metric XYZ**. It's a real build but it's *the* thing that makes it look like
+TDLiDAR. **Say go and I build it** — further freeXY tuning is diminishing returns. 
