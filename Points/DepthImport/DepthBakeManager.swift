@@ -4,14 +4,14 @@ import CoreImage
 import CoreML
 import CoreGraphics
 import ImageIO
-import BackgroundTasks
+import ActivityKit
 import Observation
 
 // Video / photo depth-bake pipeline — Plans/04-Depth-Import-Pipeline.md. RGB in → one-time on-device
-// metric-depth bake on the ANE → (future) stored depth → looped point cloud. This runs the REAL
-// MoGe-2 model per frame and shows a live depth preview so you can confirm it works. AVAssetReader
-// decodes video frames; a single photo bakes one frame. The PointsDepth writer + sequential looper
-// (playback as a point cloud) are the next milestone; for now the bake proves the model + pipeline.
+// metric-depth bake on the ANE → stored depth → looped point cloud. Runs the chosen model per frame
+// and shows a live depth preview. AVAssetReader decodes video frames; a photo bakes one frame.
+// Progress surfaces in a custom Live Activity (Timer-style Dynamic Island ring) via DepthBakeActivity,
+// which also holds a background-task assertion so a minimised bake keeps running.
 
 // The depth model + generic inference now live in DepthModelRunner (shared with the live engine), so
 // the bake can use ANY bundled model, chosen on the import page.
@@ -48,10 +48,6 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
 // MARK: - Manager
 
 @MainActor @Observable final class DepthBakeManager {
-    // Continued-processing id MUST be prefixed with the real bundle id and permitted as a wildcard
-    // (…depthbake.*) in Info.plist; each run appends a fresh suffix.
-    nonisolated static var taskPrefix: String { (Bundle.main.bundleIdentifier ?? "aristides.lintzeris.Points") + ".depthbake" }
-
     enum Stage: Equatable { case idle, preparing, baking, done, cancelled, failed(String) }
     private(set) var stage: Stage = .idle
     private(set) var progress = 0.0
@@ -68,23 +64,6 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     private var bakeTask: Task<Void, Never>?
     private var bakeOrient: UInt32 = 0        // the chosen model's orientation → carried to the player
 
-    // MARK: background task (keeps the bake alive + drives the Dynamic Island when minimised)
-
-    /// Runs on the system's task queue: drives the Dynamic Island progress and holds the app alive
-    /// while the bake runs, until it finishes or the user cancels.
-    nonisolated static func driveContinuedTask(_ cont: BGContinuedProcessingTask) {
-        let snap = BakeShared.snapshot
-        cont.progress.totalUnitCount = 1000
-        cont.expirationHandler = { snap.markCancelled() }
-        while !snap.finished && !snap.cancelled {
-            cont.progress.completedUnitCount = Int64(snap.fraction * 1000)
-            cont.updateTitle("Processing video", subtitle: snap.subtitle)
-            Thread.sleep(forTimeInterval: 0.2)
-        }
-        cont.progress.completedUnitCount = 1000
-        cont.setTaskCompleted(success: !snap.cancelled)
-    }
-
     // MARK: control
 
     func start(url: URL, isVideo: Bool, options: BakeOptions, model: LiveModel) {
@@ -93,7 +72,8 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
         bakeOrient = model.orient
         stage = .preparing; progress = 0; currentFrame = 0; totalFrames = 0; fps = 0; previewImage = nil
         BakeShared.snapshot.reset()
-        submitBackgroundTask()
+        DepthBakeActivity.start(sourceName: url.lastPathComponent, total: 0)   // Timer-style Dynamic Island
+        bgStatus = ActivityAuthorizationInfo().areActivitiesEnabled ? "" : "Live Activities are off (Settings ▸ Points)"
         let runner = self.runner
         bakeTask = Task.detached(priority: .userInitiated) { [weak self] in
             await self?.prepareAndBake(url: url, isVideo: isVideo, runner: runner, model: model)
@@ -103,19 +83,6 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     func cancel() {
         BakeShared.snapshot.markCancelled()
         bakeTask?.cancel()
-    }
-
-    private func submitBackgroundTask() {
-        // Register a handler for THIS run's concrete id (dynamic per-submission avoids double-register).
-        let id = "\(Self.taskPrefix).\(UUID().uuidString)"
-        let ok = BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { task in
-            guard let cont = task as? BGContinuedProcessingTask else { task.setTaskCompleted(success: false); return }
-            Self.driveContinuedTask(cont)
-        }
-        guard ok else { bgStatus = "bg register refused — is \(Self.taskPrefix).* in BGTaskSchedulerPermittedIdentifiers?"; return }
-        let req = BGContinuedProcessingTaskRequest(identifier: id, title: "Processing video", subtitle: "Preparing…")
-        do { try BGTaskScheduler.shared.submit(req); bgStatus = "background task running" }
-        catch { bgStatus = "bg submit failed: \(error.localizedDescription)" }
     }
 
     // MARK: publish (MainActor)
@@ -129,6 +96,7 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
         currentFrame = frame; totalFrames = total; self.fps = fps
         progress = total > 0 ? Double(frame) / Double(total) : 0
         BakeShared.snapshot.update(progress, "Frame \(frame) of \(total)")
+        DepthBakeActivity.update(progress: progress, frame: frame, total: total, eta: etaSeconds)
         if let p = preview { previewImage = Self.grayscaleCGImage(p) }
     }
 
@@ -136,6 +104,7 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
         stage = s
         if s == .done { progress = 1 }
         BakeShared.snapshot.markFinished()
+        DepthBakeActivity.end()
     }
 
     // MARK: bake loop (off main; publishes back to MainActor)

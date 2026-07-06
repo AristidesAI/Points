@@ -6,20 +6,77 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		1336278848C74EAA9A22658E /* DepthBakeAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0F7907F75A4068AEA6CA8F /* DepthBakeAttributes.swift */; };
+		7E906353FE064AD69BC38B5E /* DepthBakeAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0F7907F75A4068AEA6CA8F /* DepthBakeAttributes.swift */; };
+		E6EA185710B649E2A82F1031 /* PointsWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A000288BF7148368E31D10C /* PointsWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5E0026CB8A0648A89DC6505E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 02C918F12FF695C20036236A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 71ACA6BD2DD14C09BAD5CE8A;
+			remoteInfo = PointsWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C64F0D05F92E4F5590772A1E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E6EA185710B649E2A82F1031 /* PointsWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		02C918F92FF695C20036236A /* Points.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Points.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A000288BF7148368E31D10C /* PointsWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PointsWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CE0F7907F75A4068AEA6CA8F /* DepthBakeAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepthBakeAttributes.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AA0000000000000000000001 /* Exceptions for "Points" folder in "Points" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				NDI/libndi_ios.a,
+			);
+			target = 02C918F82FF695C20036236A /* Points */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		02C918FB2FF695C20036236A /* Points */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AA0000000000000000000001 /* Exceptions for "Points" folder in "Points" target */,
+			);
 			path = Points;
+			sourceTree = "<group>";
+		};
+		2915ED1994EA4A6899DC8207 /* PointsWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PointsWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		02C918F62FF695C20036236A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B01995EB5A9F4B358AFF1B97 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +90,8 @@
 			isa = PBXGroup;
 			children = (
 				02C918FB2FF695C20036236A /* Points */,
+				2915ED1994EA4A6899DC8207 /* PointsWidgets */,
+				73768FDDD43543BC8E866BFD /* Shared */,
 				02C918FA2FF695C20036236A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +100,17 @@
 			isa = PBXGroup;
 			children = (
 				02C918F92FF695C20036236A /* Points.app */,
+				7A000288BF7148368E31D10C /* PointsWidgets.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		73768FDDD43543BC8E866BFD /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				CE0F7907F75A4068AEA6CA8F /* DepthBakeAttributes.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -55,10 +123,12 @@
 				02C918F52FF695C20036236A /* Sources */,
 				02C918F62FF695C20036236A /* Frameworks */,
 				02C918F72FF695C20036236A /* Resources */,
+				C64F0D05F92E4F5590772A1E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				99446033D2F841F58AEF132F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				02C918FB2FF695C20036236A /* Points */,
@@ -69,6 +139,28 @@
 			productName = Points;
 			productReference = 02C918F92FF695C20036236A /* Points.app */;
 			productType = "com.apple.product-type.application";
+		};
+		71ACA6BD2DD14C09BAD5CE8A /* PointsWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ACCA6261316B4EDDBE41B113 /* Build configuration list for PBXNativeTarget "PointsWidgets" */;
+			buildPhases = (
+				5E4C769A2AB34AEBBB7D021E /* Sources */,
+				B01995EB5A9F4B358AFF1B97 /* Frameworks */,
+				916B9A83552D40AC99F9C02C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				2915ED1994EA4A6899DC8207 /* PointsWidgets */,
+			);
+			name = PointsWidgets;
+			packageProductDependencies = (
+			);
+			productName = PointsWidgets;
+			productReference = 7A000288BF7148368E31D10C /* PointsWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -81,6 +173,9 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					02C918F82FF695C20036236A = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					71ACA6BD2DD14C09BAD5CE8A = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -100,12 +195,20 @@
 			projectRoot = "";
 			targets = (
 				02C918F82FF695C20036236A /* Points */,
+				71ACA6BD2DD14C09BAD5CE8A /* PointsWidgets */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		02C918F72FF695C20036236A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		916B9A83552D40AC99F9C02C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -119,10 +222,27 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1336278848C74EAA9A22658E /* DepthBakeAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5E4C769A2AB34AEBBB7D021E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E906353FE064AD69BC38B5E /* DepthBakeAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		99446033D2F841F58AEF132F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 71ACA6BD2DD14C09BAD5CE8A /* PointsWidgets */;
+			targetProxy = 5E0026CB8A0648A89DC6505E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		02C919022FF695C30036236A /* Debug */ = {
@@ -256,8 +376,15 @@
 				DEVELOPMENT_TEAM = 8S7P33V94X;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Points/NDI/include",
+				);
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Points turns the depth camera into a live pin-screen. Depth and video stay on your device.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Points can receive MIDI over the local network (RTP-MIDI) to drive the visuals from a host such as TouchDesigner.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Points can drive the visuals from live sound. Audio is analysed on-device and never leaves your phone.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Points saves your recordings to Photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -267,13 +394,24 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Points/NDI",
+					"$(PROJECT_DIR)/Points/NDI",
+				);
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-lndi_ios",
+					"-lc++",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = aristides.lintzeris.Points;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Points/NDI/NDI-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -290,8 +428,15 @@
 				DEVELOPMENT_TEAM = 8S7P33V94X;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Points/NDI/include",
+				);
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Points turns the depth camera into a live pin-screen. Depth and video stay on your device.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Points can receive MIDI over the local network (RTP-MIDI) to drive the visuals from a host such as TouchDesigner.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Points can drive the visuals from live sound. Audio is analysed on-device and never leaves your phone.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Points saves your recordings to Photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -301,14 +446,84 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Points/NDI",
+					"$(PROJECT_DIR)/Points/NDI",
+				);
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-lndi_ios",
+					"-lc++",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = aristides.lintzeris.Points;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Points/NDI/NDI-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		498CD74A52F04A5F9686A6F1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8S7P33V94X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PointsWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Points;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aristides.lintzeris.Points.PointsWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6F7E56BB8FFC458EB033FF1E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8S7P33V94X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PointsWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Points;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = aristides.lintzeris.Points.PointsWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -331,6 +546,15 @@
 			buildConfigurations = (
 				02C919052FF695C30036236A /* Debug */,
 				02C919062FF695C30036236A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ACCA6261316B4EDDBE41B113 /* Build configuration list for PBXNativeTarget "PointsWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				498CD74A52F04A5F9686A6F1 /* Debug */,
+				6F7E56BB8FFC458EB033FF1E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
