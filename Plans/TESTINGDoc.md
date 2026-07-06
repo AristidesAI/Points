@@ -297,9 +297,25 @@ sandbox here can't).
 ---
 
 ### Round 5 notes:
+(from chat) Put the metric models in the nodes; change the way images/videos get processed — the
+processing page should let you pick the MODEL before starting; live-depth node needs a horizontal-scroll
+camera switcher for all iPhone cameras; and the live-depth node should accept a video/image source that
+the model bakes ONCE then loops (with an X to discard → back to cameras).
 
+### Round 5 feedback: (commits `fcecd18`, `c321992`, `491c422`)
+- **Unified inference** — one `DepthModelRunner` powers both the import bake and the live engine, so ANY
+  bundled model works in both places (metric passthrough vs relative normalise handled centrally).
+- **Import page MODEL picker** — a horizontal-scroll model row before Start; the bake now uses the chosen
+  model (Metric Video DA / DA2 Metric Indoor+Outdoor / MoGe-2 / DA V2/V3), not hardcoded MoGe-2.
+- **Live Depth node camera switcher** — the node bar now has a **CAMERA** horizontal-scroll switcher that
+  lists your device's real cameras (ultrawide/wide/tele/front) + a **MODEL** switcher; switching is live.
+- **Live Depth node media source** — a **"Load video / image"** button: it bakes the footage ONCE with the
+  node's model, then loops the depth (not re-inferred every frame). An **X** discards it → back to the live
+  camera. (Reuses the import screen, preselected to the node's model.)
 
-### Round 5 feedback:
+⚠ **Verify on-device:** import → pick a MODEL → bake; live-depth node → CAMERA switcher cycles your lenses;
+live-depth node → Load a video → it bakes once + loops → X returns to camera. Frame-rate of the live
+models? (Tell me and I'll advise small-vs-base + whether to convert the base models you provided.)
 
 ---
 
