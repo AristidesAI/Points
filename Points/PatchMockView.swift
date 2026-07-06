@@ -1158,13 +1158,39 @@ struct LiveDepthControls: View {
     let nodeID: String
     private var node: GraphNode? { runtime.activeGraph.node(nodeID) }
 
+    private var hasMedia: Bool { node?.bool("media") ?? false }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switcher("MODEL", LiveModel.pickerNames, node?.option("model", "") ?? "") {
                 runtime.setOption(nodeID, "model", $0)
             }
-            switcher("CAMERA", RGBCameraSource.availableLenses().map(\.rawValue), node?.option("lens", "") ?? "") {
-                runtime.setOption(nodeID, "lens", $0)
+            if hasMedia {
+                // Baked media loops through the model; X discards it → back to the live camera.
+                HStack(spacing: 8) {
+                    Image(systemName: "film").font(.system(size: 11))
+                    Text("Video / image (looping)").font(.system(size: 11, weight: .medium))
+                    Spacer()
+                    Button { runtime.setBool(nodeID, "media", false) } label: {
+                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                            .frame(width: 30, height: 26).background(Theme.panel)
+                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                    }.buttonStyle(.plain)
+                }
+                .foregroundStyle(Theme.text).padding(.vertical, 2)
+            } else {
+                switcher("CAMERA", RGBCameraSource.availableLenses().map(\.rawValue), node?.option("lens", "") ?? "") {
+                    runtime.setOption(nodeID, "lens", $0)
+                }
+                Button { runtime.requestMedia?(nodeID) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.badge.plus").font(.system(size: 11))
+                        Text("Load video / image — bake once, then loop").font(.system(size: 11, weight: .medium))
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.text).padding(10)
+                    .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                }.buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 4)

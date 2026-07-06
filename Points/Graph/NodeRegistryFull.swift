@@ -140,7 +140,8 @@ extension NodeRegistry {
             params: [.option("model", ["Metric Video DA S", "DA2 Metric Outdoor S", "DA2 Metric Indoor S",
                                         "MoGe-2", "Depth Anything V3 S", "Depth Anything V2 S"], "Metric Video DA S"),
                      .option("lens", ["Wide", "Ultra-wide", "Tele", "Front"], "Wide"),
-                     .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
+                     .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
+                     .bool("media", false)],   // set by the node's video/image button — loops baked media instead of live camera
             execution: .interpreterOp,
             description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS; wire depth → Point Display like the Depth node.",
             emit: { b, _, node in

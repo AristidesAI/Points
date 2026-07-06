@@ -9,7 +9,8 @@ import UniformTypeIdentifiers
 // DepthBakeManager / Plans/04-Depth-Import-Pipeline.md.
 
 struct VideoImportView: View {
-    var onBaked: ((Bool) -> Void)? = nil        // (isVideo) — add the source node to the graph
+    var onBaked: ((Bool) -> Void)? = nil        // (isVideo) — add the source node / mark the live node
+    var preselectModel: String? = nil           // preselect this model (opened from a live-depth node)
     @Environment(\.dismiss) private var dismiss
     @State private var bake = DepthBakeManager()
     @State private var picked: (url: URL, isVideo: Bool)?
@@ -31,6 +32,7 @@ struct VideoImportView: View {
             if bake.isRunning { ScreenEdgeProgress(progress: bake.progress) }   // the clockwise edge loop
         }
         .foregroundStyle(Theme.text)
+        .onAppear { if let p = preselectModel { modelName = p } }
         .sheet(isPresented: $showPicker) {
             MediaPicker { url, isVideo in picked = (url, isVideo) }.ignoresSafeArea()
         }

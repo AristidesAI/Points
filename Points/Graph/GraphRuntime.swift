@@ -95,6 +95,8 @@ final class GraphRuntime {
 
     // Imported media (photo/video) baked-depth playback, driven by ContentView's DepthPlayer while a
     // Still Image / Video Source node exists in the graph.
+    /// Live Depth node "video/image" button → ContentView presents the import for that node id.
+    @ObservationIgnored var requestMedia: ((String) -> Void)?
     private static let importedMediaIDs: Set<String> = ["still-image", "clip-transport"]
     var usesImportedMedia: Bool { graph.nodes.contains { Self.importedMediaIDs.contains($0.specID) } }
     /// True when a Still Image / Video Source node is WIRED into Point Display — that connection (not

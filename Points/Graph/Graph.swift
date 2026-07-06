@@ -26,6 +26,10 @@ nonisolated struct GraphNode: Identifiable, Codable, Sendable {
         if case .option(let s)? = params[name] { return s }
         return fallback
     }
+    func bool(_ name: String, _ fallback: Bool = false) -> Bool {
+        if case .bool(let b)? = params[name] { return b }
+        return fallback
+    }
 }
 
 struct Wire: Codable, Hashable, Sendable {

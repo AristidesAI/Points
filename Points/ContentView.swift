@@ -44,6 +44,7 @@ struct ContentView: View {
     @State private var player: DepthPlayer?      // loops imported baked depth into the renderer
     @State private var rgbCam: RGBCameraSource?  // live RGB feed for the Live Depth Model node
     @State private var liveEngine: LiveDepthEngine?
+    @State private var importForLiveNode: String?   // live-depth node id when its media button opened import
     @State private var palette: PaletteContext?
     // A NEW wire pulled from an output and dropped on empty → open the palette filtered to
     // compatible inputs; the chosen node auto-connects to this source.
@@ -223,9 +224,15 @@ struct ContentView: View {
         }
         .background(Theme.bg)   // paints the home-indicator gap — bar keeps the normal bottom space
         .preferredColorScheme(.dark)
-        .sheet(item: $sheet) { which in
+        .sheet(item: $sheet, onDismiss: { importForLiveNode = nil }) { which in
             switch which {
-            case .importMedia: VideoImportView(onBaked: { isVideo in addImportedNode(isVideo) })
+            case .importMedia:
+                VideoImportView(
+                    onBaked: { isVideo in
+                        if let ln = importForLiveNode { runtime.setBool(ln, "media", true) }   // node loops its baked media
+                        else { addImportedNode(isVideo) }
+                    },
+                    preselectModel: importForLiveNode.flatMap { runtime.activeGraph.node($0)?.option("model", "Metric Video DA S") })
             case .settings: SettingsPlaceholderView()
             case .record: RecordPlaceholderView()
             case .ndi: NDIPlaceholderView()
@@ -255,10 +262,14 @@ struct ContentView: View {
             //  • Still Image / Video Source → play the baked clip
             //  • Depth (or nothing) → live TrueDepth / LiDAR
             if let ln = runtime.liveDepthNode {
-                player?.stop()
                 sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR (shares the camera)
-                liveEngine?.load(LiveModel.named(ln.option("model", "Depth Anything V2 S")))
-                rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide)
+                if ln.bool("media") && !ImportedDepthStore.shared.isEmpty {
+                    rgbCam?.stop(); player?.start()                  // loop the baked media through this node's model
+                } else {
+                    player?.stop()
+                    liveEngine?.load(LiveModel.named(ln.option("model", "Metric Video DA S")))
+                    rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide)
+                }
             } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
                 rgbCam?.stop()
                 sources?.setMediaMode(true); player?.start()
@@ -295,6 +306,7 @@ struct ContentView: View {
                 let cam = RGBCameraSource()
                 cam.onFrame = { pb, _ in eng.process(pb) }   // each RGB frame → model → point cloud
                 rgbCam = cam
+                runtime.requestMedia = { nodeID in importForLiveNode = nodeID; sheet = .importMedia }
                 let rt = runtime
                 renderer.programProvider = { rt.frameProgram() }
                 let ae = audio
