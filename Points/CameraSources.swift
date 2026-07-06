@@ -240,13 +240,16 @@ final class SourceManager {
     /// DepthPlayer's ingest). Turning it off resumes the current facing.
     private(set) var mediaMode = false
     func setMediaMode(_ on: Bool) {
-        guard mediaMode != on else { return }
+        let transition = (mediaMode != on)
         mediaMode = on
-        if on { front.stop(); back.stop() }
-        else if started {
-            renderer.setOrient(facing == .front ? Self.frontOrient : Self.backOrient)   // player left orient 0
-            renderer.resetFilter()
-            run(facing)
+        if on {
+            if transition { front.stop(); back.stop() }
+        } else if started {
+            // ALWAYS restore the live-camera orientation, not just on the transition: a Live Depth node
+            // sets the renderer orient to 0, and if we only reset on the state change a stale orient 0
+            // leaked → the front TrueDepth feed showed 90°-rotated. Cheap + idempotent.
+            renderer.setOrient(facing == .front ? Self.frontOrient : Self.backOrient)
+            if transition { renderer.resetFilter(); run(facing) }
         }
     }
 

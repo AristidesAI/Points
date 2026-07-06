@@ -127,7 +127,7 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "live-depth", name: "Live Depth Model", family: .source,
             outputs: [PortSpec("depth", .fieldFloat)],
-            params: [.option("model", ["Metric Video DA S", "Depth Anything V3 S"], "Metric Video DA S"),
+            params: [.option("model", ["Metric Video DA S", "Depth Anything V3 S", "Depth Anything V2 S", "MoGe-2"], "Metric Video DA S"),
                      .option("lens", ["Wide", "Ultra-wide", "Tele", "Front"], "Wide"),
                      .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
                      .bool("media", false)],   // set by the node's video/image button — loops baked media instead of live camera

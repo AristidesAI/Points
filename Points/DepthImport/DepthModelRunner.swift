@@ -16,11 +16,13 @@ struct LiveModel: Sendable, Equatable {
     var metric: Bool = false // METRIC models output true metres (kept for reference; still normalised)
     var orient: UInt32 = 0  // per-model sensor→grid orientation bits (1 swapUV, 2 flipU, 4 flipV) —
                             // some conversions come out rotated/180°; calibration knob (see below).
-    // Kept the two that perform: the metric video model (the one that "sort of works") + DA V3 S.
-    // Removed the slow ones (DA2 Metric Indoor/Outdoor, MoGe-2, DA V2 S) per testing — all sluggish.
+    // Dropped only the two slow scene-specific metric models (DA2 Metric Indoor/Outdoor). Kept the
+    // fast general ones + MoGe-2 (per testing — that one's wanted back).
     static let all: [LiveModel] = [
-        LiveModel(name: "Metric Video DA S",    resource: "MetricVideoDA_S",    inverse: false, metric: true, orient: 0),
-        LiveModel(name: "Depth Anything V3 S", resource: "DepthAnythingV3_small_504", inverse: false, orient: 0),
+        LiveModel(name: "Metric Video DA S",   resource: "MetricVideoDA_S",           inverse: false, metric: true, orient: 0),
+        LiveModel(name: "Depth Anything V3 S", resource: "DepthAnythingV3_small_504",  inverse: false, orient: 0),
+        LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",    inverse: true,  orient: 6),
+        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",      inverse: false, orient: 6),
     ]
     static func named(_ n: String) -> LiveModel { all.first { $0.name == n } ?? all[0] }
     /// The models offered in the import page + live node pickers (display names).
@@ -155,11 +157,12 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         return (out, w, h)
     }
 
-    /// Subsampled 2nd/98th percentile of finite, non-hole values. Cheap enough per frame.
+    /// Subsampled 2nd/98th percentile of finite, non-hole values. Coarse subsample (every 32nd px) so
+    /// the per-frame sort stays cheap — a fuller sample measurably dropped the model fps.
     private func robustRange(_ raw: [Float], count: Int) -> (Float, Float)? {
-        var s: [Float] = []; s.reserveCapacity(count / 12 + 1)
+        var s: [Float] = []; s.reserveCapacity(count / 32 + 1)
         var i = 0
-        while i < count { let x = raw[i]; if x.isFinite && x > 0.02 { s.append(x) }; i += 12 }
+        while i < count { let x = raw[i]; if x.isFinite && x > 0.02 { s.append(x) }; i += 32 }
         guard s.count > 32 else { return nil }
         s.sort()
         let lo = s[Int(Double(s.count) * 0.02)]

@@ -50,9 +50,14 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
     func start(lens: Lens) {
         queue.async { [self] in
             if running && lens == self.lens { return }   // idempotent — no restart on the same lens
+            // Switching to a DIFFERENT physical camera on a running session is unreliable (the input
+            // swap can silently fail to take) — stop the session, reconfigure, restart. That's what
+            // actually makes the lens switcher change the feed.
+            let switching = session.isRunning
             self.lens = lens
+            if switching { session.stopRunning() }
             configure()
-            if !session.isRunning { session.startRunning() }
+            session.startRunning()
             running = true
         }
     }
