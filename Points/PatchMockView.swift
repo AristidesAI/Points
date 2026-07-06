@@ -1151,6 +1151,46 @@ struct NodeCardView: View {
     }
 }
 
+// MARK: - Live Depth Model node controls (model + camera horizontal-scroll switchers)
+
+struct LiveDepthControls: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    private var node: GraphNode? { runtime.activeGraph.node(nodeID) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switcher("MODEL", LiveModel.pickerNames, node?.option("model", "") ?? "") {
+                runtime.setOption(nodeID, "model", $0)
+            }
+            switcher("CAMERA", RGBCameraSource.availableLenses().map(\.rawValue), node?.option("lens", "") ?? "") {
+                runtime.setOption(nodeID, "lens", $0)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+    }
+
+    private func switcher(_ title: String, _ opts: [String], _ sel: String,
+                          _ set: @escaping (String) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(opts, id: \.self) { o in
+                        Text(o).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .background(sel == o ? Theme.text : Theme.panel)
+                            .foregroundStyle(sel == o ? Color.black : Theme.text)
+                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .onTapGesture { UIImpactFeedbackGenerator(style: .light).impactOccurred(); set(o) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Node settings bar — actions + REAL params of the selection, live-editable.
 // Sized by content (the node view bar grows with the selected node's parameter count).
 
@@ -1194,6 +1234,9 @@ struct NodeSettingsBar: View {
                             .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
                             .padding(.horizontal, 12).padding(.vertical, 4)
                     }
+                    if spec.id == "live-depth" {
+                        LiveDepthControls(runtime: runtime, nodeID: node.id)
+                    }
                     // Camera's orbit/center are driven by the jog rows above — don't duplicate them as sliders.
                     let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY"] : []
                     let floats = spec.params.filter { $0.range != nil && !jogged.contains($0.name) }
@@ -1205,7 +1248,8 @@ struct NodeSettingsBar: View {
                     }
                     // NDI + Record share the standard renderer so they look identical; their
                     // arm param (STOP/START) shows as one coloured button, not a 2-way switcher.
-                    ForEach(spec.params.filter { $0.options != nil }, id: \.name) { p in
+                    ForEach(spec.params.filter { $0.options != nil
+                        && !(spec.id == "live-depth" && ($0.name == "model" || $0.name == "lens")) }, id: \.name) { p in
                         if let tint = ArmToggleButton.tint(specID: spec.id, param: p.name) {
                             ArmToggleButton(runtime: runtime, nodeID: node.id, param: p, tint: tint)
                         } else if spec.id == "ndi-out" && p.name == "name" {

@@ -19,6 +19,15 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         }
     }
 
+    /// Lenses this device actually has (so the node's camera switcher only shows real cameras).
+    static func availableLenses() -> [Lens] {
+        let want: [(Lens, AVCaptureDevice.DeviceType, AVCaptureDevice.Position)] = [
+            (.ultraWide, .builtInUltraWideCamera, .back), (.wide, .builtInWideAngleCamera, .back),
+            (.tele, .builtInTelephotoCamera, .back), (.front, .builtInWideAngleCamera, .front)]
+        let found = want.filter { AVCaptureDevice.default($0.1, for: .video, position: $0.2) != nil }.map(\.0)
+        return found.isEmpty ? [.wide, .front] : found
+    }
+
     /// (bgra frame, rotation degrees to upright). Called on the capture queue.
     var onFrame: (@Sendable (CVPixelBuffer, Int) -> Void)?
 
