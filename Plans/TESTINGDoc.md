@@ -449,5 +449,61 @@ model's flip state so I lock the orient bits; (4) CAMERA switcher changes lens l
 (5) bake screen's loop wraps the top. Then I'll finalise orient + take on A/B.
 
 
+Live Depth new notes:
+
+adding the live depth node - even when its not connected to anything makes the front facing lidar mode temporarily rotate 180 with the bottom on the right side of the screen.
 
 
+All of them are uniqely garbled and incorrect - They dont switch cameras when you change it in the node settings, Most of the outputs are worse than before. the ones that make something that looks sort of like what its supposed to are warped on a inner edge.
+
+
+Remove DAV2 S, Moge 2 DA 2 metric indoor and outdoor. They are all slow anyways. leave the rest and fix them.
+
+After you remove the live depth node and change back to the camera depth - The camera controls no longer work - Orbit, move or anything except for zoom, figure out why and resolved
+
+The preprocessed video output - Comes out (in the video processing preview) upside down - for all models it seems The resulting output from any model is garbled (for video anything - theres too much noise in the video processed which makes the point cloud output wobbly and pointy)- If you squint you can barely see the image. For models like Moge2 its better and you can see much more of what is there but theres still errors in the point cloud rendering like the points are a cloth being pulled in multiple directions.
+
+---
+
+### Live Activity + TrueDepth-parity report (commits `44fab9c`, `d09e235`)
+
+**1. Timer-style background Dynamic Island — BUILT.** New **Widget Extension target** (`PointsWidgets`)
+with a custom **ActivityKit Live Activity**: circular **progress ring** (leading) + **time-remaining**
+(trailing) in the compact island, ring-only minimal, ring + frame/ETA expanded + lock screen. The old
+indicator was iOS's `BGContinuedProcessingTask` system activity, which the app **can't restyle** — so
+it's replaced. New files: `PointsWidgets/`, `Shared/DepthBakeAttributes.swift`,
+`Points/DepthImport/DepthBakeActivity.swift`.
+- **Trade-off:** `BGContinuedProcessingTask` gave *indefinite* background CPU; a custom activity doesn't,
+  so I hold a **~30 s background-task assertion**. Photo / short clip finishes backgrounded; a **long
+  video may suspend** until you reopen. Want indefinite background baking back instead of the ring? Say so.
+- ⚠ Found + removed a **duplicate `DepthBakeAttributes.swift`** you'd started under `Points/DepthImport/`
+  (same type compiled twice → build error). Kept `Shared/` version (has `etaText`, member of both targets).
+- ⚠ On device: **Settings ▸ Points ▸ Live Activities** ON, start a bake, swipe the app away → ring + timer.
+
+**2. TrueDepth "points pulled to centre" — ROOT-CAUSED + fixed to compare.** Free-mode XY is a lensless
+pinhole un-projection: `worldXY = (pixel − centre) · (rawZ / focus) · separation`. So:
+- Spread ∝ depth-in-metres. Old default **`focus = 1.0 m`** vs a face at **~0.4 m** → the face shrank to
+  the middle **~40 %** of the frame (your "centre-hug / flat"). The cloud only fills the wall at `focus`.
+- Too-close points converge hardest → a hand shoved **too close** (sub-range) reads tiny `rawZ`, collapses
+  to the axis, and being nearest gets **Z-pushed in front of the face**. Only floor was 5 cm.
+- Depth "feel" (nose forward / edges back) is a *separate* lever = **depthPush + parallax** — matches your
+  note that cranking them looks real; TDLiDAR is flat at low settings too, so that's a knob, not a bug.
+
+Fixes (both free-mode only, pinout/loadDepth untouched):
+- **Near cull** — `freeXY` discards points closer than **0.15 m** (TDLiDAR clamps its range the same way)
+  → the too-close pile-in-front-of-the-face is gone.
+- **Fill-frame focus** — the default file seeds Point Display **`focus = 0.5 m`** so the face fills the
+  frame. ⚠ It's the subject-distance knob: **back LiDAR** rooms (~2 m) want focus ~2, or it over-spreads.
+- **Real 1:1-at-any-distance** = **adaptive focus** (scale from the scene's median depth each frame via
+  the TrueDepth intrinsics) — a focused follow-up. Say the word and I'll build it.
+
+⚠ **Compare on device:** default front file → face fills the frame (not a centre blob)? Hand too close →
+points stop piling centre-front? Crank parallax + depthPush → nose forward / edges back like TDLiDAR?
+
+**3. Your 3 new notes above (models / camera controls / video garble) — seen, queued next round:**
+- Remove the slow models (DAv2-S, MoGe-2, DA2 Indoor/Outdoor), keep + fix the rest — easy, will do.
+- **Camera controls dead (orbit/move, only zoom) after deleting a live-depth node** — likely a regression
+  from my source-gating (`setMediaMode`/camera restart on node delete). I'll trace it first next round.
+- Preprocessed **video upside-down + garbled ("cloth pulled")** — the orientation is the per-model orient
+  I just added (baked path may need the flip the live path got); the garble is per-frame noise → needs
+  the temporal depth smoothing the bake path doesn't do yet. Both next round. 
