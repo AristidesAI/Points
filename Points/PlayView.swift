@@ -270,6 +270,11 @@ struct CameraDeckBar: View {
     private var currentNodeSpecID: String? {
         pageNodes.isEmpty ? nil : pageNodes[pageMod].spec.id
     }
+    /// The REAL id of the camera node on the current page — NOT the literal "cam". A camera added from
+    /// the palette (or a loaded project) has a generated id like "c1", so hardcoding "cam" made the
+    /// deck's orbit/move/recenter silently no-op (setParam guards on node existence) while the sliders,
+    /// which already use entry.node.id, kept working — "orbit/move dead, zoom fine".
+    private var camNodeID: String { pageNodes.isEmpty ? "cam" : pageNodes[pageMod].node.id }
 
     // Camera pad set: [ORBIT/MOVE toggle] · [micro-joystick] · [recenter].
     private var cameraPadRow: some View {
@@ -303,7 +308,7 @@ struct CameraDeckBar: View {
 
                 DeckPad(symbol: "scope", side: side, momentary: true, active: $padRecenter) {
                     runtime.pushUndo()
-                    for p in ["orbitX", "orbitY", "centerX", "centerY"] { runtime.setParam("cam", p, 0) }
+                    for p in ["orbitX", "orbitY", "centerX", "centerY"] { runtime.setParam(camNodeID, p, 0) }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -314,8 +319,9 @@ struct CameraDeckBar: View {
 
     private func nudgeCam(_ name: String, _ delta: Float, _ limit: Float) {
         guard abs(delta) > 0.0001 else { return }
-        let v = runtime.nodeParam("cam", name, 0) + delta
-        runtime.setParam("cam", name, min(max(v, -limit), limit))
+        let id = camNodeID
+        let v = runtime.nodeParam(id, name, 0) + delta
+        runtime.setParam(id, name, min(max(v, -limit), limit))
     }
 
     private var padRow: some View {
