@@ -14,13 +14,15 @@ import CoreVideo
     private(set) var width = 0, height = 0
     private(set) var isVideo = false
     private(set) var playbackFPS: Double = 30    // play back at the rate frames were sampled
+    private(set) var orient: UInt32 = 0          // the baking model's sensor→grid orientation bits
     var isEmpty: Bool { frames.isEmpty }
     var count: Int { frames.count }
 
-    func begin(width: Int, height: Int, isVideo: Bool, fps: Double) {
+    func begin(width: Int, height: Int, isVideo: Bool, fps: Double, orient: UInt32 = 0) {
         frames.removeAll(keepingCapacity: true)
         self.width = width; self.height = height; self.isVideo = isVideo
         self.playbackFPS = fps > 0 ? fps : 30
+        self.orient = orient
     }
     func append(_ metres: [Float]) { if frames.count < 600 { frames.append(metres) } }   // ~600MB ceiling at 504²
 }
@@ -40,7 +42,7 @@ import CoreVideo
         stop()
         guard !ImportedDepthStore.shared.isEmpty else { return }
         idx = 0
-        renderer.setOrient(0)      // imported frames are upright → no transpose/flip
+        renderer.setOrient(ImportedDepthStore.shared.orient)   // the baking model's orientation
         renderer.resetFilter()
         // Fires on the main runloop (scheduled from the main actor) → assumeIsolated is valid.
         let interval = 1.0 / max(ImportedDepthStore.shared.playbackFPS, 1)

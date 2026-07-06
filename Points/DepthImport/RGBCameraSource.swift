@@ -79,10 +79,12 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
             output.setSampleBufferDelegate(self, queue: queue)
             if session.canAddOutput(output) { session.addOutput(output) }
         }
-        // Upright portrait: back cameras need 90°, front 90° mirrored — handled by the connection.
+        // Upright portrait: all lenses need 90°. Do NOT mirror the front lens — a mirrored frame
+        // gives mirrored depth (left/right handedness flips), which read as the front-lens "flipped"
+        // artifacts. A point cloud wants the true, un-mirrored scene.
         if let c = output.connection(with: .video) {
             if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
-            c.isVideoMirrored = (lens.position == .front && c.isVideoMirroringSupported)
+            if c.isVideoMirroringSupported { c.automaticallyAdjustsVideoMirroring = false; c.isVideoMirrored = false }
         }
         session.commitConfiguration()
     }

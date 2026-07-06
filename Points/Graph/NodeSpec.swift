@@ -173,4 +173,6 @@ struct ControlContext: Sendable {
     var gesturesR: SIMD4<Float> = .zero // right-hand palm/fist/peace/point
     var bodyC: SIMD4<Float> = .zero    // elbowLX, elbowLY, elbowRX, elbowRY (0-1; 0,0 = unseen)
     var bodyD: SIMD4<Float> = .zero    // neckX, neckY, rootX, rootY (0-1; 0,0 = unseen)
+    var joints: [SIMD2<Float>] = []    // full skeleton, VisionEngine.jointOrder order; (0,0) = unseen
+    var fftBands: [Float] = []         // 20 log-spaced mic bands 0-1 (FFT Band node)
 }

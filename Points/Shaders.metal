@@ -183,7 +183,10 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             case 7: r = A + B; break;
             case 8: r = A - B; break;
             case 9: r = A * B; break;
-            case 10: r = A / max(B, float4(0.0001)); break;
+            case 10: {                                                     // div, sign-preserving guard
+                float4 bb = select(max(B, float4(0.0001)), min(B, float4(-0.0001)), B < float4(0.0));
+                r = A / bb; break;
+            }
             case 11: r = A * ins.imm.x + ins.imm.y; break;                     // madd
             case 12: r = mix(A, B, ins.imm.x); break;                          // mix
             case 13: r = mix(A, B, regs[min(uint(ins.imm.w), 31u)].x); break;  // mixv

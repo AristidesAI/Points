@@ -20,6 +20,8 @@ nonisolated final class AudioEngine: @unchecked Sendable {
     private let lock = NSLock()
     private var _bands = SIMD4<Float>.zero      // bass, mid, high, rms
     private var _onsets = SIMD4<Float>.zero     // drumLow, drumMid, drumHigh, burst
+    private var _fft = [Float](repeating: 0, count: 20)     // 20 log-spaced bands (FFT Band node)
+    private var agcF = [Float](repeating: 0.02, count: 20)  // per-band auto-gain maxima
     private var running = false
 
     init() {
@@ -28,10 +30,10 @@ nonisolated final class AudioEngine: @unchecked Sendable {
         fft = vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self)
     }
 
-    /// Latest analysis (thread-safe). Returns (bands, onsets); onsets decay to 0 in-place.
-    func current() -> (bands: SIMD4<Float>, onsets: SIMD4<Float>) {
+    /// Latest analysis (thread-safe). Returns (bands, onsets, fft); onsets decay to 0 in-place.
+    func current() -> (bands: SIMD4<Float>, onsets: SIMD4<Float>, fft: [Float]) {
         lock.lock(); defer { lock.unlock() }
-        let out = (_bands, _onsets)
+        let out = (_bands, _onsets, _fft)
         _onsets *= 0.75           // pulses decay each read so triggers are brief
         return out
     }
@@ -64,7 +66,7 @@ nonisolated final class AudioEngine: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
-        lock.lock(); _bands = .zero; _onsets = .zero; lock.unlock()
+        lock.lock(); _bands = .zero; _onsets = .zero; _fft = [Float](repeating: 0, count: 20); lock.unlock()
     }
 
     // MARK: analysis (audio thread)
@@ -134,9 +136,20 @@ nonisolated final class AudioEngine: @unchecked Sendable {
         let onsets = SIMD4<Float>(min(fluxLow * 0.03, 1), min(fluxMid * 0.01, 1),
                                   min(fluxHigh * 0.006, 1), burst)
 
+        // 20 log-spaced bands 40 Hz → 8 kHz for the FFT Band node, each auto-gained like `bands`.
+        var fft20 = [Float](repeating: 0, count: 20)
+        for i in 0..<20 {
+            let lo = 40 * pow(200, Float(i) / 20)        // 40·200^(i/20): 20 steps to 8 kHz
+            let hi = 40 * pow(200, Float(i + 1) / 20)
+            let raw = bandEnergy(lo, hi)
+            agcF[i] = max(agcF[i] * 0.999, max(raw, 0.02))
+            fft20[i] = min(max(raw / agcF[i], 0), 1)
+        }
+
         lock.lock()
         _bands = bands
         _onsets = simd_max(_onsets, onsets)     // keep the peak until read
+        _fft = fft20
         lock.unlock()
     }
 }

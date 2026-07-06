@@ -83,7 +83,7 @@ final class GraphRuntime {
     private var touchValue: SIMD4<Float> = .zero
 
     // Live mic bands/onsets, supplied by ContentView's AudioEngine while an audio node exists.
-    @ObservationIgnored var audioSource: (@Sendable () -> (bands: SIMD4<Float>, onsets: SIMD4<Float>))?
+    @ObservationIgnored var audioSource: (@Sendable () -> (bands: SIMD4<Float>, onsets: SIMD4<Float>, fft: [Float]))?
     private static let audioIDs: Set<String> = ["audio-levels", "beat-trigger", "fft-band", "audio-rms", "burst"]
     var usesAudioNodes: Bool { graph.nodes.contains { Self.audioIDs.contains($0.specID) } }
 
@@ -93,7 +93,7 @@ final class GraphRuntime {
     var usesMidiNodes: Bool { graph.nodes.contains { Self.midiIDs.contains($0.specID) } }
 
     // Live body/hand tracking (Vision), supplied by ContentView while a body node exists.
-    @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>, bodyC: SIMD4<Float>, bodyD: SIMD4<Float>))?
+    @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>, bodyC: SIMD4<Float>, bodyD: SIMD4<Float>, joints: [SIMD2<Float>]))?
     private static let bodyFamily: Set<String> = ["hand-position", "pinch-amount", "hand-openness",
         "head-pose", "hand-gesture", "person-present", "joint", "body-region", "face-region",
         "left-hand-pinch", "right-hand-pinch", "left-hand-gesture", "right-hand-gesture"]
@@ -342,6 +342,11 @@ final class GraphRuntime {
     /// Live path for dynamic lanes (freeze hold): no recompile at all.
     func setParamLive(_ nodeID: String, _ name: String, _ value: Float) {
         editActive(recompileAfter: false) { $0.setParam(nodeID, name, .float(value)) }
+    }
+
+    /// Sticky Note text (per keystroke — no recompile, no undo spam).
+    func setTextLive(_ nodeID: String, _ name: String, _ value: String) {
+        editActive(recompileAfter: false) { $0.setParam(nodeID, name, .option(value)) }
     }
 
     func nodeParam(_ nodeID: String, _ name: String, _ fallback: Float) -> Float {
@@ -813,7 +818,11 @@ final class GraphRuntime {
                 guard let tg = n.triggerGraph, !tg.nodes.isEmpty else { continue }
                 nestedOrders[n.id] = (try? tg.topoOrder().filter { registry.spec($0.specID)?.isControl == true }) ?? []
             }
-            controlState.removeAll()
+            // Keep control state across recompiles (slider drags recompile every tick — wiping
+            // here reset Counter/Toggle/Envelope/On Start mid-performance). Prune removed nodes only.
+            let liveIDs = Set(graph.nodes.map(\.id))
+            controlState = controlState.filter { liveIDs.contains($0.key) }
+            nestedControlState = nestedControlState.filter { liveIDs.contains($0.key) }
             compileError = nil
             generation += 1
         } catch {
@@ -944,12 +953,12 @@ final class GraphRuntime {
         let time = Float(now - startTime)
         let beat = (time * bpm / 60).truncatingRemainder(dividingBy: 1)
         var ctx = ControlContext(time: time, dt: dt, beatPhase: beat, bpm: bpm, touch: touchValue)
-        if let a = audioSource?() { ctx.audio = a.bands; ctx.onsets = a.onsets }   // live mic
+        if let a = audioSource?() { ctx.audio = a.bands; ctx.onsets = a.onsets; ctx.fftBands = a.fft }
         if let m = midiSource?() { ctx.midi = m }                                  // live MIDI
         if let b = bodySource?() {                                                 // live Vision
             ctx.bodyA = b.bodyA; ctx.bodyB = b.bodyB; ctx.gestures = b.gestures; ctx.present = b.present
             ctx.pinchLR = b.pinchLR; ctx.gesturesL = b.gesturesL; ctx.gesturesR = b.gesturesR
-            ctx.bodyC = b.bodyC; ctx.bodyD = b.bodyD
+            ctx.bodyC = b.bodyC; ctx.bodyD = b.bodyD; ctx.joints = b.joints
         }
         evaluateControlGraph(ctx)
 

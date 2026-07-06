@@ -297,18 +297,21 @@ final class NodeRegistry: @unchecked Sendable {
 
         register(NodeSpec(
             id: "radial-ripple", name: "Ripple", family: .move,
-            inputs: [PortSpec("center", .vec2, default: [0.5, 0.5, 0, 0]),
-                     PortSpec("amplitude", .signal, default: [1, 1, 1, 1])],
+            inputs: [PortSpec("amplitude", .signal, default: [1, 1, 1, 1])],
             outputs: [PortSpec("height", .fieldFloat)],
             params: [.float("amp", 0...1, 0), .float("wavelength", 0.02...1, 0.15),
-                     .float("speed", -4...4, 0.5), .float("falloff", 0...8, 2)],
+                     .float("speed", -4...4, 0.5), .float("falloff", 0...8, 2),
+                     .float("centerX", 0...1, 0.5), .float("centerY", 0...1, 0.5)],
             execution: .interpreterOp,
-            description: "Analytic rings radiating from the frame centre — pure per-pin math, zero state. Raise AMP (or wire a signal into amplitude) to see it; WAVELENGTH sizes the rings, SPEED travels them, FALLOFF fades them outward.",
+            description: "Analytic rings radiating from CENTERX/CENTERY (0-1 view space) — pure per-pin math, zero state. Raise AMP (or wire a signal into amplitude) to see it; WAVELENGTH sizes the rings, SPEED travels them, FALLOFF fades them outward. Expose CENTERX/CENTERY and wire Hand Position to carry the ripple in your hand.",
             emit: { b, inputs, node in
                 let uv = b.reg(); b.emit(PinInstruction(.loadUV, dst: uv))
                 let d = b.reg()
-                b.emitPatched(PinInstruction(.dist2, dst: d, a: uv, imm: [0.5, 0.5, 0, 0]),
+                b.emitPatched(PinInstruction(.dist2, dst: d, a: uv,
+                                             imm: [node.float("centerX", 0.5), node.float("centerY", 0.5), 0, 0]),
                               key: "\(node.id).center", lanes: [0, 1])
+                b.addPatchKey("\(node.id).centerX", lane: 0)
+                b.addPatchKey("\(node.id).centerY", lane: 1)
                 let w = b.reg()
                 // sin(d·k + phase)·0.5 + 0.5 — k from wavelength, phase patched per frame
                 let k = 2 * Float.pi / max(node.float("wavelength", 0.15), 0.01)
@@ -320,7 +323,7 @@ final class NodeRegistry: @unchecked Sendable {
                 b.emit(PinInstruction(.clampOp, dst: d, a: d, imm: [0, 1, 0, 0]))
                 b.emit(PinInstruction(.mul, dst: w, a: w, b: d))
                 // amplitude: wired input or the amp param
-                let amp = inputs[1] >= 0 ? inputs[1]
+                let amp = inputs[0] >= 0 ? inputs[0]
                     : b.paramConstant("\(node.id).amp", SIMD4(repeating: node.float("amp", 0)))
                 b.emit(PinInstruction(.mul, dst: w, a: w, b: amp))
                 return [w]

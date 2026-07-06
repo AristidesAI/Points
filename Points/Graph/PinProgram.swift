@@ -47,6 +47,7 @@ enum PinOp: UInt32 {
     case hueShift = 43     // dst = a with hue rotated by imm.x turns (YIQ approx)
     case freeXY = 44       // dst = TDLidar free-cloud XY offset; imm=(separation, focusM, 0, 0); holes hide via keep flag
     case grazeCull = 45    // dst = a (passthrough); imm=(grazing01, edgeThreshM, 0, 0); culls via kernel keep flag
+    case noise3 = 46       // dst = 3D noise [-1,1]; a.x optional z-drive; imm=(freq, seed, packed[ty+axis*10+aspect*100], timeMove)
     case writeRot = 55     // rotAcc += a.xyz (euler turns) — Rotation/Spin → Output.rotation
     case writeStretch = 56 // stretchAcc *= a.xyz — Stretch → Output.stretch
     case writeShape = 57   // shapeMorph = a.x (0 sphere → 1 cube) — Shape/Shape Morph → Output.shape
@@ -113,6 +114,14 @@ struct PinProgramBuilder {
         instructions.append(i)
     }
 
+    /// Register an EXTRA patch key for the MOST-RECENTLY-emitted instruction — used to expose each
+    /// param of a packed op under its own key (`d1.near`, `pd.separation`…) so nested triggers can
+    /// drive them individually (§13). Additive: the packed key stays for the existing machinery.
+    mutating func addPatchKey(_ key: String, lane: Int) {
+        guard !instructions.isEmpty else { return }
+        patches[key, default: []].append(PatchRef(instruction: instructions.count - 1, lane: lane))
+    }
+
     /// Constant into a fresh register.
     mutating func constant(_ v: SIMD4<Float>) -> Int32 {
         let r = reg()
@@ -171,10 +180,30 @@ struct PinProgramCompiler {
         }
         var builder = PinProgramBuilder()
         var memo: [String: Int32] = [:]   // "nodeID.port" → register
+        var resolvingReceives: Set<String> = []   // cycle guard for Send/Receive pairing
 
         func emitNode(_ node: GraphNode, port: String) throws -> Int32 {
             let memoKey = "\(node.id).\(port)"
             if let r = memo[memoKey] { return r }
+            // Send/Receive: a Receive compiles as whatever feeds the matching Send channel —
+            // the "wireless wire". A channel loop (Receive feeding its own Send) reads 0.
+            if node.specID == "receive" {
+                guard !resolvingReceives.contains(node.id) else { return builder.constant(.zero) }
+                resolvingReceives.insert(node.id)
+                defer { resolvingReceives.remove(node.id) }
+                let chan = node.option("channel", "A")
+                if let send = graph.nodes.first(where: { $0.specID == "send" && $0.option("channel", "A") == chan }),
+                   let w = graph.wireInto(send.id, "in"),
+                   let upstream = graph.node(w.fromNode),
+                   registry.spec(upstream.specID)?.emit != nil {
+                    let r = try emitNode(upstream, port: w.fromPort)
+                    memo[memoKey] = r
+                    return r
+                }
+                let z = builder.constant(.zero)
+                memo[memoKey] = z
+                return z
+            }
             guard let spec = registry.spec(node.specID) else {
                 throw PinCompileError.unsupportedNode(node.specID)
             }

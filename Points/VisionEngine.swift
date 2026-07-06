@@ -8,6 +8,16 @@ import simd
 /// published under a lock and read once per render frame. Uses the already-granted camera
 /// permission — no extra prompt. On-device tuning may be needed for the coordinate mapping.
 nonisolated final class VisionEngine: @unchecked Sendable {
+    /// Skeleton joints published to the Joint node, in this order. (0,0) = unseen.
+    static let jointOrder: [String] = [
+        "nose", "neck", "root", "leftShoulder", "rightShoulder", "leftElbow", "rightElbow",
+        "leftWrist", "rightWrist", "leftHip", "rightHip", "leftKnee", "rightKnee",
+        "leftAnkle", "rightAnkle", "leftEye", "rightEye", "leftEar", "rightEar"]
+    private static let vnJoints: [VNHumanBodyPoseObservation.JointName] = [
+        .nose, .neck, .root, .leftShoulder, .rightShoulder, .leftElbow, .rightElbow,
+        .leftWrist, .rightWrist, .leftHip, .rightHip, .leftKnee, .rightKnee,
+        .leftAnkle, .rightAnkle, .leftEye, .rightEye, .leftEar, .rightEar]
+
     private let queue = DispatchQueue(label: "points.vision", qos: .userInitiated)
     private let bodyReq = VNDetectHumanBodyPoseRequest()
     private let handReq: VNDetectHumanHandPoseRequest = {
@@ -19,6 +29,7 @@ nonisolated final class VisionEngine: @unchecked Sendable {
     private var _bodyB = SIMD4<Float>.zero      // handRX, handRY, pinch, openness
     private var _bodyC = SIMD4<Float>.zero      // elbowLX, elbowLY, elbowRX, elbowRY
     private var _bodyD = SIMD4<Float>.zero      // neckX, neckY, rootX, rootY
+    private var _joints = [SIMD2<Float>](repeating: .zero, count: VisionEngine.jointOrder.count)
     private var _gestures = SIMD4<Float>.zero   // palm, fist, peace, point (first hand seen)
     private var _pinchLR = SIMD4<Float>.zero    // pinchL, opennessL, pinchR, opennessR
     private var _gesturesL = SIMD4<Float>.zero  // left-hand palm/fist/peace/point
@@ -33,16 +44,17 @@ nonisolated final class VisionEngine: @unchecked Sendable {
         running = on
         if !on { lock.lock(); _bodyA = .zero; _bodyB = .zero; _gestures = .zero
                  _pinchLR = .zero; _gesturesL = .zero; _gesturesR = .zero; _present = .zero
-                 _bodyC = .zero; _bodyD = .zero; lock.unlock() }
+                 _bodyC = .zero; _bodyD = .zero
+                 _joints = [SIMD2<Float>](repeating: .zero, count: Self.jointOrder.count); lock.unlock() }
     }
 
     /// Latest tracking (thread-safe). Gestures are CONTINUOUS (held between Vision frames);
     /// only the entered-pulse decays on read.
     func current() -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>,
                        pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>,
-                       bodyC: SIMD4<Float>, bodyD: SIMD4<Float>) {
+                       bodyC: SIMD4<Float>, bodyD: SIMD4<Float>, joints: [SIMD2<Float>]) {
         lock.lock(); defer { lock.unlock() }
-        let out = (_bodyA, _bodyB, _gestures, _present, _pinchLR, _gesturesL, _gesturesR, _bodyC, _bodyD)
+        let out = (_bodyA, _bodyB, _gestures, _present, _pinchLR, _gesturesL, _gesturesR, _bodyC, _bodyD, _joints)
         _present.y = 0   // entered-pulse is a one-shot edge; gestures stay high while recognised
         return out
     }
@@ -69,6 +81,7 @@ nonisolated final class VisionEngine: @unchecked Sendable {
     private func consume(front: Bool) {
         var bodyA = SIMD4<Float>.zero, bodyB = SIMD4<Float>.zero, gestures = SIMD4<Float>.zero
         var bodyC = SIMD4<Float>.zero, bodyD = SIMD4<Float>.zero
+        var joints = [SIMD2<Float>](repeating: .zero, count: Self.jointOrder.count)
         var present: Float = 0
 
         if let obs = bodyReq.results?.first {
@@ -84,6 +97,9 @@ nonisolated final class VisionEngine: @unchecked Sendable {
             if let e = jp(.rightElbow) { bodyC.z = e.x; bodyC.w = e.y }
             if let n = jp(.neck) { bodyD.x = n.x; bodyD.y = n.y }           // torso = neck↔root midpoint
             if let r = jp(.root) { bodyD.z = r.x; bodyD.w = r.y }
+            for (i, j) in Self.vnJoints.enumerated() {                      // full skeleton → Joint node
+                if let p = jp(j) { joints[i] = p }
+            }
         }
         var handL = SIMD2<Float>.zero, handR = SIMD2<Float>.zero      // (pinch, openness) per hand
         var gesturesL = SIMD4<Float>.zero, gesturesR = SIMD4<Float>.zero
@@ -102,7 +118,7 @@ nonisolated final class VisionEngine: @unchecked Sendable {
         }
 
         lock.lock()
-        _bodyA = bodyA; _bodyB = bodyB; _bodyC = bodyC; _bodyD = bodyD
+        _bodyA = bodyA; _bodyB = bodyB; _bodyC = bodyC; _bodyD = bodyD; _joints = joints
         _gestures = gestures                                          // current frame, no decay → continuous
         _pinchLR = SIMD4(handL.x, handL.y, handR.x, handR.y)
         _gesturesL = gesturesL; _gesturesR = gesturesR
@@ -138,8 +154,19 @@ nonisolated final class VisionEngine: @unchecked Sendable {
         if let wrist = p(.wrist) {
             let idx = up(.indexTip, .indexPIP, wrist), mid = up(.middleTip, .middlePIP, wrist)
             let rng = up(.ringTip, .ringPIP, wrist), lil = up(.littleTip, .littlePIP, wrist)
-            let n = (idx ? 1 : 0) + (mid ? 1 : 0) + (rng ? 1 : 0) + (lil ? 1 : 0)
-            openness = Float(n) / 4
+            // Continuous openness: mean finger extension (tip vs PIP distance from the wrist),
+            // not a fingers-up count — a slow fist→palm reads as a smooth 0→1 sweep.
+            // ponytail: 0.9…1.6 extension window eyeballed from Vision geometry; the knob if
+            // openness tops out early or never reaches 0 on device.
+            var extSum: Float = 0; var extN: Float = 0
+            func ext(_ tip: VNHumanHandPoseObservation.JointName, _ pip: VNHumanHandPoseObservation.JointName) {
+                guard let t = p(tip), let j = p(pip) else { return }
+                let ratio = simd_distance(t, wrist) / max(simd_distance(j, wrist), 1e-4)
+                extSum += min(max((ratio - 0.9) / 0.7, 0), 1); extN += 1
+            }
+            ext(.indexTip, .indexPIP); ext(.middleTip, .middlePIP)
+            ext(.ringTip, .ringPIP); ext(.littleTip, .littlePIP)
+            if extN > 0 { openness = extSum / extN }
             if idx && mid && rng && lil { gestures.x = 1 }             // palm
             else if !idx && !mid && !rng && !lil { gestures.y = 1 }    // fist
             else if idx && mid && !rng && !lil { gestures.z = 1 }      // peace

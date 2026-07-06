@@ -19,6 +19,12 @@ enum Theme {
     static let pin = Color(hex: 0xDDDDDD)
     static let danger = Color(hex: 0xFF453A)
 
+    // Output-sink status tints — shared by the Record/NDI arm button, the node dot, and the
+    // corner-menu icon. Record = red, NDI = blue, both live = purple.
+    static let recActive = Color(hex: 0xFF453A)
+    static let ndiActive = Color(hex: 0x3A86FF)
+    static let bothActive = Color(hex: 0xB44CFF)
+
     // Node family colors
     static let famSource = Color(hex: 0xE06C60)
     static let famGrid = Color(hex: 0xE0995F)
@@ -30,5 +36,6 @@ enum Theme {
     static let famBody = Color(hex: 0x5FD0CD)
     static let famTime = Color(hex: 0x9D86E8)
     static let famStage = Color(hex: 0x6F9FDD)
+    static let famOutput = Color(hex: 0x3A86FF)   // NDI / Record sinks
     static let famTools = Color(hex: 0x909090)
 }

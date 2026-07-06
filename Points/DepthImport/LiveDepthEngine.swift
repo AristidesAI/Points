@@ -16,11 +16,21 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
     private var busy = false
     private var pool: CVPixelBufferPool?
     private var poolW = 0, poolH = 0
+    private let loadQueue = DispatchQueue(label: "points.livedepth.load", qos: .userInitiated)
 
     init(renderer: PinRenderer) { self.renderer = renderer }
 
-    func load(_ m: LiveModel) {
-        if runner.load(m) { renderer.setOrient(0) }   // upright RGB → identity
+    /// True when switching to `m` would block on a (cold) model build — drives the loading overlay.
+    func needsLoad(_ m: LiveModel) -> Bool { runner.needsLoad(m) }
+
+    /// Load the model OFF the main thread (a cold ViT is ~1–9 s — loading it on main froze the app).
+    /// `done(ok)` fires on the main actor. Warm models resolve almost instantly.
+    func load(_ m: LiveModel, done: (@MainActor @Sendable (Bool) -> Void)? = nil) {
+        loadQueue.async { [self] in
+            let ok = runner.load(m)
+            if ok { renderer.setOrient(m.orient) }     // per-model orientation (some convert 180°)
+            if let done { Task { @MainActor in done(ok) } }
+        }
     }
 
     /// One BGRA camera frame → depth → renderer. Drops frames while an inference is in flight.

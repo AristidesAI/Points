@@ -41,9 +41,9 @@ struct TutorialOverlay: View {
              body: "Tap a pad to switch an effect on — it turns WHITE while active.\nThe \(Image(systemName: "bolt.fill")) pad strobes, the \(Image(systemName: "snowflake")) pad freezes you.\nTap one to continue.",
              hint: .tap, gate: .tapPad),
         Step(symbol: "point.topleft.down.to.point.bottomright.curvepath",
-             title: "Swipe LEFT for the node view",
-             body: "Swipe left on the picture and the NODES fade in —\nthe wiring that makes everything work.\nSwipe left now to continue.",
-             hint: .swipeLeft, gate: .enterNodes),
+             title: "Open the node view",
+             body: "The NODES that wire everything up live behind the picture.\nTap the glowing bar on the RIGHT edge to open them.",
+             hint: .swipeRight, gate: .enterNodes),
         Step(symbol: "circle.grid.2x2",
              title: "The four circles are the menu",
              body: "Top-left \(Image(systemName: "circle.grid.2x2")) → camera flip, pin count, stems,\ncolor, import, settings and more.\nEverything else in the app starts there.",
@@ -55,9 +55,11 @@ struct TutorialOverlay: View {
     var body: some View {
         GeometryReader { geo in
             let barH: CGFloat = 210          // leave the live bar uncovered at the bottom
+            let pictureH = geo.size.height - barH
             ZStack(alignment: .top) {
-                // Dim only the picture; punch a hole for the 4-circle menu on the menu step.
-                dim(topHeight: geo.size.height - barH)
+                // Dim only the picture; punch holes for the elements this step points at
+                // (the 4-circle menu, or the right-edge node bar) so they stay fully visible.
+                dim(topHeight: pictureH)
                     .allowsHitTesting(false)
 
                 // Card floats in the dimmed picture area (also non-interactive → gestures pass through).
@@ -71,8 +73,30 @@ struct TutorialOverlay: View {
                     hintView(current.hint).frame(height: 42)
                     Spacer()
                 }
-                .frame(height: geo.size.height - barH)
+                .frame(height: pictureH)
                 .allowsHitTesting(false)
+
+                // The pads step: a white glow ring around the live pad row (fades as it advances).
+                if current.gate == .tapPad {
+                    Rectangle().stroke(Color.white, lineWidth: 2)
+                        .frame(height: 62).padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, 10)
+                        .modifier(GlowPulse()).allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+                // The node-view step: a white glow bar on the RIGHT edge (the real switch handle).
+                if current.gate == .enterNodes {
+                    Rectangle()
+                        .fill(LinearGradient(colors: [.clear, .white, .clear],
+                                             startPoint: .top, endPoint: .bottom))
+                        .frame(width: 5, height: 130)
+                        .frame(width: 26, height: pictureH, alignment: .center)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(.trailing, 3)
+                        .modifier(GlowPulse()).allowsHitTesting(false)
+                        .transition(.opacity)
+                }
 
                 // Progress dots + buttons sit ABOVE the live bar (never over the sliders/pads).
                 VStack(spacing: 12) {
@@ -86,8 +110,10 @@ struct TutorialOverlay: View {
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, barH + 10)
             }
+            .animation(.easeInOut(duration: 0.2), value: step)
         }
-        .ignoresSafeArea()
+        // NOTE: no .ignoresSafeArea — the overlay shares the app's safe-area coordinate space so
+        // the menu/edge cutouts land exactly on the real controls.
         // Gated steps advance when the REAL action happens in the app.
         .onChange(of: signals.swipedDeck) { if current.gate == .swipeDeck { advance() } }
         .onChange(of: signals.tappedPad) { if current.gate == .tapPad { advance() } }
@@ -105,10 +131,17 @@ struct TutorialOverlay: View {
             .frame(height: max(topHeight, 0))
             .overlay(alignment: .topLeading) {
                 if current.menuCutout {
-                    // Fade the overlay where the 4-circle menu is, so it stays visible.
-                    Rectangle().fill(Color.black).frame(width: 210, height: 44)
+                    // Clear the overlay right over the 4-circle button so it's obvious which it is.
+                    Rectangle().fill(Color.black).frame(width: 52, height: 46)
                         .blendMode(.destinationOut)
                         .padding(.top, 8).padding(.leading, 8)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if current.gate == .enterNodes {
+                    // Clear the overlay over the right-edge switch bar (vertically centred).
+                    Rectangle().fill(Color.black).frame(width: 30, height: 130)
+                        .blendMode(.destinationOut)
                 }
             }
             .compositingGroup()
@@ -144,7 +177,9 @@ struct TutorialOverlay: View {
         case .swipeRight: ChevronDrift(symbol: "chevron.right", dx: 26)
         case .swipeLeft: ChevronDrift(symbol: "chevron.left", dx: -26)
         case .tap:
-            Circle().stroke(Theme.text, lineWidth: 2).frame(width: 26, height: 26).modifier(Pulse())
+            // Pads are highlighted directly (glow ring); the card just points down at them.
+            Image(systemName: "arrow.down").font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.text).modifier(Bob())
         case .menu:
             HStack(spacing: 6) {
                 Image(systemName: "circle.grid.2x2").font(.system(size: 16, weight: .medium))
@@ -182,11 +217,13 @@ private struct Bob: ViewModifier {
     }
 }
 
-private struct Pulse: ViewModifier {
+/// Steady breathing glow for the on-screen highlight (pad ring / edge bar).
+private struct GlowPulse: ViewModifier {
     @State private var on = false
     func body(content: Content) -> some View {
-        content.scaleEffect(on ? 1.5 : 0.8).opacity(on ? 0 : 1)
-            .animation(.easeOut(duration: 0.9).repeatForever(autoreverses: false), value: on)
+        content.opacity(on ? 1 : 0.35)
+            .shadow(color: .white.opacity(on ? 0.7 : 0.2), radius: on ? 8 : 3)
+            .animation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true), value: on)
             .onAppear { on = true }
     }
 }

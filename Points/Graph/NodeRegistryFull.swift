@@ -828,8 +828,16 @@ extension NodeRegistry {
                     "LIVE drum onsets from the mic as trigger pulses (low = kick, mid = snare, high = hats). Wire low → Envelope.trigger or Shockwave.fire.") { ctx in
             [SIMD4(repeating: ctx.onsets.x), SIMD4(repeating: ctx.onsets.y), SIMD4(repeating: ctx.onsets.z)]
         }
-        stubControl("fft-band", "FFT Band", .signal, [PortSpec("level", .signal)],
-                    "One of 20 spectrum bands. · NOT WIRED UP YET — reads 0 until the band selector lands; use Audio Levels for bass/mid/high today.") { _ in [.zero] }
+        registerSpec(NodeSpec(
+            id: "fft-band", name: "FFT Band", family: .signal,
+            outputs: [PortSpec("level", .signal)],
+            params: [.float("band", 1...20, 4)],
+            execution: .control,
+            description: "One of 20 log-spaced mic spectrum bands, auto-gained 0-1: BAND 1 ≈ 40 Hz sub-bass → 20 ≈ 8 kHz sparkle. One node per band isolates an instrument — level → Size.size follows just the bassline.",
+            controlEval: { node, _, ctx in
+                let i = min(max(Int(node.float("band", 4)) - 1, 0), 19)
+                return [SIMD4(repeating: i < ctx.fftBands.count ? ctx.fftBands[i] : 0)]
+            }))
         stubControl("audio-rms", "Mic Level", .signal, [PortSpec("rms", .signal)],
                     "LIVE overall mic loudness 0-1 (same auto-gained level as Audio Levels.rms).") { ctx in
             [SIMD4(repeating: ctx.audio.w)]
@@ -875,17 +883,18 @@ extension NodeRegistry {
                 state = SIMD4(px, py, 0, 0)
                 return [SIMD4(repeating: x), SIMD4(repeating: y)]
             }))
+        let pinchNote = " Driving an exposed 0-1 param? Lower OUTMAX to 1 first — at the default 10 the port saturates a tenth of the way into the spread."
         handPinchNode("pinch-amount", "Hand Pinch",
-                      "Index-tip↔thumb-tip distance (0 touching → wide) for the FIRST hand seen, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT. Drive Z, size…") { $0.bodyB.z }
+                      "Index-tip↔thumb-tip distance (0 touching → wide) for the FIRST hand seen, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT. Drive Z, size…" + pinchNote) { $0.bodyB.z }
         handPinchNode("left-hand-pinch", "Left Hand Pinch",
-                      "Pinch distance for the LEFT hand only (by chirality) — a right-hand pinch does nothing. SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.") { $0.pinchLR.x }
+                      "Pinch distance for the LEFT hand only (by chirality) — a right-hand pinch does nothing. SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT." + pinchNote) { $0.pinchLR.x }
         handPinchNode("right-hand-pinch", "Right Hand Pinch",
-                      "Pinch distance for the RIGHT hand only (by chirality) — a left-hand pinch does nothing. SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.") { $0.pinchLR.z }
+                      "Pinch distance for the RIGHT hand only (by chirality) — a left-hand pinch does nothing. SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT." + pinchNote) { $0.pinchLR.z }
         registerSpec(NodeSpec(
             id: "hand-openness", name: "Hand Openness", family: .body,
             outputs: [PortSpec("amount", .signal)],
             params: Self.visionParams, execution: .control,
-            description: "Fist 0 → open palm 1, SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.",
+            description: "Fist 0 → open palm 1, CONTINUOUS (mean finger extension, not a step count), SHAPED: GAIN · remap · DEADZONE · SMOOTHING · INVERT.",
             controlEvalStateful: { node, _, ctx, state in
                 var p = state.x
                 let a = shapeVisionValue(ctx.bodyB.w, node, ctx.dt, &p)
@@ -910,12 +919,29 @@ extension NodeRegistry {
         gestureShapeNode("right-hand-gesture", "Right Hand Gesture", gestureDesc + " RIGHT hand only (by chirality).") { $0.gesturesR }
         stubControl("person-present", "Person Present", .body,
                     [PortSpec("present", .signal), PortSpec("entered", .trigger)],
-                    "Someone in frame?") { ctx in
+                    "Someone in frame? PRESENT holds 1 while a body is tracked; ENTERED pulses once as they arrive. Needs a full body in view — a hand alone doesn't count.") { ctx in
             [SIMD4(repeating: ctx.present.x), SIMD4(repeating: ctx.present.y)]
         }
-        stubControl("joint", "Joint", .body,
-                    [PortSpec("x", .signal), PortSpec("y", .signal), PortSpec("speed", .signal)],
-                    "Any of 19 skeleton joints. · Live when body tracking lands.") { _ in [.zero, .zero, .zero] }
+        registerSpec(NodeSpec(
+            id: "joint", name: "Joint", family: .body,
+            outputs: [PortSpec("x", .signal), PortSpec("y", .signal), PortSpec("speed", .signal)],
+            params: [.option("joint", VisionEngine.jointOrder, "rightWrist")],
+            execution: .control,
+            description: "Any of the 19 tracked skeleton joints, live: X/Y 0-1 in frame (0,0 while unseen) and SPEED — how fast that joint is moving right now. Pick JOINT, wire x/y like Hand Position; speed → Size.size lights you up when you move. Add Slew after it for extra smoothing.",
+            controlEvalStateful: { node, _, ctx, state in
+                // state = (prevX, prevY, speedEMA, seen)
+                let idx = VisionEngine.jointOrder.firstIndex(of: node.option("joint", "rightWrist")) ?? 0
+                let p: SIMD2<Float> = idx < ctx.joints.count ? ctx.joints[idx] : .zero
+                let seen = p.x != 0 || p.y != 0
+                var inst: Float = 0
+                if seen && state.w > 0.5 {
+                    inst = min(simd_distance(p, SIMD2(state.x, state.y)) * 20, 1)
+                }
+                state.z += (inst - state.z) * min(ctx.dt * 10, 1)   // EMA over the 13 fps Vision cadence
+                if seen { state.x = p.x; state.y = p.y }
+                state.w = seen ? 1 : 0
+                return [SIMD4(repeating: p.x), SIMD4(repeating: p.y), SIMD4(repeating: state.z)]
+            }))
 
         registerSpec(NodeSpec(
             id: "body-region", name: "Body Region", family: .body,
@@ -1104,7 +1130,7 @@ extension NodeRegistry {
             id: "on-start", name: "On Start", family: .time,
             outputs: [PortSpec("fired", .trigger), PortSpec("seconds", .signal)],
             execution: .control,
-            description: "Starts the moment you place it: FIRED pulses once (use it to reset a Counter or kick a Timer), and SECONDS counts up continuously from that moment. Wire seconds → Value Display to watch it climb, or → Sine / any param for a slow one-way evolve. Editing the graph restarts the count.",
+            description: "Starts the moment you place it: FIRED pulses once (use it to reset a Counter or kick a Timer), and SECONDS counts up continuously from that moment. Wire seconds → Value Display to watch it climb, or → Sine / any param for a slow one-way evolve. Deleting and re-adding the node restarts the count.",
             controlEvalStateful: { _, _, ctx, state in
                 state.y += ctx.dt
                 if state.x < 0.5 {
@@ -1158,20 +1184,20 @@ extension NodeRegistry {
             inputs: [PortSpec("in", .fieldFloat)], outputs: [],
             params: [.option("channel", ["A", "B", "C", "D"], "A")],
             execution: .interpreterOp,
-            description: "Wireless wire: broadcasts to the matching Receive. · Pairing lands with the editor.",
+            description: "Wireless wire: whatever you feed IN is broadcast to every Receive on the same CHANNEL — declutter long wires across the canvas.",
             emit: { _, _, _ in [] }))
         registerSpec(NodeSpec(
             id: "receive", name: "Receive", family: .tools,
             outputs: [PortSpec("out", .fieldFloat)],
             params: [.option("channel", ["A", "B", "C", "D"], "A")],
             execution: .interpreterOp,
-            description: "Wireless wire: picks up the matching Send. · Pairing lands with the editor.",
-            emit: { b, _, _ in [b.constant(.zero)] }))
+            description: "Wireless wire: OUT carries whatever feeds the matching Send channel (0 while that channel is empty or would loop).",
+            emit: { b, _, _ in [b.constant(.zero)] }))   // compiler intercepts + pairs; this is the empty-channel fallback
 
         registerSpec(NodeSpec(
             id: "comment", name: "Sticky Note", family: .tools,
             execution: .render,
-            description: "A teaching note pinned to the canvas — no ports, no effect."))
+            description: "A teaching note pinned to the canvas — select it and type your note in the bar below. No ports, no effect on the render."))
         registerSpec(NodeSpec(
             id: "value-display", name: "Value Display", family: .tools,
             inputs: [PortSpec("in", .signal)], outputs: [PortSpec("out", .signal)],

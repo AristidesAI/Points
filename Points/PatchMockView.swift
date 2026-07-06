@@ -1051,6 +1051,15 @@ struct NodeCardView: View {
                         .padding(.trailing, 7)
                         .frame(height: NodeMetrics.portRowH)
                     }
+                    if spec.id == "comment" {
+                        // Sticky Note: the note itself, typed in the settings bar.
+                        Text(node.option("text", "").isEmpty ? "tap to select, type below" : node.option("text", ""))
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(node.option("text", "").isEmpty ? Theme.text2 : Theme.text)
+                            .lineSpacing(2).lineLimit(6)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(7)
+                    }
                     ForEach(spec.params.filter { !node.exposedParams.contains($0.name) }.prefix(NodeMetrics.maxParamRows), id: \.name) { p in
                         HStack {
                             Text(p.name).font(.system(size: 9)).foregroundStyle(Theme.text2)
@@ -1256,10 +1265,13 @@ struct NodeSettingsBar: View {
                         .padding(.horizontal, 16).padding(.vertical, 10)
                 } else if let spec, let node {
                     if spec.id == "camera" {
-                        CamJogRow(runtime: runtime, label: "ORBIT",
+                        CamJogRow(runtime: runtime, nodeID: node.id, label: "ORBIT",
                                   xParam: "orbitX", yParam: "orbitY", step: 0.12, limit: 0.9)
-                        CamJogRow(runtime: runtime, label: "POSITION",
+                        CamJogRow(runtime: runtime, nodeID: node.id, label: "POSITION",
                                   xParam: "centerX", yParam: "centerY", step: 0.1, limit: 1.0)
+                    }
+                    if spec.id == "comment" {
+                        CommentEditor(runtime: runtime, nodeID: node.id)
                     }
                     if spec.id == "value-display" {
                         ValueReadout(runtime: runtime, nodeID: node.id)
@@ -1365,6 +1377,30 @@ struct NodeSettingsBar: View {
             .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Sticky Note editor — free text stored on the node (params can hold strings), shown on its card.
+struct CommentEditor: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    @State private var text = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("NOTE").font(.system(size: 8, weight: .semibold)).tracking(1.1)
+                .foregroundStyle(Theme.text2)
+            TextField("type a note for this patch…", text: $text, axis: .vertical)
+                .font(.system(size: 12))
+                .lineLimit(2...5)
+                .padding(8)
+                .background(Theme.panel)
+                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                .onChange(of: text) { runtime.setTextLive(nodeID, "text", text) }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 6)
+        .onAppear { text = runtime.nodeOption(nodeID, "text", "") }
+        .onChange(of: nodeID) { text = runtime.nodeOption(nodeID, "text", "") }
     }
 }
 
@@ -1504,6 +1540,7 @@ struct NDISwitchRow: View {
 /// centre; POSITION slides the pivot itself (no re-centering). Scope = reset that pair.
 struct CamJogRow: View {
     let runtime: GraphRuntime
+    let nodeID: String   // the selected Camera node (not always the default "cam")
     let label: String
     let xParam: String
     let yParam: String
@@ -1522,8 +1559,8 @@ struct CamJogRow: View {
             jog("chevron.right") { nudge(xParam, +step) }
             jog("scope") {
                 runtime.pushUndo()
-                runtime.setParam("cam", xParam, 0)
-                runtime.setParam("cam", yParam, 0)
+                runtime.setParam(nodeID, xParam, 0)
+                runtime.setParam(nodeID, yParam, 0)
             }
             Spacer(minLength: 0)
         }
@@ -1532,8 +1569,8 @@ struct CamJogRow: View {
     }
 
     private func nudge(_ name: String, _ delta: Float) {
-        let v = runtime.nodeParam("cam", name, 0) + delta
-        runtime.setParam("cam", name, min(max(v, -limit), limit))
+        let v = runtime.nodeParam(nodeID, name, 0) + delta
+        runtime.setParam(nodeID, name, min(max(v, -limit), limit))
     }
 
     private func jog(_ symbol: String, action: @escaping () -> Void) -> some View {

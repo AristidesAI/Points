@@ -110,6 +110,62 @@ struct DeckPad: View {
     }
 }
 
+// MARK: - Micro-joystick pad: tap-and-swipe (or hold in a direction) to jog a value.
+// While the finger is offset from center it pumps a normalized vector ~18×/s.
+
+struct MicroJoystickPad: View {
+    let side: CGFloat
+    var label: String = ""
+    var onVector: (CGVector) -> Void
+    @State private var knob: CGSize = .zero
+    @State private var pump: Task<Void, Never>?
+
+    private var reach: CGFloat { side * 0.32 }
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(Theme.panel)
+                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+            // crosshair
+            Rectangle().fill(Theme.line).frame(width: side * 0.5, height: 1)
+            Rectangle().fill(Theme.line).frame(width: 1, height: side * 0.5)
+            Rectangle().fill(Theme.text)
+                .frame(width: side * 0.30, height: side * 0.30)
+                .offset(knob)
+            if !label.isEmpty {
+                Text(label).font(.system(size: 6, weight: .bold)).tracking(0.5)
+                    .foregroundStyle(Theme.text2)
+                    .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 2)
+            }
+        }
+        .frame(width: side, height: side)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    let dx = max(-reach, min(reach, g.translation.width))
+                    let dy = max(-reach, min(reach, g.translation.height))
+                    knob = CGSize(width: dx, height: dy)
+                    if pump == nil { startPump() }
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) { knob = .zero }
+                    pump?.cancel(); pump = nil
+                }
+        )
+    }
+
+    private func startPump() {
+        pump = Task { @MainActor in
+            while !Task.isCancelled {
+                let v = CGVector(dx: knob.width / reach, dy: knob.height / reach)
+                if abs(v.dx) > 0.12 || abs(v.dy) > 0.12 { onVector(v) }
+                try? await Task.sleep(nanoseconds: 55_000_000)
+            }
+        }
+    }
+}
+
 // MARK: - Camera deck: CONTEXTUAL paged sliders — one page per graph node that has
 // float params. A fresh (minimal) project shows only Camera / Depth / Point Display /
 // Size; every node you add in the editor grows the deck. No orphan sliders, ever.
@@ -140,6 +196,7 @@ struct CameraDeckBar: View {
     @Binding var page: Int
     var direction: Int = 1
     var onPad: () -> Void = {}
+    var onOpenNode: (String) -> Void = { _ in }
 
     @State private var padStrobe = false
     @State private var padFreeze = false
@@ -147,6 +204,8 @@ struct CameraDeckBar: View {
     @State private var padInvert = false
     @State private var padBurst = false
     @State private var padHold = false
+    @State private var camMove = false        // camera pad: false = ORBIT, true = MOVE
+    @State private var padRecenter = false
 
     private var pageNodes: [(node: GraphNode, spec: NodeSpec, floats: [ParamSpec])] {
         runtime.graph.nodes.compactMap { n in
@@ -171,6 +230,7 @@ struct CameraDeckBar: View {
             } else {
                 let entry = pageNodes[pageMod]
                 VStack(spacing: 4) {
+                    // Double-tap the tab name → jump to the node view with this node selected.
                     HStack(spacing: 6) {
                         Rectangle().fill(familyColor(entry.spec.family)).frame(width: 8, height: 8)
                         Text(entry.spec.name.uppercased())
@@ -178,6 +238,13 @@ struct CameraDeckBar: View {
                             .foregroundStyle(Theme.text)
                         Text(entry.node.id)
                             .font(.system(size: 8).monospaced()).foregroundStyle(Theme.text2)
+                        Image(systemName: "arrow.up.forward.square")
+                            .font(.system(size: 8)).foregroundStyle(Theme.text2.opacity(0.6))
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onOpenNode(entry.node.id)
                     }
                     HStack(spacing: 0) {
                         ForEach(entry.floats, id: \.name) { p in
@@ -193,9 +260,62 @@ struct CameraDeckBar: View {
                 .clipped()
             }
             pageDots
-            padRow
+            // Nodes with their own buttons take over the pad row (Camera → orbit/move + jog +
+            // recenter). Every other page keeps the global VJ pads.
+            if currentNodeSpecID == "camera" { cameraPadRow } else { padRow }
         }
         .padding(.bottom, 8)
+    }
+
+    private var currentNodeSpecID: String? {
+        pageNodes.isEmpty ? nil : pageNodes[pageMod].spec.id
+    }
+
+    // Camera pad set: [ORBIT/MOVE toggle] · [micro-joystick] · [recenter].
+    private var cameraPadRow: some View {
+        GeometryReader { geo in
+            let spacing: CGFloat = 10
+            let side = min(56, (geo.size.width - spacing * 2) / 3)
+            HStack(spacing: spacing) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.9)
+                    camMove.toggle()
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: camMove ? "move.3d" : "rotate.3d")
+                            .font(.system(size: 16, weight: .medium))
+                        Text(camMove ? "MOVE" : "ORBIT")
+                            .font(.system(size: 7, weight: .bold)).tracking(0.5)
+                    }
+                    .foregroundStyle(Theme.text)
+                    .frame(width: side, height: side)
+                    .background(Theme.panel)
+                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                }
+                .buttonStyle(PadPressStyle())
+
+                MicroJoystickPad(side: side, label: camMove ? "MOVE" : "ORBIT") { v in
+                    let (xp, yp) = camMove ? ("centerX", "centerY") : ("orbitX", "orbitY")
+                    let limit: Float = camMove ? 1.0 : 0.9
+                    nudgeCam(xp, Float(v.dx) * 0.03, limit)
+                    nudgeCam(yp, Float(-v.dy) * 0.03, limit)   // up = +param (matches jog chevrons)
+                }
+
+                DeckPad(symbol: "scope", side: side, momentary: true, active: $padRecenter) {
+                    runtime.pushUndo()
+                    for p in ["orbitX", "orbitY", "centerX", "centerY"] { runtime.setParam("cam", p, 0) }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(height: 56)
+        .padding(.horizontal, 12)
+    }
+
+    private func nudgeCam(_ name: String, _ delta: Float, _ limit: Float) {
+        guard abs(delta) > 0.0001 else { return }
+        let v = runtime.nodeParam("cam", name, 0) + delta
+        runtime.setParam("cam", name, min(max(v, -limit), limit))
     }
 
     private var padRow: some View {
@@ -246,63 +366,70 @@ struct CornerMenu: View {
     var runtime: GraphRuntime? = nil
     var onSheet: (AppSheet) -> Void = { _ in }
     var onBrowser: () -> Void = {}
+    var onNDI: () -> Void = {}
+    var onRecord: () -> Void = {}
+    var onReset: () -> Void = {}
     @Binding var open: Bool
     @State private var pinIndex = 0
-    @State private var stemsOn = false   // arms live on the Point Display node; default freestanding
     private let pinSteps = [30_000, 77_000, 150_000, 307_200]
+    // Stems are the Point Display node's ARMS param (edit it in that node's settings) — no menu button.
 
     var body: some View {
-        // Two rows when open so all functions stay reachable on a phone width.
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                cube("circle.grid.2x2", active: open) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { open.toggle() }
-                }
-                if open {
-                    cube("arrow.trianglehead.2.clockwise.rotate.90.camera",
-                         active: false, enabled: sources.lidarAvailable) {
-                        sources.toggleFacing()
-                    }
-                    cube("circle.grid.3x3", active: false, caption: "\(pinSteps[pinIndex] / 1000)k") {
-                        pinIndex = (pinIndex + 1) % pinSteps.count
-                        sources.renderer.setPinCount(pinSteps[pinIndex])
-                    }
-                    cube("chart.bar.fill", active: stemsOn) {
-                        stemsOn.toggle()
-                        runtime?.setBool("pd", "arms", stemsOn)   // arms = Point Display param
-                    }
-                    cube("paintpalette", active: sources.colorEnabled) {
-                        sources.toggleColor()
-                        runtime?.setColorMode(sources.colorEnabled ? .video : .none)
-                    }
-                    cube("rotate.right", active: false, caption: "\(sources.renderer.orient)") {
-                        sources.renderer.setOrient((sources.renderer.orient + 1) % 8)
-                    }
-                }
+        // Output-sink status: record = red, NDI = blue, both = purple. Colours the toggle icon
+        // (so you see it at a glance while closed) and the open accordion outline.
+        let recOn = runtime?.recordRenderConfig() != nil
+        let ndiOn = runtime?.ndiStreaming ?? false
+        let status: Color? = (recOn && ndiOn) ? Theme.bothActive
+            : recOn ? Theme.recActive : ndiOn ? Theme.ndiActive : nil
+        // One row now that stems + orientation are gone. Photo moved to the very end.
+        HStack(spacing: 4) {
+            cube("circle.grid.2x2", active: open, tint: status) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { open.toggle() }
             }
             if open {
-                HStack(spacing: 4) {
-                    Color.clear.frame(width: 34, height: 1)   // aligns under the toggle
-                    cube("record.circle", active: false) { onSheet(.record) }
-                    cube("antenna.radiowaves.left.and.right", active: false) { onSheet(.ndi) }
-                    cube("photo.badge.plus", active: false) { onSheet(.importMedia) }
-                    cube("gearshape", active: false) { onSheet(.settings) }
-                    cube("square.grid.2x2", active: false) { onBrowser() }
+                cube("arrow.trianglehead.2.clockwise.rotate.90.camera",
+                     active: false, enabled: sources.lidarAvailable) {
+                    sources.toggleFacing()
+                }
+                cube("circle.grid.3x3", active: false, caption: "\(pinSteps[pinIndex] / 1000)k") {
+                    pinIndex = (pinIndex + 1) % pinSteps.count
+                    sources.renderer.setPinCount(pinSteps[pinIndex])
+                }
+                cube("paintpalette", active: sources.colorEnabled) {
+                    sources.toggleColor()
+                    runtime?.setColorMode(sources.colorEnabled ? .video : .none)
+                }
+                cube("record.circle", active: false, tint: recOn ? Theme.recActive : nil) {
+                    onRecord()
+                }
+                cube("antenna.radiowaves.left.and.right", active: false,
+                     tint: ndiOn ? Theme.ndiActive : nil) { open = false; onNDI() }
+                cube("gearshape", active: false) { onSheet(.settings) }
+                cube("square.grid.2x2", active: false) { onBrowser() }
+                cube("photo.badge.plus", active: false) { onSheet(.importMedia) }
+                // Very end: recovery — restart the capture engine if the live feed ever stalls.
+                cube("arrow.clockwise.circle", active: false) {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    onReset()
                 }
             }
         }
+        .padding(2)
+        .overlay(Rectangle().stroke(open ? (status ?? .clear) : .clear, lineWidth: 1))
     }
 
     private func cube(_ symbol: String, active: Bool, enabled: Bool = true,
-                      caption: String? = nil, action: @escaping () -> Void) -> some View {
+                      caption: String? = nil, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             ZStack(alignment: .bottom) {
                 Image(systemName: symbol)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(active ? Color.black : (enabled ? Color.white.opacity(0.92) : .white.opacity(0.3)))
+                    .foregroundStyle(tint ?? (active ? Color.black : (enabled ? Color.white.opacity(0.92) : .white.opacity(0.3))))
+                    .symbolEffect(.pulse, options: .repeating, isActive: tint != nil)
                     .frame(width: 36, height: 34)
-                    .background(active ? Theme.text : Color.black.opacity(0.5))
-                    .overlay(Rectangle().stroke(active ? Theme.text : .white.opacity(0.2), lineWidth: 1))
+                    .background(tint == nil && active ? Theme.text : Color.black.opacity(0.5))
+                    .overlay(Rectangle().stroke(tint ?? (active ? Theme.text : .white.opacity(0.2)),
+                                                lineWidth: tint != nil ? 1.5 : 1))
                 if let caption {
                     Text(caption)
                         .font(.system(size: 7, weight: .semibold).monospacedDigit())
