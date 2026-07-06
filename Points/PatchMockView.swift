@@ -331,17 +331,27 @@ struct NodeEditorView: View {
         return ForEach(runtime.activeGraph.nodes.filter { !hidden.contains($0.id) }, id: \.id) { node in
             if let spec = registry.spec(node.specID) {
                 let sp = camera.toScreen(node.position)
+                let isNote = node.specID == "comment"
+                let cw: CGFloat = isNote ? CGFloat(node.noteSize?.x ?? 200) : NodeMetrics.width
+                let ch: CGFloat = isNote ? CGFloat(node.noteSize?.y ?? 120)
+                                         : NodeMetrics.height(spec, exposed: node.exposedParams.count)
                 NodeCardView(runtime: runtime, node: node, spec: spec,
                              selected: selection.contains(node.id),
                              dragged: draggingNode == node.id,
                              wiredInputs: wiredInputNames(node.id),
-                             highlightPort: portHighlight(for: node.id))
-                    .frame(width: NodeMetrics.width, height: NodeMetrics.height(spec, exposed: node.exposedParams.count), alignment: .top)
+                             highlightPort: portHighlight(for: node.id),
+                             cardWidth: cw)
+                    .frame(width: cw, height: ch, alignment: .top)
                     .scaleEffect(camera.scale, anchor: .topLeading)
                     .offset(x: sp.x, y: sp.y)
                     // Cards are canvas-controlled visuals — EXCEPT a selected Sticky Note,
                     // which takes touches so its inline text field can be edited in place.
-                    .allowsHitTesting(node.specID == "comment" && selection.contains(node.id))
+                    .allowsHitTesting(isNote && selection.contains(node.id))
+                // Sticky Note: drag the bottom-right handle to resize the rectangle (marquee-style).
+                if isNote && selection.contains(node.id) {
+                    NoteResizeHandle(runtime: runtime, nodeID: node.id, scale: camera.scale)
+                        .offset(x: sp.x + cw * camera.scale - 11, y: sp.y + ch * camera.scale - 11)
+                }
             }
         }
     }
@@ -1028,6 +1038,7 @@ struct NodeCardView: View {
     let dragged: Bool
     let wiredInputs: Set<String>
     var highlightPort: (isInput: Bool, index: Int)? = nil
+    var cardWidth: CGFloat = NodeMetrics.width   // Sticky Note overrides this (resizable)
 
     /// Nodes that paint a big live readout in their centre (in addition to the node-bar one).
     static let displayIDs: Set<String> = ["value-display", "binary-display", "live-update"]
@@ -1142,7 +1153,7 @@ struct NodeCardView: View {
                 }
             }
         }
-        .frame(width: NodeMetrics.width)
+        .frame(width: cardWidth)
         .background(Color(hex: 0x101010).opacity(0.96))
         .overlay(Rectangle().stroke(selected ? Theme.accent : Theme.line, lineWidth: selected ? 1.5 : 1))
         .opacity(selected || dragged ? 1.0 : 0.82)
@@ -1507,6 +1518,34 @@ struct ExposeToggle: View {
                 .frame(width: 22, height: 24)
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Bottom-right corner handle on a selected Sticky Note — drag to resize the rectangle (screen-space
+/// drag ÷ zoom = world delta). One undo step per resize.
+struct NoteResizeHandle: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let scale: CGFloat
+    @State private var start: SIMD2<Float>?
+    var body: some View {
+        Rectangle().fill(Theme.accent)
+            .frame(width: 22, height: 22)
+            .overlay(Image(systemName: "arrow.down.right").font(.system(size: 9, weight: .bold)).foregroundStyle(.black))
+            .overlay(Rectangle().stroke(.white, lineWidth: 1))
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    if start == nil {
+                        start = runtime.activeGraph.node(nodeID)?.noteSize ?? [200, 120]
+                        runtime.pushUndo()
+                    }
+                    let s = start ?? [200, 120]
+                    let nw = max(90, s.x + Float(g.translation.width / scale))
+                    let nh = max(56, s.y + Float(g.translation.height / scale))
+                    runtime.setNoteSize(nodeID, [nw, nh])
+                }
+                .onEnded { _ in start = nil })
     }
 }
 

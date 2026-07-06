@@ -348,6 +348,14 @@ final class GraphRuntime {
         activeGraph.node(nodeID)?.exposedParams.contains(param) ?? false
     }
 
+    /// Sticky Note corner resize (live drag). No recompile — the note is inert. Caller pushes one
+    /// undo step at drag start.
+    func setNoteSize(_ id: String, _ size: SIMD2<Float>) {
+        editActive(recompileAfter: false) { g in
+            if let i = g.nodes.firstIndex(where: { $0.id == id }) { g.nodes[i].noteSize = size }
+        }
+    }
+
     /// Live path for dynamic lanes (freeze hold): no recompile at all.
     func setParamLive(_ nodeID: String, _ name: String, _ value: Float) {
         editActive(recompileAfter: false) { $0.setParam(nodeID, name, .float(value)) }

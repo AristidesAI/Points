@@ -17,6 +17,8 @@ nonisolated struct GraphNode: Identifiable, Codable, Sendable {
     // Macro node only: ids of the nodes this group hides. Non-empty ⇒ this card IS a collapsed
     // group; deleting/expanding it just reveals the members (the network never changes).
     var macroMembers: [String] = []
+    // Sticky Note only: user-set card size (drag a corner to resize). nil = default. Decodes nil when absent.
+    var noteSize: SIMD2<Float>? = nil
 
     /// True when this node carries authored trigger logic (drives the port's filled/pulsing state).
     var hasTriggers: Bool { !(triggerGraph?.nodes.isEmpty ?? true) }
