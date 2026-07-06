@@ -43,6 +43,7 @@ struct ProgramFrame {
     var despeckleGap: Float = 0                   // Despeckle Voxel node (0 = off)
     var smoothRadius: Float = 0                   // Smooth Surface node (0 = off)
     var accumFrames: Float = 0                    // Accumulate node (≤1 = off)
+    var jbuFactor: Float = 0                      // Detail Upsample node (≤1 = off)
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -230,71 +231,50 @@ final class GraphRuntime {
         case "Kick Shatter":                                   // depth-driven scatter of the grid
             node("sc", "scatter", 470, 380, ["amount": .float(0.5), "seed": .float(5)])
             wire("pd", "z", "sc", "amount"); wire("sc", "offset", "out", "position")
-        case "Max Complexity":                                 // every lane wired — the current node/trigger system at full stretch
-            // depth cleanup: Depth → Grazing Cull → EMA Smooth → Point Display (stems ON)
-            node("gz", "grazing-cull", 60, 300, ["cull": .float(0.3), "edge": .float(0.1)])
-            node("em", "ema-smooth", 60, 430, ["amount": .float(0.3)])
-            wire("d1", "depth", "gz", "depth"); wire("gz", "out", "em", "depth"); wire("em", "out", "pd", "depth")
-            if let i = g.nodes.firstIndex(where: { $0.id == "pd" }) { g.nodes[i].params["arms"] = .bool(true) }
+        case "Device Test":                                    // on-device checklist — Sticky Notes narrate each check
+            func note(_ id: String, _ x: Float, _ y: Float, _ text: String) {
+                node(id, "comment", x, y, ["text": .option(text)])
+            }
+            // depth cleanup chain: Depth → Grazing Cull → Despeckle → EMA → Point Display
+            node("gz", "grazing-cull", 60, 300, ["cull": .float(0.25), "edge": .float(0.1)])
+            node("ds", "despeckle-voxel", 60, 430)
+            node("em", "ema-smooth", 60, 560, ["amount": .float(0.3)])
+            wire("d1", "depth", "gz", "depth"); wire("gz", "out", "ds", "depth")
+            wire("ds", "out", "em", "depth"); wire("em", "out", "pd", "depth")
+            note("n1", 60, 700, "1 DEPTH: cleanup chain live. Check no dust around your silhouette (Despeckle) and no shimmer (EMA). Free mode should match TDLidar.")
 
-            // TRIGGER SOURCES + LOGIC (control-rate — the current trigger toolkit on show)
-            node("clk", "clock", 60, 560)
-            node("ons", "on-start", 60, 680)
-            node("hg", "hand-gesture", 60, 800, ["hold": .float(0.4), "smoothing": .float(0.4)])
-            node("tg", "toggle", 230, 800)
-            node("cnt", "counter", 230, 560, ["wrap": .float(8)])
-            node("chn", "chance", 230, 680, ["probability": .float(0.6)])
-            wire("clk", "quarter", "cnt", "count"); wire("ons", "fired", "cnt", "reset")
-            wire("clk", "bar", "chn", "trigger"); wire("hg", "fist", "tg", "flip")
+            // colour: thermal palette by depth
+            node("pl", "palette", 330, 560, ["map": .option("thermal"), "shift": .float(-0.25)])
+            wire("em", "out", "pl", "t"); wire("pl", "color", "out", "color")
 
-            // Z SURFACE: Trail + Radial Ripple + animated Noise (plane stepped by Wander→S&H), summed
-            node("tr", "trail", 470, 300, ["decay": .float(3)])
-            node("rp", "radial-ripple", 470, 430, ["amp": .float(0.4), "wavelength": .float(0.12), "speed": .float(2)])
-            node("wd", "wander", 470, 800, ["speed": .float(0.6)])
-            node("shd", "sample-hold", 640, 800)
-            node("nz", "noise", 470, 560,
-                 ["type": .option("perlin"), "period": .float(0.4), "harmonics": .float(3),
-                  "amplitude": .float(0.5), "offset": .float(-0.25), "moveAxis": .option("z"), "moveRate": .float(0.4)])
-            node("zad1", "add", 640, 360); node("zad2", "add", 780, 360)
-            wire("pd", "z", "tr", "in")
-            wire("wd", "out", "shd", "in"); wire("clk", "eighth", "shd", "trigger"); wire("shd", "out", "nz", "z")
-            wire("tr", "out", "zad1", "a"); wire("rp", "height", "zad1", "b")
-            wire("zad1", "out", "zad2", "a"); wire("nz", "out", "zad2", "b"); wire("zad2", "out", "out", "z")
+            // shapes: spinning diamonds
+            node("shp", "shape", 330, 700, ["type": .option("diamond")])
+            node("spn", "spin", 330, 830, ["z": .float(0.12)])
+            wire("shp", "shape", "out", "shape"); wire("spn", "rot", "out", "rotation")
+            note("n2", 330, 950, "2 SHAPES: pins are spinning diamonds. Flip Shape through ring / disc / spike / slab — each silhouette must read distinct.")
 
-            // SIZE: Size × LFO wobble
-            node("lf", "lfo", 230, 430, ["rate": .float(2), "shape": .option("triangle")])
-            node("szm", "multiply", 470, 160)
-            wire("sz", "out", "szm", "a"); wire("lf", "out", "szm", "b"); wire("szm", "out", "out", "size")
+            // stage: background gradient + light + material + post stack
+            node("bg", "background", 620, 560, ["r": .float(0.01), "g": .float(0.01), "b": .float(0.07), "gradient": .float(0.6)])
+            node("lt", "light", 620, 700, ["intensity": .float(1.5)])
+            node("mat", "material", 620, 830, ["roughness": .float(0.25)])
+            node("blm", "bloom", 850, 560, ["intensity": .float(0.8)])
+            node("vg", "vignette", 850, 690)
+            node("gr", "grain", 850, 800, ["amount": .float(0.12)])
+            node("rs", "render-settings", 850, 910)
+            note("n3", 620, 950, "3 STAGE: drag Light X/Y — shading + speculars track it (orbit the Camera too). Bloom halos hot palette tips; Render Settings GHOST = hologram; Background GRADIENT glows.")
 
-            // COLOUR: thermal palette by depth, white-flashed on the beat (Clock → Envelope → strobe)
-            node("env", "envelope", 230, 300, ["attack": .float(0.01), "release": .float(0.3)])
-            node("pl", "palette", 640, 560, ["map": .option("thermal"), "shift": .float(-0.25)])
-            node("st", "strobe-color", 780, 560)
-            wire("clk", "quarter", "env", "trigger")
-            wire("em", "out", "pl", "t"); wire("pl", "color", "st", "color")
-            wire("env", "out", "st", "flash"); wire("st", "out", "out", "color")
+            // body: face mask grows the pins on your face
+            node("fr", "face-region", 60, 830, ["radius": .float(0.16)])
+            node("rm", "remap", 230, 830, ["inMin": .float(0), "inMax": .float(1),
+                                           "outMin": .float(0.5), "outMax": .float(1.8)])
+            wire("fr", "mask", "rm", "in"); wire("rm", "out", "sz", "size")
+            note("n4", 60, 1080, "4 BODY: pins on your FACE grow (Face Region → Remap → Size). Check the circle tracks you. Also try Left/Right Hand Pinch — verify chirality isn't swapped.")
 
-            // SHAPE + SPIN: open hand morphs sphere→cube, pins spin continuously
-            node("ho", "hand-openness", 640, 680)
-            node("shp", "shape-morph", 780, 680, ["target": .option("cube")])
-            node("spn", "spin", 780, 800, ["z": .float(0.25)])
-            wire("ho", "amount", "shp", "blend"); wire("shp", "shape", "out", "shape")
-            wire("spn", "rot", "out", "rotation")
-        case "Trigger Test":                                   // §13 v2 — Size.base driven by a NESTED trigger graph (beat pop)
-            var tg = Graph()
-            tg.nodes = [
-                GraphNode(id: "ck", specID: "clock", params: [:], position: [60, 80]),
-                GraphNode(id: "ev", specID: "t-envelope",
-                          params: ["attack": .float(0.01), "release": .float(0.28)], position: [300, 80]),
-                GraphNode(id: "dv", specID: "trigger-drive",
-                          params: ["target": .option("base"), "mode": .option("offset"), "amount": .float(1.2)],
-                          position: [540, 80]),
-            ]
-            tg.wires = [
-                Wire(fromNode: "ck", fromPort: "quarter", toNode: "ev", toPort: "trig"),
-                Wire(fromNode: "ev", fromPort: "out", toNode: "dv", toPort: "value"),
-            ]
-            if let i = g.nodes.firstIndex(where: { $0.id == "sz" }) { g.nodes[i].triggerGraph = tg }
+            // proximity readout
+            node("prox", "proximity", 850, 300)
+            node("vd", "value-display", 850, 430)
+            wire("prox", "nearness", "vd", "in")
+            note("n5", 850, 1050, "5 PROXIMITY: the readout above rises as you walk toward the camera; step inside THRESHOLD and it can fire triggers. Watch FPS in the HUD with everything on.")
         default:                                               // "Pure Pins" / unknown → default
             break
         }
@@ -783,10 +763,53 @@ final class GraphRuntime {
     }
 
     /// Position-only — no recompile, no undo (drag pushes undo once at gesture start).
+    /// Dragging a macro card carries its hidden members along.
     func moveNode(_ id: String, to p: SIMD2<Float>) {
         editActive(recompileAfter: false) { g in
-            if let i = g.nodes.firstIndex(where: { $0.id == id }) { g.nodes[i].position = p }
+            guard let i = g.nodes.firstIndex(where: { $0.id == id }) else { return }
+            let delta = p - g.nodes[i].position
+            g.nodes[i].position = p
+            for m in g.nodes[i].macroMembers {
+                if let j = g.nodes.firstIndex(where: { $0.id == m }) { g.nodes[j].position += delta }
+            }
         }
+    }
+
+    // MARK: - Macro grouping (visual collapse — the compiled network never changes)
+
+    /// Node ids hidden inside a collapsed macro.
+    var hiddenNodeIDs: Set<String> { Set(activeGraph.nodes.flatMap(\.macroMembers)) }
+
+    /// The macro card hiding `id`, if any.
+    func macroHosting(_ id: String) -> GraphNode? {
+        activeGraph.nodes.first { $0.macroMembers.contains(id) }
+    }
+
+    /// Collapse a selection into one macro card. Output/Camera and other macros stay visible.
+    @discardableResult
+    func groupNodes(_ ids: Set<String>) -> String? {
+        let g0 = activeGraph
+        let members = g0.nodes.filter {
+            ids.contains($0.id) && $0.specID != "output" && $0.specID != "camera" && $0.macroMembers.isEmpty
+        }
+        guard members.count >= 2 else { return nil }
+        pushUndo()
+        var id = shortID("macro")
+        while g0.node(id) != nil { id = shortID("macro") }
+        var node = GraphNode(id: id, specID: "macro", params: [:])
+        let cx = members.map(\.position.x).reduce(0, +) / Float(members.count)
+        let cy = members.map(\.position.y).reduce(0, +) / Float(members.count)
+        node.position = [cx, cy]
+        node.macroMembers = members.map(\.id)
+        editActive { $0.nodes.append(node) }
+        return id
+    }
+
+    /// Expand a macro: drop the card, members reappear (deleting the card does the same).
+    func ungroupMacro(_ id: String) {
+        guard activeGraph.node(id)?.macroMembers.isEmpty == false else { return }
+        pushUndo()
+        editActive { g in g.nodes.removeAll { $0.id == id } }
     }
 
     /// Wire (from.fromPort → to.toPort). Replaces whatever fed that input. Validates the
@@ -1092,6 +1115,7 @@ final class GraphRuntime {
         let despeckle = graph.nodes.first { $0.specID == "despeckle-voxel" }?.float("size", 0.02) ?? 0
         let smoothR = graph.nodes.first { $0.specID == "smooth-surface" }?.float("radius", 1) ?? 0
         let accum = graph.nodes.first { $0.specID == "accumulate" }?.float("frames", 8) ?? 0
+        let jbu = graph.nodes.first { $0.specID == "detail-upsample" }?.float("factor", 2) ?? 0
 
         // STAGE sinks read by the renderer (like Camera): Background, Light, and the post stack.
         var bg = SIMD4<Float>(0, 0, 0, 0)
@@ -1166,7 +1190,8 @@ final class GraphRuntime {
                             post: post, ghost: ghost,
                             material: material, lookAt: lookAt, stem: stem,
                             uvTransform: uvT, edgePolicy: edge, domain: domain,
-                            despeckleGap: despeckle, smoothRadius: smoothR, accumFrames: accum)
+                            despeckleGap: despeckle, smoothRadius: smoothR, accumFrames: accum,
+                            jbuFactor: jbu)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.

@@ -64,6 +64,7 @@ struct PinUniforms {
     var material: SIMD4<Float> = [1, 1, 0, 0]   // mode, roughness, metallic, lightCount
     var lookAt: SIMD4<Float> = .zero            // target xyz + amount
     var stemParams: SIMD4<Float> = [0, 0, 1, 0] // profile, taper, thickness×, unused
+    var eyePos: SIMD4<Float> = [0, 0, 3, 0]     // camera eye — speculars track the orbit
 }
 
 /// Instanced pin-wall renderer. Fixed camera, Z=0 wall, depth pulls pins toward the camera.
@@ -83,6 +84,8 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var despecklePipeline: MTLComputePipelineState!
     private var bilateralPipeline: MTLComputePipelineState!
     private var accumulatePipeline: MTLComputePipelineState!
+    private var jbuPipeline: MTLComputePipelineState!     // Detail Upsample (joint bilateral)
+    private var jbuTex: MTLTexture?
     private var depthState: MTLDepthStencilState!
     private var depthStateGhost: MTLDepthStencilState!    // always pass, no write
     private var textureCache: CVMetalTextureCache!
@@ -323,7 +326,9 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let rows = max(2, Int((Float(count) / Float(cols)).rounded(.up)))
         let actual = cols * rows
 
-        var u = PinUniforms(viewProj: Self.buildCamera(frame.camera, aspect: viewAspect))
+        let (viewProj, eye) = Self.buildCamera(frame.camera, aspect: viewAspect)
+        var u = PinUniforms(viewProj: viewProj)
+        u.eyePos = SIMD4(eye, 0)
         u.cols = UInt32(cols); u.rows = UInt32(rows); u.count = UInt32(actual)
         u.orient = orientNow
         u.zWorldScale = frame.camera.depthPush
@@ -407,6 +412,31 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
                 }
             } else {
                 accValid = false   // node removed → reseed next time
+            }
+            // Detail Upsample (JBU): depth resampled at FACTOR× res, edges guided by RGB.
+            if frame.jbuFactor > 1.01, let guide = colorTex {
+                let f = min(max(Int(frame.jbuFactor.rounded()), 2), 4)
+                let jw = w * f, jh = h * f
+                if jbuTex == nil || jbuTex!.width != jw || jbuTex!.height != jh {
+                    let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float,
+                                                                     width: jw, height: jh, mipmapped: false)
+                    d.usage = [.shaderRead, .shaderWrite]
+                    d.storageMode = .private
+                    jbuTex = device.makeTexture(descriptor: d)
+                }
+                if let jt = jbuTex, let enc = cmd.makeComputeCommandEncoder() {
+                    var p = CleanParamsSwift(w: UInt32(jw), h: UInt32(jh),
+                                             gap: 0.08, alpha: lumaOnly ? 1 : 0)
+                    enc.setComputePipelineState(jbuPipeline)
+                    enc.setTexture(depthForVM, index: 0)
+                    enc.setTexture(guide, index: 1)
+                    enc.setTexture(jt, index: 2)
+                    enc.setBytes(&p, length: MemoryLayout<CleanParamsSwift>.stride, index: 0)
+                    enc.dispatchThreads(MTLSize(width: jw, height: jh, depth: 1),
+                                        threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+                    enc.endEncoding()
+                    depthForVM = jt
+                }
             }
         }
 
@@ -500,7 +530,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         guard let color = device.makeTexture(descriptor: td, iosurface: surf, plane: 0) else { return }
 
         var u = base
-        u.viewProj = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
+        (u.viewProj, _) = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
         ensureSceneTargets(&ndiSceneTargets, w: w, h: h)
         guard let targets = ndiSceneTargets else { return }
         encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
@@ -567,7 +597,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         guard let color = device.makeTexture(descriptor: td, iosurface: surf, plane: 0) else { return }
 
         var u = base
-        u.viewProj = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
+        (u.viewProj, _) = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
         ensureSceneTargets(&recSceneTargets, w: w, h: h)
         guard let targets = recSceneTargets else { return }
         encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
@@ -617,7 +647,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     /// FOV sets the lens (flat↔wide); ZOOM frames the wall; PARALLAX pulls the camera in for
     /// stronger perspective warp while the FOV widens to keep the framing constant; CENTRE nudges
     /// the pivot; ORBIT (joystick) walks the eye around the pivot on a sphere — TDLidar turntable.
-    private static func buildCamera(_ c: CameraFrame, aspect: Float) -> simd_float4x4 {
+    private static func buildCamera(_ c: CameraFrame, aspect: Float) -> (simd_float4x4, SIMD3<Float>) {
         // Frame by WIDTH (the 3:4 wall's extX = 1.5) so the grid always fills the width and
         // stays 1:1 no matter the viewport aspect — a taller viewport just reveals more black
         // above/below, never stretches. At aspect 0.75 this is identical to the old 3:4 framing.
@@ -633,7 +663,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let dir = SIMD3<Float>(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
         let center = SIMD3<Float>(c.centerX, c.centerY, 0)
         let eye = center + dir * dEff
-        return proj * lookAt(eye: eye, center: center, up: [0, 1, 0])
+        return (proj * lookAt(eye: eye, center: center, up: [0, 1, 0]), eye)
     }
 
     private func buildPipelines() {
@@ -673,6 +703,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         despecklePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_despeckle")!)
         bilateralPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_bilateral")!)
         accumulatePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_accumulate")!)
+        jbuPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_jbu")!)
         brightPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "bloom_brightpass")!)
         vmPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "pin_program")!)
         bloomBlur = MPSImageGaussianBlur(device: device, sigma: 6)

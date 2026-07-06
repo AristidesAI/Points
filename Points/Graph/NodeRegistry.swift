@@ -204,7 +204,7 @@ final class NodeRegistry: @unchecked Sendable {
                    "Removes isolated speckle returns: a point survives only with enough neighbours within SIZE metres of its depth. Kills floating dust around silhouettes. Runs while the node exists — the wire passes depth through.")
         passFilter("detail-upsample", "Detail Upsample",
                    [.float("factor", 1...4, 2)],
-                   "Joint bilateral depth upsample guided by RGB (TDLidar JBU). · NOT WIRED UP YET — registered, passthrough for now.")
+                   "Joint bilateral depth upsample (TDLidar JBU): depth is resampled at FACTOR× resolution with edges snapped to the RGB image, so silhouettes sharpen. Needs the camera color feed. Runs while the node exists — the wire passes depth through.")
     }
 
     // MARK: SHAPE

@@ -13,6 +13,7 @@ struct Uniforms {
     float4 material;       // Material node: x mode (0 unlit / 1 lit / 2 matcap), y roughness, z metallic, w lightCount
     float4 lookAt;         // Look At node: xyz target (view units), w amount (0 = off)
     float4 stemParams;     // Stem node: x profile (0 square / 1 round / 2 blade), y taper, z thickness×, w unused
+    float4 eyePos;         // camera eye (world/view units) — real view dir for speculars under orbit
 };
 
 // Field order MUST match VMParams in PinRenderer.swift.
@@ -565,8 +566,7 @@ fragment float4 pin_fragment(VOut in [[stage_in]],
 
     float rough = U.material.y, metal = U.material.z;
     int lightCount = clamp(int(U.material.w + 0.5), 0, 4);
-    // ponytail: frontal view dir for specular; pass the real eye if orbit specular reads wrong
-    float3 v = float3(0.0, 0.0, 1.0);
+    float3 v = normalize(U.eyePos.xyz - in.wpos);   // real view dir — speculars track the orbit
     float3 specCol = mix(float3(1.0), albedo, metal);
     float3 c;
 
@@ -803,6 +803,37 @@ kernel void depth_accumulate(texture2d<float, access::read> cur [[texture(0)]],
     bool pv = p > 0.05 && isfinite(p);
     float o = dv ? (pv ? p + (d - p) * P.alpha : d) : (pv ? p : 0.0);
     outT.write(float4(o), gid);
+}
+
+// Detail Upsample: joint bilateral upsample (TDLidar JBU) — depth resampled at FACTOR×
+// resolution, guided by the RGB image so depth edges snap to color edges. gap lane = luma
+// sigma; alpha lane = colorIsLuma flag.
+kernel void depth_jbu(texture2d<float, access::sample> inD [[texture(0)]],
+                      texture2d<float, access::sample> guide [[texture(1)]],
+                      texture2d<float, access::write> outD [[texture(2)]],
+                      constant CleanParams &P [[buffer(0)]],
+                      uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= P.w || gid.y >= P.h) return;
+    constexpr sampler smp(filter::linear, address::clamp_to_edge);
+    constexpr sampler nn(filter::nearest, address::clamp_to_edge);
+    float2 uv = (float2(gid) + 0.5) / float2(P.w, P.h);
+    float4 gC = guide.sample(smp, uv);
+    float lumC = P.alpha > 0.5 ? gC.r : dot(gC.rgb, float3(0.299, 0.587, 0.114));
+    float2 lowTexel = float2(1.0 / float(inD.get_width()), 1.0 / float(inD.get_height()));
+    float wSum = 0.0, dSum = 0.0;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            float2 quv = uv + float2(dx, dy) * lowTexel;
+            float d = inD.sample(nn, quv).r;
+            if (!(d > 0.05) || !isfinite(d)) continue;
+            float4 gN = guide.sample(smp, quv);
+            float lumN = P.alpha > 0.5 ? gN.r : dot(gN.rgb, float3(0.299, 0.587, 0.114));
+            float dl = (lumN - lumC) / max(P.gap, 0.01);          // luma range sigma
+            float w = exp(-float(dx * dx + dy * dy) * 0.4 - dl * dl);
+            wSum += w; dSum += d * w;
+        }
+    }
+    outD.write(float4(wSum > 1e-6 ? dSum / wSum : 0.0), gid);
 }
 
 kernel void depth_ema(texture2d<float, access::read> cur [[texture(0)]],

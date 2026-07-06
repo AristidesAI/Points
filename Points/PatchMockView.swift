@@ -321,10 +321,14 @@ struct NodeEditorView: View {
 
     // MARK: node cards
 
+    /// Nodes hidden inside a collapsed macro — filtered out of drawing and every hit test.
+    private var hiddenIDs: Set<String> { runtime.hiddenNodeIDs }
+
     private var nodeLayer: some View {
         // Cards are pure visuals — ALL interaction lives in canvasDrag, so tap/move/pan/wire
         // behave the same everywhere and a node above a wire never fights it.
-        ForEach(runtime.activeGraph.nodes, id: \.id) { node in
+        let hidden = hiddenIDs
+        return ForEach(runtime.activeGraph.nodes.filter { !hidden.contains($0.id) }, id: \.id) { node in
             if let spec = registry.spec(node.specID) {
                 let sp = camera.toScreen(node.position)
                 NodeCardView(runtime: runtime, node: node, spec: spec,
@@ -335,7 +339,9 @@ struct NodeEditorView: View {
                     .frame(width: NodeMetrics.width, height: NodeMetrics.height(spec, exposed: node.exposedParams.count), alignment: .top)
                     .scaleEffect(camera.scale, anchor: .topLeading)
                     .offset(x: sp.x, y: sp.y)
-                    .allowsHitTesting(false)
+                    // Cards are canvas-controlled visuals — EXCEPT a selected Sticky Note,
+                    // which takes touches so its inline text field can be edited in place.
+                    .allowsHitTesting(node.specID == "comment" && selection.contains(node.id))
             }
         }
     }
@@ -364,8 +370,24 @@ struct NodeEditorView: View {
               let fs = registry.spec(from.specID), let ts = registry.spec(to.specID),
               let oi = fs.outputs.firstIndex(where: { $0.name == w.fromPort }),
               let ii = ts.inputPortNames(to.exposedParams).firstIndex(of: w.toPort) else { return nil }
-        return (anchorScreen(w.fromNode, portIndex: oi, isInput: false),
-                anchorScreen(w.toNode, portIndex: ii, isInput: true))
+        // Endpoints hidden inside a macro re-anchor on the macro card's edge; wires fully
+        // inside one collapsed macro aren't drawn at all.
+        let fromHost = runtime.macroHosting(w.fromNode)
+        let toHost = runtime.macroHosting(w.toNode)
+        if let fh = fromHost, let th = toHost, fh.id == th.id { return nil }
+        let a = fromHost.map { macroEdge($0, isInput: false) }
+            ?? anchorScreen(w.fromNode, portIndex: oi, isInput: false)
+        let b = toHost.map { macroEdge($0, isInput: true) }
+            ?? anchorScreen(w.toNode, portIndex: ii, isInput: true)
+        return (a, b)
+    }
+
+    /// Mid-left (inputs) / mid-right (outputs) of a macro card, in screen space.
+    private func macroEdge(_ host: GraphNode, isInput: Bool) -> CGPoint {
+        let sp = camera.toScreen(host.position)
+        let spec = registry.spec("macro")
+        let h = (spec.map { NodeMetrics.height($0, exposed: 0) } ?? 60) * camera.scale
+        return CGPoint(x: sp.x + (isInput ? 0 : NodeMetrics.width * camera.scale), y: sp.y + h / 2)
     }
 
     private var wireCanvas: some View {
@@ -601,9 +623,10 @@ struct NodeEditorView: View {
 
     private func portColumnHit(at p: CGPoint) -> PortRef? {
         let cs = camera.scale
+        let hidden = hiddenIDs
         // Front-most first: a node drawn on top of another's port column captures the touch as
         // a NODE (returns nil so the node is selected/moved), never the buried node's port.
-        for node in runtime.activeGraph.nodes.reversed() {
+        for node in runtime.activeGraph.nodes.reversed() where !hidden.contains(node.id) {
             guard let spec = registry.spec(node.specID) else { continue }
             let sp = camera.toScreen(node.position)
             let cardH = NodeMetrics.height(spec, exposed: node.exposedParams.count) * cs
@@ -761,7 +784,8 @@ struct NodeEditorView: View {
             else { return }
             var best: (String, String)? = nil
             var bestD = snapRange
-            for node in runtime.activeGraph.nodes where node.id != drag.fixedNode {
+            let hidden = hiddenIDs
+            for node in runtime.activeGraph.nodes where node.id != drag.fixedNode && !hidden.contains(node.id) {
                 guard let spec = registry.spec(node.specID) else { continue }
                 for (i, port) in spec.inputs.enumerated() where port.type.accepts(outType) {
                     let a = anchorScreen(node.id, portIndex: i, isInput: true)
@@ -801,7 +825,8 @@ struct NodeEditorView: View {
             } else { return }
             var best: (String, String)? = nil
             var bestD = snapRange
-            for node in runtime.activeGraph.nodes where node.id != drag.fixedNode {
+            let hidden = hiddenIDs
+            for node in runtime.activeGraph.nodes where node.id != drag.fixedNode && !hidden.contains(node.id) {
                 guard let spec = registry.spec(node.specID) else { continue }
                 for (i, port) in spec.outputs.enumerated() where inType.accepts(port.type) {
                     let a = anchorScreen(node.id, portIndex: i, isInput: false)
@@ -829,7 +854,8 @@ struct NodeEditorView: View {
         let rect = CGRect(x: min(r.start.x, r.current.x), y: min(r.start.y, r.current.y),
                           width: abs(r.current.x - r.start.x), height: abs(r.current.y - r.start.y))
         var hit: Set<String> = []
-        for node in runtime.activeGraph.nodes {
+        let hidden = hiddenIDs
+        for node in runtime.activeGraph.nodes where !hidden.contains(node.id) {
             guard let spec = registry.spec(node.specID) else { continue }
             let sp = camera.toScreen(node.position)
             let frame = CGRect(x: sp.x, y: sp.y,
@@ -841,7 +867,8 @@ struct NodeEditorView: View {
     }
 
     private func nodeHit(at p: CGPoint) -> String? {
-        for node in runtime.activeGraph.nodes.reversed() {
+        let hidden = hiddenIDs
+        for node in runtime.activeGraph.nodes.reversed() where !hidden.contains(node.id) {
             guard let spec = registry.spec(node.specID) else { continue }
             let sp = camera.toScreen(node.position)
             let frame = CGRect(x: sp.x, y: sp.y,
@@ -1052,11 +1079,26 @@ struct NodeCardView: View {
                         .frame(height: NodeMetrics.portRowH)
                     }
                     if spec.id == "comment" {
-                        // Sticky Note: the note itself, typed in the settings bar.
-                        Text(node.option("text", "").isEmpty ? "tap to select, type below" : node.option("text", ""))
+                        // Sticky Note: type straight on the card (also editable in the settings bar).
+                        TextField("type a note…", text: Binding(
+                            get: { node.option("text", "") },
+                            set: { runtime.setTextLive(node.id, "text", $0) }
+                        ), axis: .vertical)
                             .font(.system(size: 9.5))
-                            .foregroundStyle(node.option("text", "").isEmpty ? Theme.text2 : Theme.text)
-                            .lineSpacing(2).lineLimit(6)
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(2...6)
+                            .padding(7)
+                    }
+                    if !node.macroMembers.isEmpty {
+                        // Macro: name the hidden members so the group reads at a glance.
+                        let names = node.macroMembers
+                            .compactMap { runtime.activeGraph.node($0) }
+                            .compactMap { NodeRegistry.shared.spec($0.specID)?.name }
+                        Text("\(node.macroMembers.count) nodes\n" + names.prefix(6).joined(separator: " · ")
+                             + (names.count > 6 ? " …" : ""))
+                            .font(.system(size: 8.5))
+                            .foregroundStyle(Theme.text2)
+                            .lineSpacing(2).lineLimit(4)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(7)
                     }
@@ -1260,10 +1302,42 @@ struct NodeSettingsBar: View {
             } else {
                 header
                 if selection.count > 1 {
-                    Text("\(selection.count) nodes selected — remove, duplicate or reset them together")
-                        .font(.system(size: 10)).foregroundStyle(Theme.text2)
-                        .padding(.horizontal, 16).padding(.vertical, 10)
+                    HStack(spacing: 10) {
+                        Text("\(selection.count) nodes selected")
+                            .font(.system(size: 10)).foregroundStyle(Theme.text2)
+                        Spacer()
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            if let id = runtime.groupNodes(selection) { selection = [id] }
+                        } label: {
+                            Text("GROUP")
+                                .font(.system(size: 10, weight: .bold)).tracking(1)
+                                .foregroundStyle(Theme.text)
+                                .frame(width: 74, height: 30)
+                                .background(Theme.panel)
+                                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 8)
                 } else if let spec, let node {
+                    if !node.macroMembers.isEmpty {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            let members = Set(node.macroMembers)
+                            runtime.ungroupMacro(node.id)
+                            selection = members
+                        } label: {
+                            Text("EXPAND — show the \(node.macroMembers.count) grouped nodes")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.text)
+                                .frame(maxWidth: .infinity).frame(height: 32)
+                                .background(Theme.panel)
+                                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                    }
                     if spec.id == "camera" {
                         CamJogRow(runtime: runtime, nodeID: node.id, label: "ORBIT",
                                   xParam: "orbitX", yParam: "orbitY", step: 0.12, limit: 0.9)

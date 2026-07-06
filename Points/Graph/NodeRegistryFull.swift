@@ -1266,7 +1266,7 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "macro", name: "Macro", family: .tools,
             execution: .render,
-            description: "A reusable group of nodes collapsed into one. · Collapse/expand lands with the editor."))
+            description: "A group of nodes collapsed into one card: select several nodes and hit GROUP in the bar. Wires in and out keep flowing (grouping is visual — the network underneath never changes); drag the card to move the whole group. EXPAND or delete the card to spread them out again."))
     }
 
     // MARK: - tiny builders

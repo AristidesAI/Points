@@ -86,8 +86,7 @@ struct BrowserView: View {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())],
                               spacing: 12) {
                         Button { onOpen(nil) } label: { newCard }.buttonStyle(.plain)
-                        Button { onOpen("Max Complexity") } label: { maxComplexityCard }.buttonStyle(.plain)
-                        Button { onOpen("Trigger Test") } label: { triggerTestCard }.buttonStyle(.plain)
+                        Button { onOpen("Device Test") } label: { deviceTestCard }.buttonStyle(.plain)
                         ForEach(projects, id: \.0) { p in
                             Button { onOpen(nil) } label: { projectCard(p.0, p.1) }.buttonStyle(.plain)
                         }
@@ -114,30 +113,14 @@ struct BrowserView: View {
         .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
     }
 
-    private var triggerTestCard: some View {
+    private var deviceTestCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Rectangle().fill(Color.black)
-                .overlay(Image(systemName: "bolt.horizontal.circle")
+                .overlay(Image(systemName: "checklist")
                     .font(.system(size: 30)).foregroundStyle(Color(hex: 0xFFC24D).opacity(0.7)))
             VStack(alignment: .leading, spacing: 2) {
-                Text("TRIGGER TEST").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("nested triggers · Size pops on beat").font(.system(size: 8)).foregroundStyle(Theme.text2)
-            }
-            .padding(8)
-        }
-        .frame(maxWidth: .infinity).aspectRatio(1, contentMode: .fit)
-        .background(Theme.panel)
-        .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-    }
-
-    private var maxComplexityCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Rectangle().fill(Color.black)
-                .overlay(Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 30)).foregroundStyle(Theme.text2.opacity(0.55)))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("MAX COMPLEXITY").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("demo · every lane wired").font(.system(size: 8)).foregroundStyle(Theme.text2)
+                Text("DEVICE TEST").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("on-device checks · notes on canvas").font(.system(size: 8)).foregroundStyle(Theme.text2)
             }
             .padding(8)
         }

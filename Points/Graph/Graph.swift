@@ -14,6 +14,9 @@ nonisolated struct GraphNode: Identifiable, Codable, Sendable {
     // Dormant: the old nested trigger subgraph. Flattened to exposedParams; field kept so old saves decode.
     // ponytail: remove in a later cleanup once no serialized graphs carry it.
     var triggerGraph: Graph? = nil
+    // Macro node only: ids of the nodes this group hides. Non-empty ⇒ this card IS a collapsed
+    // group; deleting/expanding it just reveals the members (the network never changes).
+    var macroMembers: [String] = []
 
     /// True when this node carries authored trigger logic (drives the port's filled/pulsing state).
     var hasTriggers: Bool { !(triggerGraph?.nodes.isEmpty ?? true) }
