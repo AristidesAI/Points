@@ -305,9 +305,11 @@ struct ContentView: View {
                         // Handoff: TrueDepth/LiDAR and the RGB session can't share the physical camera —
                         // let the depth session release before RGB grabs it, or RGB comes up on a
                         // contested camera (garble / wrong lens). ~0.45 s matches the sibling app.
-                        // Guard: if the node is unwired within the window, don't start a stray session.
+                        // Re-read the lens at fire time (not the captured one) so switching within the
+                        // window wins; bail if the node was unwired meanwhile.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            if liveCamOn { rgbCam?.start(lens: lens) }
+                            guard liveCamOn, let n = runtime.liveDepthNode, !n.bool("media") else { return }
+                            rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: n.option("lens", "Wide")) ?? .wide)
                         }
                     }
                 }
