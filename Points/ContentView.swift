@@ -305,7 +305,10 @@ struct ContentView: View {
                         // Handoff: TrueDepth/LiDAR and the RGB session can't share the physical camera —
                         // let the depth session release before RGB grabs it, or RGB comes up on a
                         // contested camera (garble / wrong lens). ~0.45 s matches the sibling app.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { rgbCam?.start(lens: lens) }
+                        // Guard: if the node is unwired within the window, don't start a stray session.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            if liveCamOn { rgbCam?.start(lens: lens) }
+                        }
                     }
                 }
             } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {

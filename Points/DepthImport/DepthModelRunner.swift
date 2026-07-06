@@ -78,6 +78,7 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
     private var inverse = false
     private var loadedResource = ""
     private var smLo = Float.nan, smHi = Float.nan     // temporally-smoothed depth range (stops breathing)
+    private var prevOut: [Float] = []                  // previous frame's display metres (per-pixel EMA)
 
     var isLoaded: Bool { lock.withLock { model != nil } }
     /// True when a `load(m)` for this model would actually have to build/adopt (drives the loading UI).
@@ -91,7 +92,7 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         lock.lock()
         model = l.model; inputName = l.inputName; inputW = l.inputW; inputH = l.inputH; outputName = l.outputName
         inverse = m.inverse; loadedResource = m.resource
-        smLo = .nan; smHi = .nan                       // new model → forget the old range
+        smLo = .nan; smHi = .nan; prevOut = []         // new model → forget the old range + EMA history
         lock.unlock()
         return true
     }
@@ -137,6 +138,20 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
             if inverse { t = 1 - t }
             out[i] = n + (f - n) * t
         }
+        // Per-pixel temporal EMA on the display metres — monocular depth is NOISY frame-to-frame and
+        // the renderer's EMA is OFF by default (alpha 1 with no EMA Smooth node), so that jitter
+        // rendered as the "breathing / cloth-being-pulled" vortex. New frame weighted 0.55 (rest =
+        // history) → stable cloud with modest lag. Photos are one frame → untouched. // ponytail:
+        // 0.55 is the smooth-vs-lag knob; raise toward 1 for snappier + noisier.
+        lock.lock()
+        if prevOut.count == out.count {
+            let a: Float = 0.55
+            for i in 0..<out.count {
+                out[i] = (out[i] > 0 && prevOut[i] > 0) ? a * out[i] + (1 - a) * prevOut[i] : out[i]
+            }
+        }
+        prevOut = out
+        lock.unlock()
         return (out, w, h)
     }
 
