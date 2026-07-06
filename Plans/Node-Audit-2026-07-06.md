@@ -182,13 +182,31 @@ Round 1 (commit `99d5920`), and what Round 2 covers. Statuses:
 8. DONE **Divide** — sign-preserving divisor guard in the shader (negative divisors work); pinch OUTMAX saturation note added.
 9. DONE **FFT Band** — real: 20 log-spaced auto-gained bands (40 Hz → 8 kHz) from the mic FFT, BAND param picks one.
 
-## Backlog (needs its own render/engine work — not in Round 2)
+## Round 3 — DONE (backlog implementation, commits 23300ac…)
 
-- Bloom / Grain / Vignette / Render Settings post stages
-- Background gradient (needs a fullscreen pass, solid color works today)
-- Material / Look At / Stem profile shading features
-- Domain topologies (hex/radial/spiral/scatter/perspective), UV Transform, Edge Policy
-- Accumulate / Smooth Surface / Despeckle Voxel / Detail Upsample cleanup passes
-- OSC In/Out engine; Macro grouping; multiple Lights; Confidence texture; Proximity depth-stats
+- **Post stack real** (phase A): scene renders offscreen; one composite applies Background
+  (solid + radial GRADIENT), Bloom (bright-pass + gaussian), Vignette, animated Grain.
+  Render Settings GHOST = additive, depth-test-off hologram blending. Applies to the view,
+  NDI and Record outputs alike; ALPHA outputs stay keyed.
+- **Material / Look At / Lights / Stem** (phase B): unlit / lit (roughness + metallic
+  speculars) / matcap shading; up to 4 simultaneous Lights; Look At orients every pin to a
+  drivable point; Stem profiles square/round/blade with THICKNESS + TAPER.
+- **Domain / UV Transform / Edge Policy** (phase C): rect·hex·radial·spiral·scatter·
+  perspective lattices with a live A→B MORPH; pan/zoom/rotate the image under the pins;
+  fade/clamp pins at the frame border.
+- **Cleanup passes** (phase D): Despeckle Voxel, Smooth Surface (bilateral), Accumulate
+  (temporal) — real GPU passes chained after fill-holes + EMA.
+- **Proximity + OSC** (phase E): Proximity reads the nearest subject live (nearness +
+  entered trigger); OSCEngine listens on UDP :9000 (/points/mod/1-8) and broadcasts
+  /points/out/1-8 on :9001; OSC In/Out nodes real with SLOT params.
+
+## Remaining backlog
+
+- Detail Upsample (JBU joint bilateral upsample) — description says NOT WIRED UP YET
+- Confidence texture — AVFoundation depth exposes no confidence map; needs ARKit
+- Macro grouping — editor feature (collapse/expand node groups)
+- Sticky Note on-canvas text editing is settings-bar only (no inline card editing)
+- Specular view-direction is approximated as frontal; pass the real eye if orbit speculars read wrong
+- OSC broadcast may need the multicast entitlement on device; receiving on :9000 is unaffected
 - On-device check: hand chirality may be swapped on the mirrored front camera (code comment flags where to swap)
 - Live Depth model issues (from Plans/TESTINGDoc.md §Live Depth) — separate work item
