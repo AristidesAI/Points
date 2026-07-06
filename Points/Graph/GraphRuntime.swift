@@ -113,6 +113,9 @@ final class GraphRuntime {
             w.toNode == pd.id && (graph.node(w.fromNode).map { Self.importedMediaIDs.contains($0.specID) } ?? false)
         }
     }
+    /// Any Live Depth Model node in the graph (wired or not) — presence triggers model preload so
+    /// wiring it into Point Display never freezes on a cold model build.
+    var firstLiveDepthNode: GraphNode? { graph.nodes.first { $0.specID == "live-depth" } }
     /// The Live Depth Model node wired into Point Display (to read its model/lens choice), or nil.
     var liveDepthNode: GraphNode? {
         guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }),
