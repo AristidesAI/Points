@@ -13,55 +13,8 @@ import Observation
 // decodes video frames; a single photo bakes one frame. The PointsDepth writer + sequential looper
 // (playback as a point cloud) are the next milestone; for now the bake proves the model + pipeline.
 
-// MARK: - Depth model abstraction
-
-struct DepthResult: Sendable {
-    var width: Int
-    var height: Int
-    var depth: [Float]         // per-pixel depth (row-major, W*H). MoGe-2 gives metric-ish depth.
-    var metricScale: Float     // MoGe-2 metric_scale (multiply depth for metres)
-    /// Metric depth in metres — what the renderer's shader expects. // ponytail: calibration point if
-    /// the point cloud reads flat/inverted, tune here or the Depth node's near/far.
-    var metres: [Float] { metricScale > 0 && metricScale != 1 ? depth.map { $0 * metricScale } : depth }
-}
-
-protocol DepthModel: Sendable {
-    var displayName: String { get }
-    func prepare() async throws                    // load / warm-up (compiles on first run)
-    func bake(_ image: CGImage) async throws -> DepthResult
-}
-
-/// MoGe-2 (ViT-B, 504²) — the bundled, already-converted model. Runs on the ANE. Direct `depth`
-/// output + `metric_scale`. Model file is git-ignored (202 MB) — see .gitignore / the plan doc.
-nonisolated final class MoGe2DepthModel: DepthModel, @unchecked Sendable {
-    let displayName = "MoGe-2 (ViT-B 504)"
-    private var model: MoGe2_ViTB_Normal_504?
-
-    func prepare() async throws {
-        let cfg = MLModelConfiguration()
-        cfg.computeUnits = .cpuAndNeuralEngine     // ANE (background-legal); keeps the GPU free
-        model = try await MoGe2_ViTB_Normal_504.load(configuration: cfg)
-    }
-
-    func bake(_ image: CGImage) async throws -> DepthResult {
-        guard let model else { throw NSError(domain: "MoGe2", code: 1,
-                                             userInfo: [NSLocalizedDescriptionKey: "Model not loaded"]) }
-        let input = try MoGe2_ViTB_Normal_504Input(imageWith: image)   // resizes to 504×504 ARGB
-        let out = try await model.prediction(input: input)
-        // Read via MLShapedArray.scalars — it honours the array's shape/strides and returns clean
-        // row-major values. Reading MLMultiArray.dataPointer linearly sheared each row (ANE outputs
-        // are row-padded), which showed up as diagonal bands in the preview.
-        let sa = out.depthShapedArray                                  // MLShapedArray<Float16>
-        let shape = sa.shape
-        let w = shape.last ?? 0
-        let h = shape.count >= 2 ? shape[shape.count - 2] : 1
-        let scalars = sa.scalars                                       // logical row-major
-        var depth = [Float](repeating: 0, count: scalars.count)
-        for i in scalars.indices { depth[i] = Float(scalars[i]) }
-        let scale = out.metric_scaleShapedArray.scalars.first.map(Float.init) ?? 1
-        return DepthResult(width: w, height: h, depth: depth, metricScale: scale)
-    }
-}
+// The depth model + generic inference now live in DepthModelRunner (shared with the live engine), so
+// the bake can use ANY bundled model, chosen on the import page.
 
 // MARK: - Import options
 
@@ -111,7 +64,7 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     var etaSeconds: Double { fps > 0 ? Double(max(totalFrames - currentFrame, 0)) / fps : 0 }
     var isRunning: Bool { stage == .preparing || stage == .baking }
 
-    private let model = MoGe2DepthModel()
+    private let runner = DepthModelRunner()
     private var bakeTask: Task<Void, Never>?
 
     // MARK: background task (keeps the bake alive + drives the Dynamic Island when minimised)
@@ -133,15 +86,15 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
 
     // MARK: control
 
-    func start(url: URL, isVideo: Bool, options: BakeOptions) {
+    func start(url: URL, isVideo: Bool, options: BakeOptions, model: LiveModel) {
         guard !isRunning else { return }
         sourceName = url.lastPathComponent
         stage = .preparing; progress = 0; currentFrame = 0; totalFrames = 0; fps = 0; previewImage = nil
         BakeShared.snapshot.reset()
         submitBackgroundTask()
-        let model = self.model
+        let runner = self.runner
         bakeTask = Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.prepareAndBake(url: url, isVideo: isVideo, model: model)
+            await self?.prepareAndBake(url: url, isVideo: isVideo, runner: runner, model: model)
         }
     }
 
@@ -185,20 +138,20 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
 
     // MARK: bake loop (off main; publishes back to MainActor)
 
-    private nonisolated func prepareAndBake(url: URL, isVideo: Bool, model: MoGe2DepthModel) async {
+    private nonisolated func prepareAndBake(url: URL, isVideo: Bool, runner: DepthModelRunner, model: LiveModel) async {
+        guard runner.load(model) else { await finish(.failed("Couldn't load \(model.name)")); return }
+        if Task.isCancelled || BakeShared.snapshot.cancelled { await finish(.cancelled); return }
+        await MainActor.run { self.stage = .baking }
         do {
-            try await model.prepare()
-            if Task.isCancelled || BakeShared.snapshot.cancelled { await finish(.cancelled); return }
-            await MainActor.run { self.stage = .baking }
-            if isVideo { try await bakeVideo(url: url, model: model) }
-            else { try await bakePhoto(url: url, model: model) }
+            if isVideo { try await bakeVideo(url: url, runner: runner) }
+            else { try await bakePhoto(url: url, runner: runner) }
             await finish(BakeShared.snapshot.cancelled ? .cancelled : .done)
         } catch {
             await finish(.failed(error.localizedDescription))
         }
     }
 
-    private nonisolated func bakePhoto(url: URL, model: MoGe2DepthModel) async throws {
+    private nonisolated func bakePhoto(url: URL, runner: DepthModelRunner) async throws {
         let ci = CIContext(options: [.useSoftwareRenderer: false])
         guard let img = CIImage(contentsOf: url) else {
             throw NSError(domain: "bake", code: 2, userInfo: [NSLocalizedDescriptionKey: "Can't read image"])
@@ -210,12 +163,14 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
         guard let cg = ci.createCGImage(up, from: up.extent) else {
             throw NSError(domain: "bake", code: 2, userInfo: [NSLocalizedDescriptionKey: "Can't render image"])
         }
-        let r = try await model.bake(cg)
-        await record(metres: r.metres, w: r.width, h: r.height, frame: 1, total: 1, fps: 0,
-                     playbackFPS: 0, isVideo: false, first: true, preview: Self.preview(from: r))
+        guard let (metres, w, h) = runner.depth(cg) else {
+            throw NSError(domain: "bake", code: 4, userInfo: [NSLocalizedDescriptionKey: "Inference failed"])
+        }
+        await record(metres: metres, w: w, h: h, frame: 1, total: 1, fps: 0,
+                     playbackFPS: 0, isVideo: false, first: true, preview: Self.preview(metres, w, h))
     }
 
-    private nonisolated func bakeVideo(url: URL, model: MoGe2DepthModel) async throws {
+    private nonisolated func bakeVideo(url: URL, runner: DepthModelRunner) async throws {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw NSError(domain: "bake", code: 3, userInfo: [NSLocalizedDescriptionKey: "No video track"])
@@ -246,28 +201,27 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             guard read % stride == 0, let pb = CMSampleBufferGetImageBuffer(sample) else { continue }
             let cgi = CIImage(cvPixelBuffer: pb).transformed(by: transform)   // upright per track transform
             guard let cg = ci.createCGImage(cgi, from: cgi.extent) else { continue }
-            let r = try await model.bake(cg)
+            guard let (metres, w, h) = runner.depth(cg) else { continue }
             baked += 1
             let elapsed = Date().timeIntervalSince(started)
-            await record(metres: r.metres, w: r.width, h: r.height, frame: baked, total: total,
+            await record(metres: metres, w: w, h: h, frame: baked, total: total,
                          fps: elapsed > 0 ? Double(baked) / elapsed : 0,
-                         playbackFPS: playbackFPS, isVideo: true, first: baked == 1, preview: Self.preview(from: r))
+                         playbackFPS: playbackFPS, isVideo: true, first: baked == 1, preview: Self.preview(metres, w, h))
         }
     }
 
     // MARK: depth → grayscale preview
 
     /// Normalise depth (near = bright), ignoring non-finite values.
-    private nonisolated static func preview(from r: DepthResult) -> DepthPreview? {
-        let w = r.width, h = r.height
-        guard w > 0, h > 0, r.depth.count >= w * h else { return nil }
+    private nonisolated static func preview(_ depth: [Float], _ w: Int, _ h: Int) -> DepthPreview? {
+        guard w > 0, h > 0, depth.count >= w * h else { return nil }
         var lo = Float.greatestFiniteMagnitude, hi = -Float.greatestFiniteMagnitude
-        for v in r.depth where v.isFinite { lo = min(lo, v); hi = max(hi, v) }
+        for v in depth where v.isFinite { lo = min(lo, v); hi = max(hi, v) }
         guard hi > lo else { return nil }
         var px = [UInt8](repeating: 0, count: w * h)
         let inv = 1 / (hi - lo)
         for i in 0..<(w * h) {
-            let v = r.depth[i]
+            let v = depth[i]
             px[i] = v.isFinite ? UInt8(max(0, min(1, (hi - v) * inv)) * 255) : 0   // near→white
         }
         return DepthPreview(pixels: px, width: w, height: h)

@@ -14,6 +14,7 @@ struct VideoImportView: View {
     @State private var bake = DepthBakeManager()
     @State private var picked: (url: URL, isVideo: Bool)?
     @State private var options = BakeOptions()
+    @State private var modelName = LiveModel.pickerNames.first ?? "Metric Video DA S"
     @State private var showPicker = false
 
     var body: some View {
@@ -38,8 +39,8 @@ struct VideoImportView: View {
     // MARK: setup
 
     private var setupScreen: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header("Import depth", "One-time on-device MoGe-2 bake → depth. Photo or video.")
+        VStack(alignment: .leading, spacing: 16) {
+            header("Import depth", "One-time on-device bake with your chosen model. Photo or video.")
             Button { showPicker = true } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "photo.badge.plus")
@@ -52,16 +53,17 @@ struct VideoImportView: View {
             }
             .buttonStyle(.plain)
 
+            modelPicker
             if let p = picked {
-                Text(p.isVideo ? "Video → MoGe-2 per frame (sampled ~6 fps for this test)."
-                               : "Photo → a single MoGe-2 bake.")
+                Text(p.isVideo ? "Video → baked per frame (sampled ~6 fps), then loops on the canvas."
+                               : "Photo → a single bake.")
                     .font(.system(size: 10)).foregroundStyle(Theme.text2)
-                picker("SCENE", BakeOptions.SceneKind.allCases, options.scene) { options.scene = $0 }
-                picker("QUALITY", BakeOptions.Quality.allCases, options.quality) { options.quality = $0 }
             }
             Spacer()
             Button {
-                if let p = picked { bake.start(url: p.url, isVideo: p.isVideo, options: options) }
+                if let p = picked {
+                    bake.start(url: p.url, isVideo: p.isVideo, options: options, model: LiveModel.named(modelName))
+                }
             } label: {
                 Text("Start processing").font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: .infinity).padding(14)
@@ -71,6 +73,26 @@ struct VideoImportView: View {
             }
             .buttonStyle(.plain).disabled(picked == nil)
             closeButton
+        }
+    }
+
+    /// Horizontal-scroll model picker — pick which depth model bakes the import.
+    private var modelPicker: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("MODEL").font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(LiveModel.pickerNames, id: \.self) { name in
+                        Text(name).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .background(modelName == name ? Theme.text : Theme.panel)
+                            .foregroundStyle(modelName == name ? Color.black : Theme.text)
+                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .onTapGesture { modelName = name }
+                    }
+                }
+            }
         }
     }
 
