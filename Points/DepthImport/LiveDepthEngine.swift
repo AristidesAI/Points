@@ -42,6 +42,9 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
         let src = CIImage(cvPixelBuffer: bgra)
         guard let cg = ci.createCGImage(src, from: src.extent),
               let (metres, w, h) = runner.depth(cg), let pb = buffer(metres, w, h) else { return }
+        // Approximate intrinsics for METRIC mode — these models are RELATIVE depth (not true metres)
+        // and the RGB frame is already upright, so a nominal ~53° FOV, centred, is close enough.
+        renderer.setIntrinsics(SIMD4(1, 1, 0.5, 0.5))
         renderer.ingest(depth: pb, color: nil, lumaOnly: false)
     }
 

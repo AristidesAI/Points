@@ -2,12 +2,21 @@ import AVFoundation
 import ARKit
 import CoreVideo
 import Observation
+import simd
+
+/// Normalized camera intrinsics (fx/W, fy/H, cx/W, cy/H) from a 3×3 intrinsic matrix + its reference
+/// dimensions. Resolution-independent, so it transfers to any (same-aspect) depth-map size — feeds
+/// Point Display METRIC mode. Identity fallback if calibration is missing.
+nonisolated func normIntrinsics(_ m: matrix_float3x3, _ w: CGFloat, _ h: CGFloat) -> SIMD4<Float> {
+    let W = max(Float(w), 1), H = max(Float(h), 1)
+    return SIMD4(m.columns.0.x / W, m.columns.1.y / H, m.columns.2.x / W, m.columns.2.y / H)
+}
 
 /// Front TrueDepth: AVCapture, depth-master synchronizer, Float32 depth + BGRA color.
 /// @unchecked Sendable: all mutable state is confined to the serial `queue`; `onFrame` is set
 /// once at init before `start()`. Lets `self` be captured in the `@Sendable` queue.async closures.
 nonisolated final class TrueDepthCamera: NSObject, AVCaptureDataOutputSynchronizerDelegate, @unchecked Sendable {
-    var onFrame: (@Sendable (CVPixelBuffer, CVPixelBuffer?, Bool) -> Void)?
+    var onFrame: (@Sendable (CVPixelBuffer, CVPixelBuffer?, Bool, SIMD4<Float>) -> Void)?
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "points.truedepth", qos: .userInteractive)
@@ -129,14 +138,19 @@ nonisolated final class TrueDepthCamera: NSObject, AVCaptureDataOutputSynchroniz
                !vd.sampleBufferWasDropped {
                 color = CMSampleBufferGetImageBuffer(vd.sampleBuffer)
             }
-            onFrame?(depth.depthDataMap, color, false)
+            let cal = depth.cameraCalibrationData
+            let intr = cal.map { normIntrinsics($0.intrinsicMatrix,
+                                                $0.intrinsicMatrixReferenceDimensions.width,
+                                                $0.intrinsicMatrixReferenceDimensions.height) }
+                ?? SIMD4(1, 1, 0.5, 0.5)
+            onFrame?(depth.depthDataMap, color, false, intr)
         }
     }
 }
 
 /// Back LiDAR: ARKit sceneDepth (256×192 Float32) + capturedImage luma plane.
 nonisolated final class LiDARCamera: NSObject, ARSessionDelegate {
-    var onFrame: (@Sendable (CVPixelBuffer, CVPixelBuffer?, Bool) -> Void)?
+    var onFrame: (@Sendable (CVPixelBuffer, CVPixelBuffer?, Bool, SIMD4<Float>) -> Void)?
     private let session = ARSession()
 
     static var isSupported: Bool {
@@ -167,8 +181,10 @@ nonisolated final class LiDARCamera: NSObject, ARSessionDelegate {
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard let sd = frame.sceneDepth else { return }
-        // Extract pixel buffers only — never retain the ARFrame past this call.
-        onFrame?(sd.depthMap, frame.capturedImage, true)
+        // Extract pixel buffers + intrinsics only — never retain the ARFrame past this call.
+        let intr = normIntrinsics(frame.camera.intrinsics,
+                                  frame.camera.imageResolution.width, frame.camera.imageResolution.height)
+        onFrame?(sd.depthMap, frame.capturedImage, true, intr)
     }
 }
 
@@ -199,11 +215,13 @@ final class SourceManager {
     init(renderer: PinRenderer) {
         self.renderer = renderer
         let r = renderer, v = vision
-        front.onFrame = { depth, color, luma in
+        front.onFrame = { depth, color, luma, intr in
+            r.setIntrinsics(intr)                            // METRIC-mode unprojection
             r.ingest(depth: depth, color: color, lumaOnly: luma)
             if let c = color { v.process(c, front: true) }
         }
-        back.onFrame = { depth, color, luma in
+        back.onFrame = { depth, color, luma, intr in
+            r.setIntrinsics(intr)
             r.ingest(depth: depth, color: color, lumaOnly: luma)
             if let c = color { v.process(c, front: false) }
         }

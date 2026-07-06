@@ -14,6 +14,7 @@ struct Uniforms {
     float4 lookAt;         // Look At node: xyz target (view units), w amount (0 = off)
     float4 stemParams;     // Stem node: x profile (0 square / 1 round / 2 blade), y taper, z thickness×, w unused
     float4 eyePos;         // camera eye (world/view units) — real view dir for speculars under orbit
+    float4 camIntrin;      // Point Display METRIC mode: fx_n, fy_n, cx_n, cy_n (normalized intrinsics)
 };
 
 // Field order MUST match VMParams in PinRenderer.swift.
@@ -345,6 +346,29 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 if (U.orient & 1u) s = s.yx;
                 float2 freeXY = float2(s.x * 2.0 * U.extX, -s.y * 2.0 * U.extY);
                 r = float4(freeXY - baseXY, 0.0, 0.0);
+                break;
+            }
+            case 47: {                                                          // unprojectXY (METRIC mode)
+                // Real camera-intrinsics unprojection: worldX = (u-cx)/fx · Z, worldY = (v-cy)/fy · Z.
+                // Because X/Y are TRUE metres, an object keeps its real size — so when it moves away
+                // (Z grows) the fixed perspective camera makes it recede + shrink, like TDLidar.
+                // imm.x = scale (metres → view units). camIntrin = fx_n,fy_n,cx_n,cy_n (normalized).
+                float z = depthTex.sample(smp, duv).r;
+                if (!(z > 0.02) || !isfinite(z)) { r = float4(0.0); keep = 0.0; break; }
+                float2 m = float2((duv.x - U.camIntrin.z) / max(U.camIntrin.x, 1e-4),
+                                  (duv.y - U.camIntrin.w) / max(U.camIntrin.y, 1e-4)) * z;
+                if (U.orient & 2u) m.x = -m.x;      // sensor XY → screen XY (mirror freeXY's orient undo)
+                if (U.orient & 4u) m.y = -m.y;
+                if (U.orient & 1u) m = m.yx;
+                float2 screen = float2(m.x, -m.y) * ins.imm.x;   // metres × scale; -y = screen up
+                r = float4(screen - baseXY, 0.0, 0.0);           // writePos re-adds baseXY
+                break;
+            }
+            case 48: {                                                          // unprojectZ (METRIC mode)
+                // Metric depth → world Z, framed so nearer = forward. imm.x = scale, imm.y = zRef.
+                float z = depthTex.sample(smp, duv).r;
+                if (!(z > 0.02) || !isfinite(z)) { r = float4(0.0); break; }
+                r = float4((ins.imm.y - z) * ins.imm.x);         // (zRef − z)·scale; ×depthPush in the vertex
                 break;
             }
             case 45: {                                                          // grazeCull (FILTER node)

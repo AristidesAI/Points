@@ -65,6 +65,7 @@ struct PinUniforms {
     var lookAt: SIMD4<Float> = .zero            // target xyz + amount
     var stemParams: SIMD4<Float> = [0, 0, 1, 0] // profile, taper, thickness×, unused
     var eyePos: SIMD4<Float> = [0, 0, 3, 0]     // camera eye — speculars track the orbit
+    var camIntrin: SIMD4<Float> = [1, 1, 0.5, 0.5]  // fx_n, fy_n, cx_n, cy_n (METRIC unproject)
 }
 
 /// Instanced pin-wall renderer. Fixed camera, Z=0 wall, depth pulls pins toward the camera.
@@ -159,6 +160,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     // Tweakables (set from UI; plain stores guarded by lock for MVP)
     private var _pinCount: Int = 30_000
     private var _orient: UInt32 = 1
+    private var _camIntrin: SIMD4<Float> = [1, 1, 0.5, 0.5]   // METRIC-mode normalized intrinsics
     private var _zGain: Float = 1.2
     private var _pinScale: Float = 1.0
     private var _stemsOn = true
@@ -218,6 +220,8 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     func resetFilter() { lock.lock(); pendingReset = true; lock.unlock() }
     func setPinCount(_ n: Int) { lock.lock(); _pinCount = max(64, min(n, Self.maxPins)); lock.unlock() }
     func setOrient(_ o: UInt32) { lock.lock(); _orient = o & 7; lock.unlock() }
+    /// Normalized camera intrinsics (fx/W, fy/H, cx/W, cy/H) for Point Display METRIC unprojection.
+    func setIntrinsics(_ v: SIMD4<Float>) { lock.lock(); _camIntrin = v; lock.unlock() }
     func setZGain(_ g: Float) { lock.lock(); _zGain = max(0, min(g, 3)); lock.unlock() }
     func setPinScale(_ s: Float) { lock.lock(); _pinScale = max(0.2, min(s, 3)); lock.unlock() }
     func setStems(_ on: Bool) { lock.lock(); _stemsOn = on; lock.unlock() }
@@ -250,6 +254,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         pendingColor = nil
         pendingReset = false
         let count = _pinCount, orientNow = _orient, pinScaleNow = _pinScale, stemsNow = _stemsOn
+        let camIntrinNow = _camIntrin
         let colorOn = _colorEnabled
         lock.unlock()
 
@@ -329,6 +334,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let (viewProj, eye) = Self.buildCamera(frame.camera, aspect: viewAspect)
         var u = PinUniforms(viewProj: viewProj)
         u.eyePos = SIMD4(eye, 0)
+        u.camIntrin = camIntrinNow
         u.cols = UInt32(cols); u.rows = UInt32(rows); u.count = UInt32(actual)
         u.orient = orientNow
         u.zWorldScale = frame.camera.depthPush

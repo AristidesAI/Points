@@ -48,6 +48,9 @@ enum PinOp: UInt32 {
     case freeXY = 44       // dst = TDLidar free-cloud XY offset; imm=(separation, focusM, 0, 0); holes hide via keep flag
     case grazeCull = 45    // dst = a (passthrough); imm=(grazing01, edgeThreshM, 0, 0); culls via kernel keep flag
     case noise3 = 46       // dst = 3D noise [-1,1]; a.x optional z-drive; imm=(freq, seed, packed[ty+axis*10+aspect*100], timeMove)
+    // Point Display METRIC mode — real camera-intrinsics unprojection (U.camIntrin = fx_n,fy_n,cx_n,cy_n):
+    case unprojectXY = 47  // dst = metric XY offset = (u-cx)/fx·z, (v-cy)/fy·z (metres × imm.x scale); holes hide via keep
+    case unprojectZ = 48   // dst = metric Z = (imm.y zRef − z)·imm.x scale → farther recedes (true perspective size)
     case writeRot = 55     // rotAcc += a.xyz (euler turns) — Rotation/Spin → Output.rotation
     case writeStretch = 56 // stretchAcc *= a.xyz — Stretch → Output.stretch
     case writeShape = 57   // shapeMorph = a.x (0 sphere → 1 cube) — Shape/Shape Morph → Output.shape

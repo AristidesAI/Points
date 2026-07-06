@@ -93,7 +93,7 @@ final class NodeRegistry: @unchecked Sendable {
             outputs: [PortSpec("position", .fieldVec3), PortSpec("z", .fieldFloat)],
             params: [.float("separation", 0...3, 1), .float("volume", 0...2, 0),
                      .float("wobble", 0...0.5, 0), .float("gain", 0...3, 1.2),
-                     .option("mode", ["free", "pinout"], "free"),
+                     .option("mode", ["free", "pinout", "metric"], "free"),
                      .bool("arms", false),
                      .float("focus", 0.3...3, 1.0),
                      .float("gamma", 0.25...4, 1), .float("zFlatten", 0...1, 1),
@@ -102,7 +102,23 @@ final class NodeRegistry: @unchecked Sendable {
             description: "How the pins hold together. FREE = the TDLidar TrueDepth point cloud: pixels fan into a real frustum; FOCUS is the depth that stays put. PINOUT locks XY to the fixed grid (EDGE LOCK pins the outer ring). ARMS pull every point back to its Z-origin pin (off = freestanding cloud). SEPARATION spreads, VOLUME opens with depth, WOBBLE adds sensor life; GAIN/GAMMA/Z-FLATTEN shape the forward push. Cleanup (grazing cull, EMA, hole fill…) lives in red FILTER nodes between Depth and here.",
             emit: { b, inputs, node in
                 let d = b.materialize(inputs[0], default: .zero)
-                let free = node.option("mode", "free") == "free"
+                let mode = node.option("mode", "free")
+                // METRIC: real camera-intrinsics unprojection to metric XYZ — objects keep true size,
+                // so moving away shrinks them (TDLidar 1:1). SEPARATION = metres→view scale, FOCUS =
+                // reference depth (sits at the wall). Needs DEPTHPUSH ≥ 1 (multiplies the metric Z).
+                if mode == "metric" {
+                    let scale = node.float("separation", 1), zRef = node.float("focus", 1)
+                    let mxy = b.reg(), mz = b.reg()
+                    b.emitPatched(PinInstruction(.unprojectXY, dst: mxy, a: d, imm: [scale, 0, 0, 0]),
+                                  key: "\(node.id).xy", lanes: [0])
+                    b.addPatchKey("\(node.id).separation", lane: 0)
+                    b.emitPatched(PinInstruction(.unprojectZ, dst: mz, a: d, imm: [scale, zRef, 0, 0]),
+                                  key: "\(node.id).z", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).separation", lane: 0)
+                    b.addPatchKey("\(node.id).focus", lane: 1)
+                    return [mxy, mz]
+                }
+                let free = mode == "free"
                 let edge: Float = (!free && node.float("edgeLock") > 0.5) ? 1 : 0
                 let xy = b.reg()
                 if free {

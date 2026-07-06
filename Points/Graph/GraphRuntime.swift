@@ -311,6 +311,14 @@ final class GraphRuntime {
                 p("cam", "fov", 15); p("cam", "zoom", 2); p("cam", "parallax", 1); p("cam", "depthPush", 3)
                 p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
             }
+        } else if mode == "metric" {
+            // Real-intrinsics metric cloud (1:1 with reality). SEPARATION = metres→view scale, FOCUS =
+            // reference depth (sits at the wall — raise to ~3 for room-scale LiDAR). DEPTHPUSH scales Z.
+            p(pdID, "separation", 2.5); p(pdID, "focus", 1.0)
+            if hasCam {
+                p("cam", "fov", 55); p("cam", "zoom", 1); p("cam", "parallax", 0.3); p("cam", "depthPush", 1)
+                p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
+            }
         } else {   // free = registry defaults
             p(pdID, "separation", 1); p(pdID, "volume", 0); p(pdID, "wobble", 0)
             p(pdID, "gain", 1.2); p(pdID, "focus", 1); p(pdID, "gamma", 1); p(pdID, "zFlatten", 1)
