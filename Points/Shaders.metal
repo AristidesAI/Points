@@ -504,6 +504,74 @@ fragment float4 pin_fragment(VOut in [[stage_in]],
     return float4(c, 1.0);
 }
 
+// ============================================================================
+// POST STACK — scene renders offscreen, then one composite pass applies the
+// STAGE nodes: Background (solid + radial gradient), Bloom (bright-pass +
+// gaussian, added here), Vignette, Grain. Runs for the view, NDI and Record.
+// ============================================================================
+struct PostParams {
+    float4 bg;     // rgb = Background node color, w = gradient amount
+    float4 fx;     // x bloomIntensity, y vignette, z grain, w time
+    float4 misc;   // x alphaKey (1 = transparent bg out), y bloomOn, z/w unused
+};
+
+struct PostVOut {
+    float4 pos [[position]];
+    float2 uv;
+};
+
+vertex PostVOut post_vertex(uint vid [[vertex_id]]) {
+    // fullscreen triangle
+    float2 p = float2(vid == 1 ? 3.0 : -1.0, vid == 2 ? 3.0 : -1.0);
+    PostVOut o;
+    o.pos = float4(p, 0.0, 1.0);
+    o.uv = float2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    return o;
+}
+
+fragment float4 post_composite(PostVOut in [[stage_in]],
+                               texture2d<float> scene [[texture(0)]],
+                               texture2d<float> bloom [[texture(1)]],
+                               constant PostParams &P [[buffer(0)]]) {
+    constexpr sampler smp(filter::linear, address::clamp_to_edge);
+    float4 s = scene.sample(smp, in.uv);
+    float3 c;
+    if (P.misc.x > 0.5) {
+        c = s.rgb;                                        // alpha-keyed: no background painted
+    } else {
+        float3 bg = P.bg.rgb;
+        if (P.bg.w > 0.001) {                             // radial gradient: centre glow → dark edges
+            float d = distance(in.uv, float2(0.5));
+            bg *= mix(1.0, clamp(1.45 - d * 1.9, 0.0, 1.0), P.bg.w);
+        }
+        c = mix(bg, s.rgb, clamp(s.a, 0.0, 1.0));
+    }
+    if (P.misc.y > 0.5) c += bloom.sample(smp, in.uv).rgb * P.fx.x;
+    if (P.fx.y > 0.001) {                                 // vignette
+        float d = distance(in.uv, float2(0.5));
+        c *= 1.0 - P.fx.y * smoothstep(0.35, 0.78, d);
+    }
+    if (P.fx.z > 0.001) {                                 // film grain, refreshed per frame
+        float g = hash01(dot(in.pos.xy, float2(1.0, 787.0)) + fract(P.fx.w) * 4096.0) - 0.5;
+        c = max(c + g * P.fx.z * 0.28, float3(0.0));
+    }
+    return float4(c, P.misc.x > 0.5 ? clamp(s.a, 0.0, 1.0) : 1.0);
+}
+
+// Bright-pass into a half-res texture; blurred by MPS, added back in post_composite.
+kernel void bloom_brightpass(texture2d<float, access::sample> scene [[texture(0)]],
+                             texture2d<float, access::write> outT [[texture(1)]],
+                             constant float &threshold [[buffer(0)]],
+                             uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= outT.get_width() || gid.y >= outT.get_height()) return;
+    constexpr sampler smp(filter::linear, address::clamp_to_edge);
+    float2 uv = (float2(gid) + 0.5) / float2(outT.get_width(), outT.get_height());
+    float4 s = scene.sample(smp, uv);
+    float3 c = s.rgb * s.a;
+    float luma = dot(c, float3(0.299, 0.587, 0.114));
+    outT.write(float4(c * smoothstep(threshold, threshold + 0.25, luma), 1.0), gid);
+}
+
 // ---- Temporal depth filter — TDLidar temporalDepthEMA port. Deadband HYSTERESIS HOLD
 //      (zero jitter on static scenes) + velocity-adaptive alpha (motion pushes alpha → 1,
 //      so movement never lags). State ping-pong: .r = emaZ, .g = jitter-energy velocity.

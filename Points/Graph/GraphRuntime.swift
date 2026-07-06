@@ -30,9 +30,11 @@ struct ProgramFrame {
     var depthStabilize: Float = 0     // EMA Smooth node amount (no node = raw depth)
     var holePersist = false           // Fill Holes node present + on
     var stems = false                 // Point Display "arms" — pull points back to their Z pins
-    var background: SIMD4<Float> = [0, 0, 0, 1]   // Background node → clear color
+    var background: SIMD4<Float> = [0, 0, 0, 0]   // Background node: rgb + gradient amount
     var lightPos: SIMD4<Float> = .zero            // Light node (w = type); lightParams.z = enabled
     var lightParams: SIMD4<Float> = .zero
+    var post: SIMD4<Float> = .zero                // bloomThreshold, bloomIntensity, grain, vignette
+    var ghost = false                             // Render Settings: additive ghost blending
 }
 
 /// Owns the live graph: compiles it to a pin program, evaluates control-rate nodes,
@@ -1053,10 +1055,10 @@ final class GraphRuntime {
         let fill = graph.nodes.first { $0.specID == "fill-holes" }
         let stems = graph.node("pd")?.float("arms", 0) ?? 0
 
-        // STAGE sinks read by the renderer (like Camera): Background → clear color, Light → shading.
-        var bg = SIMD4<Float>(0, 0, 0, 1)
+        // STAGE sinks read by the renderer (like Camera): Background, Light, and the post stack.
+        var bg = SIMD4<Float>(0, 0, 0, 0)
         if let b = graph.nodes.first(where: { $0.specID == "background" }) {
-            bg = [b.float("r", 0), b.float("g", 0), b.float("b", 0), 1]
+            bg = [b.float("r", 0), b.float("g", 0), b.float("b", 0), b.float("gradient", 0)]
         }
         var lightPos = SIMD4<Float>.zero, lightParams = SIMD4<Float>.zero
         if let l = graph.nodes.first(where: { $0.specID == "light" }) {
@@ -1065,6 +1067,14 @@ final class GraphRuntime {
             lightPos = [l.float("x", 0.5), l.float("y", 0.8), l.float("z", 2), type]
             lightParams = [l.float("intensity", 1), l.float("falloff", 1), 1, 0]
         }
+        var post = SIMD4<Float>.zero   // (bloomThreshold, bloomIntensity, grain, vignette)
+        if let n = graph.nodes.first(where: { $0.specID == "bloom" }) {
+            post.x = n.float("threshold", 0.7); post.y = n.float("intensity", 0.4)
+        }
+        if let n = graph.nodes.first(where: { $0.specID == "grain" }) { post.z = n.float("amount", 0.2) }
+        if let n = graph.nodes.first(where: { $0.specID == "vignette" }) { post.w = n.float("amount", 0.3) }
+        let ghost = graph.nodes.first { $0.specID == "render-settings" }
+            .map { $0.option("blend", "solid") == "ghost" } ?? false
 
         return ProgramFrame(instructions: workingInstructions,
                             stateStride: compiled.stateFloatsPerPin,
@@ -1076,7 +1086,8 @@ final class GraphRuntime {
                             holePersist: fill.map { $0.float("persist", 1) > 0.5 } ?? false,
                             stems: stems > 0.5,
                             background: bg,
-                            lightPos: lightPos, lightParams: lightParams)
+                            lightPos: lightPos, lightParams: lightParams,
+                            post: post, ghost: ghost)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.

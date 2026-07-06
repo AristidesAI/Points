@@ -1,5 +1,6 @@
 import Metal
 import MetalKit
+import MetalPerformanceShaders
 import CoreVideo
 import simd
 import SwiftUI
@@ -33,6 +34,13 @@ struct EmaParamsSwift {
     var holePersist: Float = 1, reset: Float = 0, pad0: Float = 0, pad1: Float = 0
 }
 
+// Field order MUST match PostParams in Shaders.metal.
+struct PostParamsSwift {
+    var bg: SIMD4<Float> = .zero     // Background rgb + gradient
+    var fx: SIMD4<Float> = .zero     // bloomIntensity, vignette, grain, time
+    var misc: SIMD4<Float> = .zero   // alphaKey, bloomOn
+}
+
 // Field order MUST match Uniforms in Shaders.metal.
 struct PinUniforms {
     var viewProj: simd_float4x4
@@ -52,10 +60,24 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private var pipeline: MTLRenderPipelineState!
+    private var ghostPipeline: MTLRenderPipelineState!    // Render Settings GHOST: additive, no depth
+    private var postPipeline: MTLRenderPipelineState!     // composite: background/bloom/vignette/grain
+    private var brightPipeline: MTLComputePipelineState!  // bloom bright-pass
+    private var bloomBlur: MPSImageGaussianBlur!
     private var emaPipeline: MTLComputePipelineState!
     private var fillPipeline: MTLComputePipelineState!    // depth hole-fill (IR-shadow closer)
     private var depthState: MTLDepthStencilState!
+    private var depthStateGhost: MTLDepthStencilState!    // always pass, no write
     private var textureCache: CVMetalTextureCache!
+
+    /// Offscreen set per output (view / NDI / Record): scene color+depth, half-res bloom pair.
+    private struct SceneTargets {
+        let color: MTLTexture, depth: MTLTexture, bright: MTLTexture, blur: MTLTexture
+        var w: Int { color.width }; var h: Int { color.height }
+    }
+    private var mainTargets: SceneTargets?
+    private var ndiSceneTargets: SceneTargets?
+    private var recSceneTargets: SceneTargets?
 
     // Meshes (interleaved pos+normal, stride 32)
     private var sphereHi: Mesh!, sphereLo: Mesh!, stemBox: Mesh!
@@ -257,10 +279,6 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         u.zWorldScale = frame.camera.depthPush
         u.lightPos = frame.lightPos
         u.lightParams = frame.lightParams
-        // Background node → clear color (solid; gradient is a later render stage)
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: Double(frame.background.x),
-                                                           green: Double(frame.background.y),
-                                                           blue: Double(frame.background.z), alpha: 1)
         // pin size scales with grid pitch so pins tile the wall at any density
         let pitch = 3.0 / Float(cols - 1)
         u.pinSize = pitch * 0.42 * pinScaleNow
@@ -316,36 +334,20 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             enc.endEncoding()
         }
 
-        // 7. Instanced draws from the interpreter's output
+        // 7. Scene pass offscreen, then the post composite (Background/Bloom/Vignette/Grain)
+        //    into the drawable. NDI/Record repeat the same path at their own sizes.
         let hiDetail = actual <= 100_000
         let capMesh = hiDetail ? sphereHi! : sphereLo!
         // arms = Point Display node param (graph is the truth); menu cube toggles that param
         let drawStems = frame.stems && stemsNow && actual <= 150_000
 
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
-        enc.setRenderPipelineState(pipeline)
-        enc.setDepthStencilState(depthState)
-        enc.setCullMode(.back)
-        enc.setFrontFacing(.counterClockwise)
-        enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
-
-        if drawStems {
-            u.isStem = 1
-            enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
-                                      indexType: .uint16, indexBuffer: stemBox.indices,
-                                      indexBufferOffset: 0, instanceCount: actual)
+        ensureSceneTargets(&mainTargets, w: max(Int(dsize.width), 4), h: max(Int(dsize.height), 4))
+        if let targets = mainTargets {
+            encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
+                        actual: actual, capMesh: capMesh, drawStems: drawStems)
+            if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x) }
+            encodePost(cmd: cmd, targets: targets, rpd: rpd, frame: frame, alphaKey: false)
         }
-        u.isStem = 0
-        enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-        enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
-        enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
-                                  indexType: .uint16, indexBuffer: capMesh.indices,
-                                  indexBufferOffset: 0, instanceCount: actual)
-        enc.endEncoding()
 
         // 8. NDI: same instanced draw into an offscreen BGRA pixel buffer at the node's
         //    resolution/aspect, sent to the network after the GPU finishes this buffer.
@@ -392,44 +394,22 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         td.storageMode = .shared
         guard let color = device.makeTexture(descriptor: td, iosurface: surf, plane: 0) else { return }
 
-        let rpd = MTLRenderPassDescriptor()
-        rpd.colorAttachments[0].texture = color
-        rpd.colorAttachments[0].loadAction = .clear
-        rpd.colorAttachments[0].clearColor = cfg.alpha
-            ? MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-            : MTLClearColor(red: Double(frame.background.x), green: Double(frame.background.y),
-                            blue: Double(frame.background.z), alpha: 1)
-        rpd.colorAttachments[0].storeAction = .store
-        rpd.depthAttachment.texture = depth
-        rpd.depthAttachment.loadAction = .clear
-        rpd.depthAttachment.clearDepth = 1.0
-        rpd.depthAttachment.storeAction = .dontCare
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
-
         var u = base
         u.viewProj = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
-        enc.setRenderPipelineState(pipeline)
-        enc.setDepthStencilState(depthState)
-        enc.setCullMode(.back)
-        enc.setFrontFacing(.counterClockwise)
-        enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
-        if drawStems {
-            u.isStem = 1
-            enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
-                                      indexType: .uint16, indexBuffer: stemBox.indices,
-                                      indexBufferOffset: 0, instanceCount: actual)
-        }
-        u.isStem = 0
-        enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-        enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
-        enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
-                                  indexType: .uint16, indexBuffer: capMesh.indices,
-                                  indexBufferOffset: 0, instanceCount: actual)
-        enc.endEncoding()
+        ensureSceneTargets(&ndiSceneTargets, w: w, h: h)
+        guard let targets = ndiSceneTargets else { return }
+        encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
+                    actual: actual, capMesh: capMesh, drawStems: drawStems)
+        if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x) }
+
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = color
+        rpd.colorAttachments[0].loadAction = .dontCare   // composite covers every pixel
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.depthAttachment.texture = depth
+        rpd.depthAttachment.loadAction = .dontCare
+        rpd.depthAttachment.storeAction = .dontCare
+        encodePost(cmd: cmd, targets: targets, rpd: rpd, frame: frame, alphaKey: cfg.alpha)
 
         let n = cfg.fpsN, d = cfg.fpsD
         // pb captured → retained until the send completes (base address valid once GPU done).
@@ -481,44 +461,22 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         td.storageMode = .shared
         guard let color = device.makeTexture(descriptor: td, iosurface: surf, plane: 0) else { return }
 
-        let rpd = MTLRenderPassDescriptor()
-        rpd.colorAttachments[0].texture = color
-        rpd.colorAttachments[0].loadAction = .clear
-        rpd.colorAttachments[0].clearColor = cfg.alpha
-            ? MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-            : MTLClearColor(red: Double(frame.background.x), green: Double(frame.background.y),
-                            blue: Double(frame.background.z), alpha: 1)
-        rpd.colorAttachments[0].storeAction = .store
-        rpd.depthAttachment.texture = depth
-        rpd.depthAttachment.loadAction = .clear
-        rpd.depthAttachment.clearDepth = 1.0
-        rpd.depthAttachment.storeAction = .dontCare
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
-
         var u = base
         u.viewProj = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
-        enc.setRenderPipelineState(pipeline)
-        enc.setDepthStencilState(depthState)
-        enc.setCullMode(.back)
-        enc.setFrontFacing(.counterClockwise)
-        enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
-        if drawStems {
-            u.isStem = 1
-            enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
-                                      indexType: .uint16, indexBuffer: stemBox.indices,
-                                      indexBufferOffset: 0, instanceCount: actual)
-        }
-        u.isStem = 0
-        enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-        enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
-        enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
-                                  indexType: .uint16, indexBuffer: capMesh.indices,
-                                  indexBufferOffset: 0, instanceCount: actual)
-        enc.endEncoding()
+        ensureSceneTargets(&recSceneTargets, w: w, h: h)
+        guard let targets = recSceneTargets else { return }
+        encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
+                    actual: actual, capMesh: capMesh, drawStems: drawStems)
+        if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x) }
+
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = color
+        rpd.colorAttachments[0].loadAction = .dontCare   // composite covers every pixel
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.depthAttachment.texture = depth
+        rpd.depthAttachment.loadAction = .dontCare
+        rpd.depthAttachment.storeAction = .dontCare
+        encodePost(cmd: cmd, targets: targets, rpd: rpd, frame: frame, alphaKey: cfg.alpha)
 
         // pb captured → retained until the append completes (base address valid once GPU done).
         nonisolated(unsafe) let out = pb        // read-only CF handoff to the completion thread
@@ -587,14 +545,123 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         desc.vertexDescriptor = vd
         pipeline = try! device.makeRenderPipelineState(descriptor: desc)
 
+        // GHOST (Render Settings): additive accumulation, no depth occlusion.
+        desc.colorAttachments[0].isBlendingEnabled = true
+        desc.colorAttachments[0].rgbBlendOperation = .add
+        desc.colorAttachments[0].alphaBlendOperation = .add
+        desc.colorAttachments[0].sourceRGBBlendFactor = .one
+        desc.colorAttachments[0].destinationRGBBlendFactor = .one
+        desc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        desc.colorAttachments[0].destinationAlphaBlendFactor = .one
+        ghostPipeline = try! device.makeRenderPipelineState(descriptor: desc)
+
+        // Post composite (fullscreen triangle) — background / bloom / vignette / grain.
+        let post = MTLRenderPipelineDescriptor()
+        post.vertexFunction = lib.makeFunction(name: "post_vertex")
+        post.fragmentFunction = lib.makeFunction(name: "post_composite")
+        post.colorAttachments[0].pixelFormat = .bgra8Unorm
+        post.depthAttachmentPixelFormat = .depth32Float
+        postPipeline = try! device.makeRenderPipelineState(descriptor: post)
+
         emaPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_ema")!)
         fillPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_fill_holes")!)
+        brightPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "bloom_brightpass")!)
         vmPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "pin_program")!)
+        bloomBlur = MPSImageGaussianBlur(device: device, sigma: 6)
 
         let ds = MTLDepthStencilDescriptor()
         ds.depthCompareFunction = .less
         ds.isDepthWriteEnabled = true
         depthState = device.makeDepthStencilState(descriptor: ds)
+        ds.depthCompareFunction = .always
+        ds.isDepthWriteEnabled = false
+        depthStateGhost = device.makeDepthStencilState(descriptor: ds)
+    }
+
+    // MARK: - Scene → post shared encoders (view, NDI and Record all use the same path)
+
+    private func ensureSceneTargets(_ slot: inout SceneTargets?, w: Int, h: Int) {
+        if let t = slot, t.w == w, t.h == h { return }
+        func tex(_ w: Int, _ h: Int, _ fmt: MTLPixelFormat, _ usage: MTLTextureUsage) -> MTLTexture {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: fmt, width: max(w, 4),
+                                                             height: max(h, 4), mipmapped: false)
+            d.usage = usage; d.storageMode = .private
+            return device.makeTexture(descriptor: d)!
+        }
+        slot = SceneTargets(
+            color: tex(w, h, .bgra8Unorm, [.renderTarget, .shaderRead]),
+            depth: tex(w, h, .depth32Float, [.renderTarget]),
+            bright: tex(w / 2, h / 2, .bgra8Unorm, [.shaderRead, .shaderWrite]),
+            blur: tex(w / 2, h / 2, .bgra8Unorm, [.shaderRead, .shaderWrite]))
+    }
+
+    /// Instanced pin pass into an offscreen scene (alpha 0 where empty, so post can lay
+    /// the Background behind). GHOST switches to additive blending with no depth test.
+    private func encodeScene(cmd: MTLCommandBuffer, targets: SceneTargets, u: inout PinUniforms,
+                             frame: ProgramFrame, actual: Int, capMesh: Mesh, drawStems: Bool) {
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = targets.color
+        rpd.colorAttachments[0].loadAction = .clear
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.depthAttachment.texture = targets.depth
+        rpd.depthAttachment.loadAction = .clear
+        rpd.depthAttachment.clearDepth = 1.0
+        rpd.depthAttachment.storeAction = .dontCare
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
+        enc.setRenderPipelineState(frame.ghost ? ghostPipeline : pipeline)
+        enc.setDepthStencilState(frame.ghost ? depthStateGhost : depthState)
+        enc.setCullMode(.back)
+        enc.setFrontFacing(.counterClockwise)
+        enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
+        if drawStems {
+            u.isStem = 1
+            enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
+                                      indexType: .uint16, indexBuffer: stemBox.indices,
+                                      indexBufferOffset: 0, instanceCount: actual)
+        }
+        u.isStem = 0
+        enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
+        enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
+                                  indexType: .uint16, indexBuffer: capMesh.indices,
+                                  indexBufferOffset: 0, instanceCount: actual)
+        enc.endEncoding()
+    }
+
+    /// Bloom: bright-pass at half res, gaussian blur (MPS), sampled back in the composite.
+    private func encodeBloom(cmd: MTLCommandBuffer, targets: SceneTargets, threshold: Float) {
+        guard let enc = cmd.makeComputeCommandEncoder() else { return }
+        enc.setComputePipelineState(brightPipeline)
+        enc.setTexture(targets.color, index: 0)
+        enc.setTexture(targets.bright, index: 1)
+        var th = threshold
+        enc.setBytes(&th, length: MemoryLayout<Float>.stride, index: 0)
+        enc.dispatchThreads(MTLSize(width: targets.bright.width, height: targets.bright.height, depth: 1),
+                            threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+        enc.endEncoding()
+        bloomBlur.encode(commandBuffer: cmd, sourceTexture: targets.bright, destinationTexture: targets.blur)
+    }
+
+    /// Composite the offscreen scene into the output target with the STAGE post nodes applied.
+    private func encodePost(cmd: MTLCommandBuffer, targets: SceneTargets,
+                            rpd: MTLRenderPassDescriptor, frame: ProgramFrame, alphaKey: Bool) {
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
+        enc.setRenderPipelineState(postPipeline)
+        enc.setDepthStencilState(depthStateGhost)   // fullscreen: always pass, no depth write
+        var p = PostParamsSwift()
+        p.bg = frame.background
+        p.fx = [frame.post.y, frame.post.w, frame.post.z, frame.time]
+        p.misc = [alphaKey ? 1 : 0, frame.post.y > 0.001 ? 1 : 0, 0, 0]
+        enc.setFragmentBytes(&p, length: MemoryLayout<PostParamsSwift>.stride, index: 0)
+        enc.setFragmentTexture(targets.color, index: 0)
+        enc.setFragmentTexture(targets.blur, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        enc.endEncoding()
     }
 
     private func buildFallbacks() {

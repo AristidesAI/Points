@@ -1153,22 +1153,30 @@ extension NodeRegistry {
             description: "A stage light replacing the built-in default light the moment you add it. POINT sits at X/Y/Z in front of the wall (FALLOFF dims with distance); DIRECTIONAL uses X/Y/Z as a direction only; SPOT is a soft cone aimed at the cloud centre. Drag X/Y while watching — pins shade toward the light. Delete the node to go back to the default."))
         registerSpec(NodeSpec(
             id: "background", name: "Background", family: .stage,
-            params: [.float("r", 0...1, 0), .float("g", 0...1, 0), .float("b", 0...1, 0)],
+            params: [.float("r", 0...1, 0), .float("g", 0...1, 0), .float("b", 0...1, 0),
+                     .float("gradient", 0...1, 0)],
             execution: .render,
-            description: "The void behind the pins — set its R/G/B and the clear color changes instantly (also behind NDI/Record frames unless ALPHA keys it out). No wires needed: just add the node and drag the sliders."))
-
-        for (id, name, params, desc) in [
-            ("bloom", "Bloom", [ParamSpec.float("threshold", 0...1, 0.7), .float("intensity", 0...2, 0.4)],
-             "Bright pins glow — the signature synth halo."),
-            ("grain", "Grain", [.float("amount", 0...1, 0.2)], "Film grain over the final image."),
-            ("vignette", "Vignette", [.float("amount", 0...1, 0.3)], "Darkens the frame corners."),
-            ("render-settings", "Render Settings", [.option("blend", ["solid", "ghost"], "solid")] as [ParamSpec],
-             "Solid depth-tested pins vs additive ghost blending (the classic cloud look)."),
-        ] {
-            registerSpec(NodeSpec(id: id, name: name, family: .stage, params: params,
-                                  execution: .render,
-                                  description: desc + " · NOT WIRED UP YET: takes effect when its render stage lands."))
-        }
+            description: "The void behind the pins — set its R/G/B and the backdrop changes instantly (also behind NDI/Record frames unless ALPHA keys it out). GRADIENT fades the colour radially: bright centre, dark edges. No wires needed."))
+        registerSpec(NodeSpec(
+            id: "bloom", name: "Bloom", family: .stage,
+            params: [.float("threshold", 0...1, 0.7), .float("intensity", 0...2, 0.4)],
+            execution: .render,
+            description: "Bright pins glow — the signature synth halo. THRESHOLD picks how bright a pin must be to bloom; INTENSITY sets the halo strength. Pairs beautifully with Palette's hot ends and Strobe Color flashes. Just add the node."))
+        registerSpec(NodeSpec(
+            id: "grain", name: "Grain", family: .stage,
+            params: [.float("amount", 0...1, 0.2)],
+            execution: .render,
+            description: "Animated film grain over the final image — breaks up flat digital areas. AMOUNT 0.1-0.3 is subtle texture; 1 is full VHS. Just add the node."))
+        registerSpec(NodeSpec(
+            id: "vignette", name: "Vignette", family: .stage,
+            params: [.float("amount", 0...1, 0.3)],
+            execution: .render,
+            description: "Darkens the frame corners, pulling the eye to the centre. AMOUNT sets how hard the edges fall off. Just add the node."))
+        registerSpec(NodeSpec(
+            id: "render-settings", name: "Render Settings", family: .stage,
+            params: [.option("blend", ["solid", "ghost"], "solid")],
+            execution: .render,
+            description: "How pins draw: SOLID = opaque, depth-tested spheres. GHOST = additive glow blending with no depth test — overlapping pins add up to light, the classic point-cloud hologram look (try it with Bloom)."))
 
         // MARK: - TOOLS
 
