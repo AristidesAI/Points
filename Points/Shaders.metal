@@ -8,6 +8,8 @@ struct Uniforms {
     float extX; float extY; float zWorldScale; float pinSize;   // zWorldScale = Camera node depth push
     float stemThickness; float nearM; float farM; uint colorMode;
     uint isStem; uint pad0; uint pad1; uint pad2;
+    float4 lightPos;      // Light node: xyz = position (point/spot) or direction (directional); w = type 0/1/2
+    float4 lightParams;   // x intensity, y falloff, z enabled (0 = built-in default light), w unused
 };
 
 // Field order MUST match VMParams in PinRenderer.swift.
@@ -56,6 +58,45 @@ static inline float hash01(float x) {
     return float(n & 0x00FFFFFFu) / 16777215.0;
 }
 
+// ---- 3D noise field (Noise node) — value + gradient(Perlin), animatable off P.time ----
+static inline float hash1_3(int3 p) {
+    int n = p.x * 374761393 + p.y * 668265263 + p.z * 1274126177;
+    n = (n ^ (n >> 13)) * 1274126177;
+    return float((n ^ (n >> 16)) & 0x00FFFFFF) / 16777215.0;   // 0..1
+}
+static inline float3 grad1_3(int3 p) {
+    float a = hash1_3(p) * 6.2831853;
+    float z = hash1_3(p + int3(37, 17, 7)) * 2.0 - 1.0;
+    float rz = sqrt(max(1.0 - z * z, 0.0));
+    return float3(cos(a) * rz, sin(a) * rz, z);
+}
+// value noise in [-1,1]; hermite=quintic smoothing, else linear (blocky "random")
+static inline float valueNoise3(float3 P, bool hermite) {
+    float3 i = floor(P), f = fract(P);
+    float3 u = hermite ? f * f * f * (f * (f * 6.0 - 15.0) + 10.0) : f;
+    int3 c = int3(i);
+    float n000 = hash1_3(c + int3(0,0,0)), n100 = hash1_3(c + int3(1,0,0));
+    float n010 = hash1_3(c + int3(0,1,0)), n110 = hash1_3(c + int3(1,1,0));
+    float n001 = hash1_3(c + int3(0,0,1)), n101 = hash1_3(c + int3(1,0,1));
+    float n011 = hash1_3(c + int3(0,1,1)), n111 = hash1_3(c + int3(1,1,1));
+    float nx00 = mix(n000, n100, u.x), nx10 = mix(n010, n110, u.x);
+    float nx01 = mix(n001, n101, u.x), nx11 = mix(n011, n111, u.x);
+    return mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z) * 2.0 - 1.0;
+}
+// gradient (Perlin) noise in ~[-1,1]
+static inline float gradNoise3(float3 P) {
+    float3 i = floor(P), f = fract(P);
+    float3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    int3 c = int3(i);
+#define GN3(dx,dy,dz) dot(grad1_3(c + int3(dx,dy,dz)), f - float3(dx,dy,dz))
+    float n000 = GN3(0,0,0), n100 = GN3(1,0,0), n010 = GN3(0,1,0), n110 = GN3(1,1,0);
+    float n001 = GN3(0,0,1), n101 = GN3(1,0,1), n011 = GN3(0,1,1), n111 = GN3(1,1,1);
+#undef GN3
+    float nx00 = mix(n000, n100, u.x), nx10 = mix(n010, n110, u.x);
+    float nx01 = mix(n001, n101, u.x), nx11 = mix(n011, n111, u.x);
+    return clamp(mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z) * 1.4, -1.0, 1.0);
+}
+
 // ============================================================================
 // PIN PROGRAM — register-VM interpreter (Layer A). Every pin runs the same
 // broadcast instruction stream: zero divergence. Ops mirror PinOp in Swift.
@@ -85,7 +126,8 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
     float keep = 1.0;                               // grazing/edge culls (freeXY) zero this
     float3 rotAcc = float3(0.0);                    // Rotation/Spin (euler turns)
     float3 stretchAcc = float3(1.0);               // Stretch (per-axis scale)
-    float shapeMorph = 0.0;                         // 0 sphere → 1 cube
+    float shapeMorph = 0.0;                         // morph amount toward the target shape (0-1)
+    float shapeTarget = 0.0;                        // which shape to morph toward (0 sphere,1 cube,2 tube,…)
     float4 color = float4(0.78, 0.78, 0.78, 1.0);   // neutral default (color OFF)
     uint stateBase = gid * P.stateStride;
 
@@ -159,7 +201,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             case 24: r = float4(step(ins.imm.x, A.x)); break;                  // stepOp
             case 25: r = float4(length(A.xyz)); break;                         // len
             case 26: r = float4(distance(A.xy, ins.imm.xy)); break;            // dist2
-            case 27: r = float4(hash01(A.x * ins.imm.x + ins.imm.y * 137.7)); break;
+            case 27: r = float4(hash01(A.x * ins.imm.x * 131.0 + hash01(ins.imm.y * 0.0137) * 1024.0)); break;  // seed folded through hash → no uint overflow / precision collapse past seed≈490
             case 28: {                                                          // palette(row, shift)
                 // clamp (not wrap): a negative shift pulls hot ends down without far
                 // pixels wrapping to the hot end of the map
@@ -306,8 +348,27 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             }
             case 55: rotAcc += A.xyz; write = false; break;                    // writeRot (turns)
             case 56: stretchAcc *= max(A.xyz, float3(0.01)); write = false; break; // writeStretch
-            case 57: shapeMorph = A.x; write = false; break;                   // writeShape (0-1)
+            case 57: shapeTarget = floor(A.x); shapeMorph = fract(A.x); write = false; break;  // writeShape: value = targetIndex + morph(0-1)
             case 58: r = float4(P.time * ins.imm.xyz, 0.0); break;             // spinTurns(rate)
+            case 46: {   // noise3: 3D noise [-1,1]; a.x=optional z-drive; imm=(freq, seed, packed[ty+axis*10+aspect*100], timeMove)
+                int packed = int(ins.imm.z);
+                int ty = packed % 10;
+                int axis = (packed / 10) % 10;   // 0 x · 1 y · 2 z
+                int aspect = packed / 100;
+                float3 coord = float3(baseXY, A.x);
+                if (aspect > 0) coord.x *= U.extX / max(U.extY, 1e-4);
+                coord *= ins.imm.x;                                                    // frequency
+                float3 tmask = float3(axis == 0 ? 1.0 : 0.0, axis == 1 ? 1.0 : 0.0, axis == 2 ? 1.0 : 0.0);
+                coord += tmask * (P.time * ins.imm.w);                                 // animate along the chosen axis
+                coord += float3(ins.imm.y * 13.1);                                     // seed
+                float n;
+                if (ty == 0 || ty == 5) n = gradNoise3(coord);                         // perlin / harmonic base
+                else if (ty == 1) n = gradNoise3(coord.yzx * 1.31 + 4.2);              // simplex (skewed approx)
+                else if (ty == 4) n = valueNoise3(coord, true);                        // hermite (quintic)
+                else if (ty == 3) n = step(0.5, valueNoise3(coord, false));            // sparse (0/1)
+                else n = valueNoise3(coord, false);                                    // random (linear)
+                r = float4(n); break;
+            }
             default: write = false; break;
         }
         if (write) regs[min(ins.dst, 31u)] = r;
@@ -316,7 +377,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
     outBuf[gid].posSize = float4(baseXY + posOff.xy, max(posOff.z, 0.0), sizeMul * keep);
     outBuf[gid].color = color;
     outBuf[gid].rot = float4(rotAcc, clamp(shapeMorph, 0.0, 1.0));
-    outBuf[gid].scl = float4(stretchAcc, 0.0);
+    outBuf[gid].scl = float4(stretchAcc, shapeTarget);   // scl.w carries the shape morph TARGET index
 }
 
 // ============================================================================
@@ -331,6 +392,7 @@ struct VOut {
     float4 pos [[position]];
     float3 nrm;
     float3 color;
+    float3 wpos;   // world-space position for the Light node (point/spot falloff)
 };
 
 vertex VOut pin_vertex(VIn vin [[stage_in]],
@@ -348,13 +410,49 @@ vertex VOut pin_vertex(VIn vin [[stage_in]],
         float len = max(z - size * 0.4, 0.0);
         wp = float3(xy + vin.pos.xy * U.stemThickness * io.posSize.w, (vin.pos.z + 0.5) * len);
     } else {
-        // SHAPE family: morph sphere→cube, stretch per-axis, then rotate. Unit-mesh in local space.
+        // SHAPE family: morph the sphere toward a target shape, stretch per-axis, then rotate.
+        // Every target is a continuous remap of the same unit-sphere vertex → fully blendable, no
+        // new mesh. Normals morph WITH the shape so cubes read sharp and discs read flat.
         float3 lp = vin.pos;
         float m = io.rot.w;
-        if (m > 0.001) {
-            float mx = max(max(abs(lp.x), abs(lp.y)), abs(lp.z));
-            float3 cube = mx > 1e-4 ? lp / mx : lp;   // project the sphere vertex onto the unit cube
-            lp = mix(lp, cube, m);
+        int ti = int(io.scl.w + 0.5);
+        if (m > 0.001 && ti > 0) {
+            float3 n0 = lp * 2.0;                                  // unit-sphere point (mesh radius 0.5)
+            float ax = fabs(n0.x), ay = fabs(n0.y), az = fabs(n0.z);
+            float mx = max(max(ax, ay), az);
+            float2 dirXY = normalize(n0.xy + float2(1e-5, 0.0));
+            float3 tgt = n0, tn = n0;
+            if (ti == 1) {                                          // cube
+                tgt = n0 / max(mx, 1e-4);
+                tn = (az >= ax && az >= ay) ? float3(0.0, 0.0, sign(n0.z))
+                   : (ax >= ay ? float3(sign(n0.x), 0.0, 0.0) : float3(0.0, sign(n0.y), 0.0));
+            } else if (ti == 2) {                                   // tube (open cylinder shell)
+                tgt = float3(dirXY, n0.z);
+                tn = float3(dirXY, 0.0);
+            } else if (ti == 3) {                                   // slab (flat square panel)
+                float mxy = max(max(ax, ay), 1e-4);
+                tgt = float3(n0.xy / mxy, n0.z * 0.22);
+                tn = (az > max(ax, ay) * 0.7) ? float3(0.0, 0.0, sign(n0.z))
+                   : (ax >= ay ? float3(sign(n0.x), 0.0, 0.0) : float3(0.0, sign(n0.y), 0.0));
+            } else if (ti == 4) {                                   // cone (base -z → apex +z)
+                tgt = float3(dirXY * 0.5 * (1.0 - n0.z), n0.z);
+                tn = normalize(float3(dirXY * 2.0, 1.0));
+            } else if (ti == 5) {                                   // ring (torus, hole through z)
+                float v = asin(clamp(n0.z, -1.0, 1.0)) * 2.0;
+                tgt = float3(dirXY * (0.7 + 0.3 * cos(v)), 0.3 * sin(v));
+                tn = normalize(float3(dirXY * cos(v), sin(v)));
+            } else if (ti == 6) {                                   // disc (flat coin, faces camera)
+                tgt = float3(n0.xy * 1.2, n0.z * 0.1);
+                tn = float3(0.0, 0.0, n0.z >= 0.0 ? 1.0 : -1.0);
+            } else if (ti == 7) {                                   // spike (6-point star along ±xyz)
+                tgt = n0 * mix(0.25, 1.3, pow(mx, 6.0));
+                tn = n0;
+            } else if (ti == 8) {                                   // diamond (octahedron)
+                tgt = n0 / max(ax + ay + az, 1e-4);
+                tn = normalize(float3(sign(n0.x), sign(n0.y), sign(n0.z)));
+            }
+            lp = mix(lp, tgt * 0.5, m);
+            nrm = normalize(mix(nrm, tn, m));
         }
         lp *= io.scl.xyz;                              // stretch
         float3 e = io.rot.xyz * 6.2831853;             // turns → radians
@@ -369,15 +467,37 @@ vertex VOut pin_vertex(VIn vin [[stage_in]],
     o.pos = U.viewProj * float4(wp, 1.0);
     o.nrm = nrm;
     o.color = U.isStem != 0u ? io.color.rgb * 0.55 : io.color.rgb;
+    o.wpos = wp;
     return o;
 }
 
-fragment float4 pin_fragment(VOut in [[stage_in]]) {
+fragment float4 pin_fragment(VOut in [[stage_in]],
+                             constant Uniforms &U [[buffer(1)]]) {
     float3 n = normalize(in.nrm);
-    float3 l = normalize(float3(0.35, 0.5, 0.8));
-    float diff = max(dot(n, l), 0.0);
     float rim = pow(1.0 - max(n.z, 0.0), 2.0) * 0.22;
-    float3 c = in.color * (0.35 + 0.72 * diff) + rim * in.color;
+    float3 c;
+    if (U.lightParams.z > 0.5) {
+        // Light node: 0 point, 1 directional, 2 spot (cone aimed from the light at the cloud centre).
+        float3 l; float atten = 1.0;
+        if (U.lightPos.w > 0.5 && U.lightPos.w < 1.5) {
+            l = normalize(U.lightPos.xyz);                       // directional: xyz is a direction
+        } else {
+            float3 d = U.lightPos.xyz - in.wpos;
+            float dist = length(d);
+            l = d / max(dist, 1e-4);
+            atten = 1.0 / (1.0 + U.lightParams.y * dist * dist); // falloff
+            if (U.lightPos.w > 1.5) {                            // spot: soft ~35° cone toward centre
+                float3 axis = normalize(-U.lightPos.xyz);
+                atten *= smoothstep(0.55, 0.85, dot(-l, axis));
+            }
+        }
+        float diff = max(dot(n, l), 0.0) * U.lightParams.x * atten;
+        c = in.color * (0.15 + 0.95 * diff) + rim * in.color * min(diff + 0.25, 1.0);
+    } else {
+        float3 l = normalize(float3(0.35, 0.5, 0.8));            // built-in default light
+        float diff = max(dot(n, l), 0.0);
+        c = in.color * (0.35 + 0.72 * diff) + rim * in.color;
+    }
     return float4(c, 1.0);
 }
 

@@ -40,6 +40,8 @@ struct PinUniforms {
     var extX: Float = 1.5, extY: Float = 2.0, zWorldScale: Float = 1.0, pinSize: Float = 0.012
     var stemThickness: Float = 0.004, nearM: Float = 0.25, farM: Float = 2.5, colorMode: UInt32 = 0
     var isStem: UInt32 = 0, pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
+    var lightPos: SIMD4<Float> = .zero      // Light node (see Uniforms in Shaders.metal)
+    var lightParams: SIMD4<Float> = .zero
 }
 
 /// Instanced pin-wall renderer. Fixed camera, Z=0 wall, depth pulls pins toward the camera.
@@ -85,6 +87,23 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var lastProgramGeneration = -1
     /// Pulled once per frame on the main thread — supplies the live pin program.
     var programProvider: (@MainActor () -> ProgramFrame)?
+
+    // NDI output: a second render pass into an IOSurface-backed BGRA pixel buffer, sent
+    // to the network. Active only while an NDI node exists (config non-nil).
+    var ndi: NDIManager?
+    var ndiConfigProvider: (@MainActor () -> NDIRenderConfig?)?
+    private var ndiPool: CVPixelBufferPool?
+    private var ndiPoolW = 0, ndiPoolH = 0
+    private var ndiDepthTex: MTLTexture?
+
+    // Record: same offscreen-pass idea as NDI, but into an AVAssetWriter. Independent pool so it
+    // records at its own resolution even when NDI is off. Active only while a Record node exists.
+    // ponytail: a separate pass from NDI — a second offscreen render only when BOTH are live.
+    var recorder: RecordingManager?
+    var recordConfigProvider: (@MainActor () -> RecordConfig?)?
+    private var recPool: CVPixelBufferPool?
+    private var recPoolW = 0, recPoolH = 0
+    private var recDepthTex: MTLTexture?
 
     // FPS (EMA over draw intervals) for the test HUD
     private var lastDrawAt: CFTimeInterval = 0
@@ -236,6 +255,12 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         u.cols = UInt32(cols); u.rows = UInt32(rows); u.count = UInt32(actual)
         u.orient = orientNow
         u.zWorldScale = frame.camera.depthPush
+        u.lightPos = frame.lightPos
+        u.lightParams = frame.lightParams
+        // Background node → clear color (solid; gradient is a later render stage)
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: Double(frame.background.x),
+                                                           green: Double(frame.background.y),
+                                                           blue: Double(frame.background.z), alpha: 1)
         // pin size scales with grid pitch so pins tile the wall at any density
         let pitch = 3.0 / Float(cols - 1)
         u.pinSize = pitch * 0.42 * pinScaleNow
@@ -307,6 +332,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         if drawStems {
             u.isStem = 1
             enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
             enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
             enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
                                       indexType: .uint16, indexBuffer: stemBox.indices,
@@ -314,16 +340,212 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         }
         u.isStem = 0
         enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
         enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
         enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
                                   indexType: .uint16, indexBuffer: capMesh.indices,
                                   indexBufferOffset: 0, instanceCount: actual)
         enc.endEncoding()
 
+        // 8. NDI: same instanced draw into an offscreen BGRA pixel buffer at the node's
+        //    resolution/aspect, sent to the network after the GPU finishes this buffer.
+        let ndiCfg = MainActor.assumeIsolated { self.ndiConfigProvider?() }
+        if let cfg = ndiCfg, let mgr = ndi {
+            encodeNDI(cmd: cmd, base: u, frame: frame, actual: actual,
+                      capMesh: capMesh, drawStems: drawStems, cfg: cfg, mgr: mgr)
+        }
+
+        // 9. Record: same offscreen instanced pass → AVAssetWriter, driven by the Record node.
+        let recCfg = MainActor.assumeIsolated { self.recordConfigProvider?() }
+        if let cfg = recCfg, let rec = recorder {
+            rec.begin(cfg)                           // idempotent (render thread only)
+            encodeRecord(cmd: cmd, base: u, frame: frame, actual: actual,
+                         capMesh: capMesh, drawStems: drawStems, cfg: cfg, rec: rec)
+        } else {
+            recorder?.finishIfRecording()            // node removed / STOP → finalize + save
+        }
+
         let retainer = Retainer(keeps)               // retain CVMetalTextures through GPU execution
         cmd.addCompletedHandler { _ in _ = retainer.items }
         cmd.present(drawable)
         cmd.commit()
+    }
+
+    // MARK: - NDI offscreen pass
+
+    /// Reuse the already-computed instance buffer to draw the pins into a BGRA pixel buffer
+    /// at the NDI resolution, then hand it to the manager once the GPU is done with it.
+    private func encodeNDI(cmd: MTLCommandBuffer, base: PinUniforms, frame: ProgramFrame,
+                           actual: Int, capMesh: Mesh, drawStems: Bool,
+                           cfg: NDIRenderConfig, mgr: NDIManager) {
+        let w = max(cfg.width, 16), h = max(cfg.height, 16)
+        ensureNDITargets(w: w, h: h)
+        guard let pool = ndiPool, let depth = ndiDepthTex else { return }
+        var pbOut: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pbOut) == kCVReturnSuccess,
+              let pb = pbOut,
+              let surfRef = CVPixelBufferGetIOSurface(pb) else { return }
+        let surf = surfRef.takeUnretainedValue()
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+                                                          width: w, height: h, mipmapped: false)
+        td.usage = [.renderTarget, .shaderRead]
+        td.storageMode = .shared
+        guard let color = device.makeTexture(descriptor: td, iosurface: surf, plane: 0) else { return }
+
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = color
+        rpd.colorAttachments[0].loadAction = .clear
+        rpd.colorAttachments[0].clearColor = cfg.alpha
+            ? MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            : MTLClearColor(red: Double(frame.background.x), green: Double(frame.background.y),
+                            blue: Double(frame.background.z), alpha: 1)
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.depthAttachment.texture = depth
+        rpd.depthAttachment.loadAction = .clear
+        rpd.depthAttachment.clearDepth = 1.0
+        rpd.depthAttachment.storeAction = .dontCare
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
+
+        var u = base
+        u.viewProj = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
+        enc.setRenderPipelineState(pipeline)
+        enc.setDepthStencilState(depthState)
+        enc.setCullMode(.back)
+        enc.setFrontFacing(.counterClockwise)
+        enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
+        if drawStems {
+            u.isStem = 1
+            enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
+                                      indexType: .uint16, indexBuffer: stemBox.indices,
+                                      indexBufferOffset: 0, instanceCount: actual)
+        }
+        u.isStem = 0
+        enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
+        enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
+                                  indexType: .uint16, indexBuffer: capMesh.indices,
+                                  indexBufferOffset: 0, instanceCount: actual)
+        enc.endEncoding()
+
+        let n = cfg.fpsN, d = cfg.fpsD
+        // pb captured → retained until the send completes (base address valid once GPU done).
+        nonisolated(unsafe) let out = pb        // read-only CF handoff to the completion thread
+        cmd.addCompletedHandler { _ in mgr.send(out, fpsN: n, fpsD: d) }
+    }
+
+    private func ensureNDITargets(w: Int, h: Int) {
+        if ndiPool == nil || ndiPoolW != w || ndiPoolH != h {
+            let attrs: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: w,
+                kCVPixelBufferHeightKey as String: h,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+            ]
+            var pool: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+            ndiPool = pool; ndiPoolW = w; ndiPoolH = h
+            ndiDepthTex = nil
+        }
+        if ndiDepthTex == nil {
+            let dd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float,
+                                                              width: w, height: h, mipmapped: false)
+            dd.usage = [.renderTarget]
+            dd.storageMode = .private
+            ndiDepthTex = device.makeTexture(descriptor: dd)
+        }
+    }
+
+    // MARK: - Record offscreen pass
+
+    /// Draw the pins into a BGRA pixel buffer at the Record resolution, then append it to the
+    /// recorder once the GPU is done. Mirrors `encodeNDI` with its own pool (independent of NDI).
+    private func encodeRecord(cmd: MTLCommandBuffer, base: PinUniforms, frame: ProgramFrame,
+                              actual: Int, capMesh: Mesh, drawStems: Bool,
+                              cfg: RecordConfig, rec: RecordingManager) {
+        let w = max(cfg.width, 16), h = max(cfg.height, 16)
+        ensureRecordTargets(w: w, h: h)
+        guard let pool = recPool, let depth = recDepthTex else { return }
+        var pbOut: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pbOut) == kCVReturnSuccess,
+              let pb = pbOut,
+              let surfRef = CVPixelBufferGetIOSurface(pb) else { return }
+        let surf = surfRef.takeUnretainedValue()
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+                                                          width: w, height: h, mipmapped: false)
+        td.usage = [.renderTarget, .shaderRead]
+        td.storageMode = .shared
+        guard let color = device.makeTexture(descriptor: td, iosurface: surf, plane: 0) else { return }
+
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = color
+        rpd.colorAttachments[0].loadAction = .clear
+        rpd.colorAttachments[0].clearColor = cfg.alpha
+            ? MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            : MTLClearColor(red: Double(frame.background.x), green: Double(frame.background.y),
+                            blue: Double(frame.background.z), alpha: 1)
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.depthAttachment.texture = depth
+        rpd.depthAttachment.loadAction = .clear
+        rpd.depthAttachment.clearDepth = 1.0
+        rpd.depthAttachment.storeAction = .dontCare
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
+
+        var u = base
+        u.viewProj = Self.buildCamera(frame.camera, aspect: Float(w) / Float(h))
+        enc.setRenderPipelineState(pipeline)
+        enc.setDepthStencilState(depthState)
+        enc.setCullMode(.back)
+        enc.setFrontFacing(.counterClockwise)
+        enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
+        if drawStems {
+            u.isStem = 1
+            enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
+                                      indexType: .uint16, indexBuffer: stemBox.indices,
+                                      indexBufferOffset: 0, instanceCount: actual)
+        }
+        u.isStem = 0
+        enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
+        enc.setVertexBuffer(capMesh.vertices, offset: 0, index: 0)
+        enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
+                                  indexType: .uint16, indexBuffer: capMesh.indices,
+                                  indexBufferOffset: 0, instanceCount: actual)
+        enc.endEncoding()
+
+        // pb captured → retained until the append completes (base address valid once GPU done).
+        nonisolated(unsafe) let out = pb        // read-only CF handoff to the completion thread
+        cmd.addCompletedHandler { _ in rec.append(out) }
+    }
+
+    private func ensureRecordTargets(w: Int, h: Int) {
+        if recPool == nil || recPoolW != w || recPoolH != h {
+            let attrs: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: w,
+                kCVPixelBufferHeightKey as String: h,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+            ]
+            var pool: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &pool)
+            recPool = pool; recPoolW = w; recPoolH = h
+            recDepthTex = nil
+        }
+        if recDepthTex == nil {
+            let dd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float,
+                                                              width: w, height: h, mipmapped: false)
+            dd.usage = [.renderTarget]
+            dd.storageMode = .private
+            recDepthTex = device.makeTexture(descriptor: dd)
+        }
     }
 
     // MARK: - Setup
@@ -527,6 +749,10 @@ private nonisolated func lookAt(eye: SIMD3<Float>, center: SIMD3<Float>, up: SIM
 
 struct MetalViewport: UIViewRepresentable {
     let renderer: PinRenderer
+    /// Pause the render loop while a full-screen cover (node palette) hides the view — otherwise
+    /// it keeps drawing at 60fps + running the NDI/record offscreen passes behind the cover,
+    /// starving the capture session and hitching the keyboard/search.
+    var paused: Bool = false
 
     func makeUIView(context: Context) -> MTKView {
         let v = MTKView()
@@ -536,10 +762,12 @@ struct MetalViewport: UIViewRepresentable {
         v.depthStencilPixelFormat = .depth32Float
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         v.preferredFramesPerSecond = 60
-        v.isPaused = false
+        v.isPaused = paused
         v.enableSetNeedsDisplay = false
         return v
     }
 
-    func updateUIView(_ uiView: MTKView, context: Context) {}
+    func updateUIView(_ uiView: MTKView, context: Context) {
+        if uiView.isPaused != paused { uiView.isPaused = paused }
+    }
 }

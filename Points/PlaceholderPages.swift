@@ -765,6 +765,17 @@ struct NodeSpecCard: View {
                 }
             }
             Text(spec.description).font(.system(size: 12)).foregroundStyle(Theme.text2).lineSpacing(3)
+            if let usage = NodeUsage.text[spec.id] {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("HOW TO USE").font(.system(size: 8, weight: .bold)).tracking(1.4)
+                        .foregroundStyle(Theme.text2)
+                    Text(usage).font(.system(size: 11)).foregroundStyle(Theme.text).lineSpacing(3)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.panel)
+                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+            }
             if !spec.inputs.isEmpty {
                 portList("INPUTS", spec.inputs)
             }

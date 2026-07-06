@@ -88,7 +88,7 @@ extension NodeRegistry {
             }))
     }
 
-    private static let shapeNames = ["sphere", "cube", "tube", "slab", "cone", "ring", "disc", "spike"]
+    private static let shapeNames = ["sphere", "cube", "tube", "slab", "cone", "ring", "disc", "spike", "diamond"]
 
     /// Shared richer settings for continuous Vision nodes (Hand Position, Head Pose, Pinch, Openness).
     private static let visionParams: [ParamSpec] = [
@@ -253,7 +253,7 @@ extension NodeRegistry {
             outputs: [PortSpec("shape", .fieldFloat)],
             params: [.option("type", Self.shapeNames, "sphere")],
             execution: .interpreterOp,
-            description: "Pin cap shape — sphere · cube · tube · slab · cone · ring · disc · spike. Wire → Output.shape.",
+            description: "Pin cap shape — sphere · cube · tube · slab · cone · ring · disc · spike · diamond. Wire shape → Output.shape and every pin takes that form (add Spin or Rotation to see the 3D silhouette move).",
             emit: { b, _, node in
                 let idx = Self.shapeNames.firstIndex(of: node.option("type", "sphere")) ?? 0
                 // pack targetIndex + morph(0.999 = full); sphere is the base → 0 (no morph)
@@ -282,8 +282,9 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "noise", name: "Noise", family: .signal,
             inputs: [PortSpec("z", .fieldFloat)],
-            outputs: [PortSpec("out", .fieldFloat)],
+            outputs: [PortSpec("out", .fieldFloat), PortSpec("color", .fieldColor)],
             params: [.option("type", ["perlin", "simplex", "random", "sparse", "hermite", "harmonic"], "perlin"),
+                     .option("map", ["mono"] + PaletteLUT.names, "mono"),
                      .float("seed", 0...9999, 1),
                      .float("period", 0.02...4, 0.5),
                      .float("harmonics", 1...6, 3),
@@ -299,7 +300,7 @@ extension NodeRegistry {
                      .bool("moveNeg", false),
                      .bool("aspectCorrect", true)],
             execution: .interpreterOp,
-            description: "Animated 3D noise field, per pin (TouchDesigner-style). TYPE perlin/simplex/random/sparse/hermite/harmonic · PERIOD = feature size · HARMONICS/SPREAD/GAIN/ROUGHNESS build fractal detail · EXPONENT/AMPLITUDE/OFFSET shape the output. MOVE it along X/Y/Z off time (Z morphs the field through a hidden plane, like it's breathing). Wire OUT → Displace / Size / Palette / Output.z. Optional Z input drives the sample plane from a Time/other field.",
+            description: "Animated 3D noise field, per pin (TouchDesigner-style). TYPE perlin/simplex/random/sparse/hermite/harmonic · PERIOD = feature size · HARMONICS/SPREAD/GAIN/ROUGHNESS build fractal detail · EXPONENT/AMPLITUDE/OFFSET shape the output. MOVE it along X/Y/Z off time (Z morphs the field through a hidden plane, like it's breathing). Wire OUT → Displace / Size / Output.z; wire COLOR → Output.color and pick a MAP for colored noise (mono = greyscale). Optional Z input drives the sample plane from a Time/other field.",
             emit: { b, inputs, node in
                 let types = ["perlin", "simplex", "random", "sparse", "hermite", "harmonic"]
                 let ty = types.firstIndex(of: node.option("type", "perlin")) ?? 0
@@ -333,7 +334,17 @@ extension NodeRegistry {
                 if abs(ex - 1) > 1e-4 { b.emit(PinInstruction(.powOp, dst: acc, a: acc, imm: [ex, 0, 0, 0])) }
                 b.emit(PinInstruction(.madd, dst: acc, a: acc,
                                       imm: [node.float("amplitude", 1), node.float("offset", 0), 0, 0]))
-                return [acc]
+                // COLOR output: the field through a palette row (MAP), or greyscale when MAP = mono.
+                let mapName = node.option("map", "mono")
+                var col = acc
+                if mapName != "mono" {
+                    let row = Float(PaletteLUT.names.firstIndex(of: mapName) ?? 0)
+                    let c = b.reg()
+                    b.emitPatched(PinInstruction(.palette, dst: c, a: acc, imm: [0, row, 0, 0]),
+                                  key: "\(node.id).map", lanes: [1])
+                    col = c
+                }
+                return [acc, col]
             }))
         registerSpec(NodeSpec(
             id: "stretch", name: "Stretch", family: .shape,
@@ -688,7 +699,7 @@ extension NodeRegistry {
             inputs: [PortSpec("a", .fieldFloat), PortSpec("b", .fieldFloat)],
             outputs: [PortSpec("aGreater", .fieldFloat)],
             execution: .interpreterOp,
-            description: "1 where a > b, else 0.",
+            description: "1 where a ≥ b, else 0 — per-pin comparison for building masks.",
             emit: { b, inputs, _ in
                 let x = b.materialize(inputs[0], default: .zero)
                 let y = b.materialize(inputs[1], default: .zero)
@@ -762,10 +773,12 @@ extension NodeRegistry {
             inputs: [PortSpec("in", .signal), PortSpec("trigger", .trigger)],
             outputs: [PortSpec("out", .signal)],
             execution: .control,
-            description: "Freezes the input value each time the trigger fires — stepped randomness from smooth sources.",
+            description: "Freezes the input value each time the trigger fires — stepped randomness from smooth sources. Wire Wander.out → in and Clock.quarter → trigger for beat-locked jumps.",
             controlEvalStateful: { _, inputs, _, state in
+                // Edge-triggered: sample once per rising edge (a held-high trigger must not track).
                 let trig = (inputs.count > 1 ? inputs[1].x : 0) > 0.5
-                if trig || state.w < 0.5 { state.x = inputs.first?.x ?? 0; state.w = 1 }
+                if (trig && state.y < 0.5) || state.w < 0.5 { state.x = inputs.first?.x ?? 0; state.w = 1 }
+                state.y = trig ? 1 : 0
                 return [SIMD4(repeating: state.x)]
             }))
 
@@ -806,23 +819,23 @@ extension NodeRegistry {
         stubControl("audio-levels", "Audio Levels", .signal,
                     [PortSpec("bass", .signal), PortSpec("mid", .signal),
                      PortSpec("high", .signal), PortSpec("rms", .signal)],
-                    "Mic band energies 0-1. · Live when the audio engine lands.") { ctx in
+                    "LIVE mic band energies 0-1 (auto-gain keeps them usable at any volume). Wire bass → Size.size and the cloud breathes with the music.") { ctx in
             [SIMD4(repeating: ctx.audio.x), SIMD4(repeating: ctx.audio.y),
              SIMD4(repeating: ctx.audio.z), SIMD4(repeating: ctx.audio.w)]
         }
         stubControl("beat-trigger", "Beat Trigger", .signal,
                     [PortSpec("low", .trigger), PortSpec("mid", .trigger), PortSpec("high", .trigger)],
-                    "Drum onsets as triggers. · Live when the audio engine lands.") { ctx in
+                    "LIVE drum onsets from the mic as trigger pulses (low = kick, mid = snare, high = hats). Wire low → Envelope.trigger or Shockwave.fire.") { ctx in
             [SIMD4(repeating: ctx.onsets.x), SIMD4(repeating: ctx.onsets.y), SIMD4(repeating: ctx.onsets.z)]
         }
         stubControl("fft-band", "FFT Band", .signal, [PortSpec("level", .signal)],
-                    "One of 20 spectrum bands. · Live when the audio engine lands.") { _ in [.zero] }
+                    "One of 20 spectrum bands. · NOT WIRED UP YET — reads 0 until the band selector lands; use Audio Levels for bass/mid/high today.") { _ in [.zero] }
         stubControl("audio-rms", "Mic Level", .signal, [PortSpec("rms", .signal)],
-                    "True mic loudness, no auto-gain. · Live when the audio engine lands.") { ctx in
+                    "LIVE overall mic loudness 0-1 (same auto-gained level as Audio Levels.rms).") { ctx in
             [SIMD4(repeating: ctx.audio.w)]
         }
         stubControl("burst", "Burst", .signal, [PortSpec("burst", .signal)],
-                    "Sudden-loudness pulse. · Live when the audio engine lands.") { ctx in
+                    "LIVE sudden-loudness pulse from the mic — spikes on hits and drops. Wire burst → Scatter.amount for sound-shattered pins.") { ctx in
             [SIMD4(repeating: ctx.onsets.w)]
         }
         stubControl("midi-cc", "MIDI CC", .signal, [PortSpec("value", .signal)],
@@ -850,11 +863,15 @@ extension NodeRegistry {
             id: "hand-position", name: "Hand Position", family: .body,
             outputs: [PortSpec("x", .signal), PortSpec("y", .signal)],
             params: Self.visionParams, execution: .control,
-            description: "Wrist position 0-1, SHAPED before it drives anything: GAIN · IN/OUT remap · DEADZONE · SMOOTHING · INVERT. Tune exactly how the hand moves things.",
+            description: "Wrist position 0-1 of whichever hand body tracking sees (prefers the left), SHAPED before it drives anything: GAIN · IN/OUT remap · DEADZONE · SMOOTHING · INVERT. Tune exactly how the hand moves things.",
             controlEvalStateful: { node, _, ctx, state in
+                // Prefer the left wrist; fall back to the right so one raised hand always drives.
+                let seen = ctx.bodyA.z != 0 || ctx.bodyA.w != 0
+                let rawX = seen ? ctx.bodyA.z : ctx.bodyB.x
+                let rawY = seen ? ctx.bodyA.w : ctx.bodyB.y
                 var px = state.x, py = state.y
-                let x = shapeVisionValue(ctx.bodyA.z, node, ctx.dt, &px)
-                let y = shapeVisionValue(ctx.bodyA.w, node, ctx.dt, &py)
+                let x = shapeVisionValue(rawX, node, ctx.dt, &px)
+                let y = shapeVisionValue(rawY, node, ctx.dt, &py)
                 state = SIMD4(px, py, 0, 0)
                 return [SIMD4(repeating: x), SIMD4(repeating: y)]
             }))
@@ -903,16 +920,66 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "body-region", name: "Body Region", family: .body,
             outputs: [PortSpec("mask", .fieldFloat)],
-            params: [.option("region", ["person", "head", "torso", "armL", "armR", "hands", "background"], "person")],
+            params: [.option("region", ["person", "head", "torso", "armL", "armR", "hands", "background"], "person"),
+                     .float("radius", 0.04...0.5, 0.15),
+                     .float("range", 0.3...4, 1.6),
+                     .float("feather", 0.01...0.3, 0.08)],
             execution: .interpreterOp,
-            description: "Per-pin mask of a body part — confine any effect to the arms, the head… · Reads 0 until body tracking lands.",
-            emit: { b, _, _ in [b.constant(.zero)] }))
+            description: "Per-pin mask (1 inside, 0 outside) of a body part — confine any effect to the person, head, torso, arms or hands. PERSON/BACKGROUND cut by depth: anything nearer than RANGE metres counts as the person. Joint regions follow live body tracking (RADIUS sizes them, FEATHER softens the edge). Multiply the mask into any field, or wire it → Hide / Size.",
+            emit: { b, _, node in
+                let region = node.option("region", "person")
+                let f = max(node.float("feather", 0.08), 0.01)
+                if region == "person" || region == "background" {
+                    // Depth cut: nearness ramps 1→0 across [RANGE, RANGE + feather·2 m].
+                    let range = node.float("range", 1.6)
+                    let d = b.reg()
+                    b.emitPatched(PinInstruction(.loadDepth, dst: d, imm: [range, range + max(f * 2, 0.1), 0, 0]),
+                                  key: "\(node.id).cut", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).range", lane: 0)
+                    let m = b.reg()
+                    let e: SIMD4<Float> = region == "background" ? [0.6, 0.1, 0, 0] : [0.1, 0.6, 0, 0]
+                    b.emit(PinInstruction(.smooth, dst: m, a: d, imm: e))
+                    return [m]
+                }
+                // Joint regions: soft circles around Vision joints, centres patched live each frame.
+                let r0 = node.float("radius", 0.15)
+                let uv = b.reg(); b.emit(PinInstruction(.loadUV, dst: uv))
+                let d0 = b.reg()
+                b.emitPatched(PinInstruction(.dist2, dst: d0, a: uv, imm: [99, 99, 0, 0]),
+                              key: "\(node.id).c0", lanes: [0, 1])
+                var d = d0
+                if region == "hands" || region == "armL" || region == "armR" {
+                    let d1 = b.reg()   // second joint (other wrist, or the elbow for arms)
+                    b.emitPatched(PinInstruction(.dist2, dst: d1, a: uv, imm: [99, 99, 0, 0]),
+                                  key: "\(node.id).c1", lanes: [0, 1])
+                    let mn = b.reg(); b.emit(PinInstruction(.minOp, dst: mn, a: d0, b: d1)); d = mn
+                }
+                let m = b.reg()
+                b.emitPatched(PinInstruction(.smooth, dst: m, a: d, imm: [r0 + f, r0, 0, 0]),
+                              key: "\(node.id).edge", lanes: [0, 1])
+                return [m]
+            }))
         registerSpec(NodeSpec(
             id: "face-region", name: "Face Region", family: .body,
             outputs: [PortSpec("mask", .fieldFloat)],
+            params: [.float("radius", 0.03...0.5, 0.14),
+                     .float("feather", 0.01...0.3, 0.07),
+                     .bool("invert", false)],
             execution: .interpreterOp,
-            description: "Per-pin mask of the face. · Reads 0 until face tracking lands.",
-            emit: { b, _, _ in [b.constant(.zero)] }))
+            description: "Per-pin soft circle that FOLLOWS YOUR FACE (live body tracking): 1 on the face, 0 elsewhere; reads 0 while nobody is in frame. RADIUS sizes it, FEATHER softens the edge, INVERT flips it to everything-but-the-face. Multiply it into any field, or wire → Hide to show only the face.",
+            emit: { b, _, node in
+                let uv = b.reg(); b.emit(PinInstruction(.loadUV, dst: uv))
+                let d = b.reg()
+                b.emitPatched(PinInstruction(.dist2, dst: d, a: uv, imm: [99, 99, 0, 0]),
+                              key: "\(node.id).center", lanes: [0, 1])
+                let m = b.reg()
+                let r0 = node.float("radius", 0.14), f = max(node.float("feather", 0.07), 0.01)
+                let inv = node.float("invert") > 0.5
+                b.emitPatched(PinInstruction(.smooth, dst: m, a: d,
+                                             imm: inv ? [r0, r0 + f, 0, 0] : [r0 + f, r0, 0, 0]),
+                              key: "\(node.id).edge", lanes: [0, 1])
+                return [m]
+            }))
 
         // MARK: - TIME (rest — real, stateful control)
 
@@ -955,10 +1022,10 @@ extension NodeRegistry {
         registerSpec(NodeSpec(
             id: "counter", name: "Counter", family: .time,
             inputs: [PortSpec("count", .trigger), PortSpec("reset", .trigger)],
-            outputs: [PortSpec("value", .signal)],
+            outputs: [PortSpec("value", .signal), PortSpec("count", .signal)],
             params: [.float("wrap", 1...64, 8)],
             execution: .control,
-            description: "Counts triggers 0→wrap, normalized 0-1.",
+            description: "Counts incoming triggers: each pulse on COUNT steps it up by one, RESET returns it to zero, and it wraps back to 0 after WRAP steps. VALUE is the count scaled 0-1 (ready to drive any param); COUNT is the raw step number. Wire Clock.quarter → count for a ramp that climbs every beat; watch it with Value Display.",
             controlEvalStateful: { node, inputs, _, state in
                 let trig = (inputs.first?.x ?? 0) > 0.5
                 let reset = (inputs.count > 1 ? inputs[1].x : 0) > 0.5
@@ -967,7 +1034,8 @@ extension NodeRegistry {
                 state.y = trig ? 1 : 0
                 let wrap = max(node.float("wrap", 8), 1)
                 if state.x >= wrap { state.x = 0 }
-                return [SIMD4(repeating: state.x / max(wrap - 1, 1))]
+                return [SIMD4(repeating: state.x / max(wrap - 1, 1)),
+                        SIMD4(repeating: state.x)]
             }))
 
         registerSpec(NodeSpec(
@@ -993,7 +1061,7 @@ extension NodeRegistry {
             inputs: [PortSpec("flip", .trigger)],
             outputs: [PortSpec("out", .signal)],
             execution: .control,
-            description: "Flips 0↔1 on every trigger — latching pads out of momentary ones.",
+            description: "A latching on/off switch: OUT sits at 0 or 1 and FLIPS on every trigger pulse — turns momentary triggers (a beat, a fist) into a held state. Wire Hand Gesture.fist → flip and out → Gate.open: one fist mutes a lane, the next un-mutes it. Watch it with Binary Display.",
             controlEvalStateful: { _, inputs, _, state in
                 let trig = (inputs.first?.x ?? 0) > 0.5
                 if trig && state.y < 0.5 { state.x = state.x > 0.5 ? 0 : 1 }
@@ -1034,25 +1102,37 @@ extension NodeRegistry {
 
         registerSpec(NodeSpec(
             id: "on-start", name: "On Start", family: .time,
-            outputs: [PortSpec("fired", .trigger)],
+            outputs: [PortSpec("fired", .trigger), PortSpec("seconds", .signal)],
             execution: .control,
-            description: "Fires exactly once when the patch starts running.",
-            controlEvalStateful: { _, _, _, state in
-                if state.x < 0.5 { state.x = 1; return [SIMD4(repeating: 1)] }
-                return [.zero]
+            description: "Starts the moment you place it: FIRED pulses once (use it to reset a Counter or kick a Timer), and SECONDS counts up continuously from that moment. Wire seconds → Value Display to watch it climb, or → Sine / any param for a slow one-way evolve. Editing the graph restarts the count.",
+            controlEvalStateful: { _, _, ctx, state in
+                state.y += ctx.dt
+                if state.x < 0.5 {
+                    state.x = 1
+                    return [SIMD4(repeating: 1), SIMD4(repeating: state.y)]
+                }
+                return [.zero, SIMD4(repeating: state.y)]
             }))
 
-        // MARK: - STAGE (rest — placeholders until the render features land)
+        // MARK: - STAGE (rest)
+
+        // Light + Background are REAL render-read sinks (like Camera): the renderer reads the
+        // first node of each per frame — no wires needed, just add the node.
+        registerSpec(NodeSpec(
+            id: "light", name: "Light", family: .stage,
+            params: [.option("type", ["point", "directional", "spot"], "point"),
+                     .float("x", -2...2, 0.5), .float("y", -2...2, 0.8), .float("z", 0...4, 2),
+                     .float("intensity", 0...3, 1), .float("falloff", 0...4, 1)],
+            execution: .render,
+            description: "A stage light replacing the built-in default light the moment you add it. POINT sits at X/Y/Z in front of the wall (FALLOFF dims with distance); DIRECTIONAL uses X/Y/Z as a direction only; SPOT is a soft cone aimed at the cloud centre. Drag X/Y while watching — pins shade toward the light. Delete the node to go back to the default."))
+        registerSpec(NodeSpec(
+            id: "background", name: "Background", family: .stage,
+            params: [.float("r", 0...1, 0), .float("g", 0...1, 0), .float("b", 0...1, 0)],
+            execution: .render,
+            description: "The void behind the pins — set its R/G/B and the clear color changes instantly (also behind NDI/Record frames unless ALPHA keys it out). No wires needed: just add the node and drag the sliders."))
 
         for (id, name, params, desc) in [
-            ("light", "Light", [ParamSpec.option("type", ["point", "directional", "spot"], "point"),
-                                .float("x", -2...2, 0.5), .float("y", -2...2, 0.8), .float("z", 0...4, 2),
-                                .float("intensity", 0...3, 1), .float("falloff", 0...4, 1)] as [ParamSpec],
-             "A stage light on the pins — position drivable (head/hand follow)."),
-            ("background", "Background", [.float("r", 0...1, 0), .float("g", 0...1, 0), .float("b", 0...1, 0),
-                                          .float("gradient", 0...1, 0)],
-             "The void behind the wall: color, gradient; alpha-key aware for NDI."),
-            ("bloom", "Bloom", [.float("threshold", 0...1, 0.7), .float("intensity", 0...2, 0.4)],
+            ("bloom", "Bloom", [ParamSpec.float("threshold", 0...1, 0.7), .float("intensity", 0...2, 0.4)],
              "Bright pins glow — the signature synth halo."),
             ("grain", "Grain", [.float("amount", 0...1, 0.2)], "Film grain over the final image."),
             ("vignette", "Vignette", [.float("amount", 0...1, 0.3)], "Darkens the frame corners."),
@@ -1061,7 +1141,7 @@ extension NodeRegistry {
         ] {
             registerSpec(NodeSpec(id: id, name: name, family: .stage, params: params,
                                   execution: .render,
-                                  description: desc + " · Takes effect when its render stage lands."))
+                                  description: desc + " · NOT WIRED UP YET: takes effect when its render stage lands."))
         }
 
         // MARK: - TOOLS

@@ -874,13 +874,27 @@ struct EditorToolStrip: View {
                 stripButton("arrow.uturn.forward", enabled: runtime.canRedo) { runtime.redo() }
             }
             Spacer(minLength: 8)
-            MinimapView(runtime: runtime, camera: camera, selection: selection)
-                .frame(width: 148, height: 80)   // 2× the old 104×56 area
-                .padding(.trailing, 10)
+            // A selected Noise node borrows the minimap slot for its live preview — keeps the
+            // settings bar short (the preview used to sit above 12 sliders).
+            if let nid = selectedNoiseID {
+                NoisePreview(runtime: runtime, nodeID: nid)
+                    .frame(width: 148, height: 80)
+                    .padding(.trailing, 10)
+            } else {
+                MinimapView(runtime: runtime, camera: camera, selection: selection)
+                    .frame(width: 148, height: 80)   // 2× the old 104×56 area
+                    .padding(.trailing, 10)
+            }
         }
         .frame(height: 88)
         .background(Theme.bg)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+    }
+
+    private var selectedNoiseID: String? {
+        guard selection.count == 1, let id = selection.first,
+              runtime.activeGraph.node(id)?.specID == "noise" else { return nil }
+        return id
     }
 
     private func stripButton(_ symbol: String, highlighted: Bool = false, enabled: Bool,
@@ -1247,10 +1261,6 @@ struct NodeSettingsBar: View {
                         CamJogRow(runtime: runtime, label: "POSITION",
                                   xParam: "centerX", yParam: "centerY", step: 0.1, limit: 1.0)
                     }
-                    if spec.id == "noise" {
-                        NoisePreview(runtime: runtime, nodeID: node.id)
-                            .padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 4)
-                    }
                     if spec.id == "value-display" {
                         ValueReadout(runtime: runtime, nodeID: node.id)
                             .padding(.horizontal, 12).padding(.vertical, 4)
@@ -1266,10 +1276,27 @@ struct NodeSettingsBar: View {
                     // Camera's orbit/center are driven by the jog rows above — don't duplicate them as sliders.
                     let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY"] : []
                     let floats = spec.params.filter { $0.range != nil && !jogged.contains($0.name) }
-                    ForEach(floats, id: \.name) { p in     // ALL float params (was capped at 4)
-                        HStack(spacing: 2) {
-                            ExposeToggle(runtime: runtime, nodeID: node.id, param: p.name)
-                            ParamSliderRow(runtime: runtime, nodeID: node.id, param: p)
+                    if floats.count > 4 {
+                        // Param-heavy nodes (Noise…): compact grid, up to 3 sliders per row,
+                        // so the bar stays short.
+                        let rows = stride(from: 0, to: floats.count, by: 3).map { Array(floats[$0..<min($0 + 3, floats.count)]) }
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                            HStack(alignment: .top, spacing: 10) {
+                                ForEach(row, id: \.name) { p in
+                                    CompactParamSlider(runtime: runtime, nodeID: node.id, param: p)
+                                }
+                                ForEach(0..<(3 - row.count), id: \.self) { _ in
+                                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
+                                }
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 2)
+                        }
+                    } else {
+                        ForEach(floats, id: \.name) { p in     // ALL float params (was capped at 4)
+                            HStack(spacing: 2) {
+                                ExposeToggle(runtime: runtime, nodeID: node.id, param: p.name)
+                                ParamSliderRow(runtime: runtime, nodeID: node.id, param: p)
+                            }
                         }
                     }
                     // NDI + Record share the standard renderer so they look identical; their
@@ -1582,6 +1609,69 @@ struct ParamSliderRow: View {
         .onAppear { syncFromGraph() }
         .onChange(of: nodeID) { syncFromGraph() }
         .onChange(of: runtime.generation) { syncFromGraph() }   // undo/redo/reset refresh
+    }
+
+    private func syncFromGraph() {
+        value = runtime.nodeParam(nodeID, param.name, param.defaultValue.floatValue)
+    }
+}
+
+/// Compact slider for param-heavy nodes: expose-diamond + name on one line, the slider under it,
+/// three of these per row in the settings bar. Same grab-the-handle drag as ParamSliderRow.
+struct CompactParamSlider: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    let param: ParamSpec
+    @State private var value: Float = 0
+    @State private var dragBegan = false
+    @State private var grabbed = false
+
+    private var range: ClosedRange<Float> { param.range ?? 0...1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 0) {
+                ExposeToggle(runtime: runtime, nodeID: nodeID, param: param.name)
+                Text(param.name.uppercased())
+                    .font(.system(size: 7, weight: .semibold)).tracking(0.8)
+                    .foregroundStyle(Theme.text2).lineLimit(1)
+            }
+            GeometryReader { g in
+                let norm = CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
+                let x = 20 + (g.size.width - 40) * min(max(norm, 0), 1)
+                ZStack {
+                    Rectangle().fill(Theme.line).frame(height: 2)
+                    Text(String(format: "%.2f", value))
+                        .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 40, height: 16)
+                        .background(Theme.panel)
+                        .overlay(Rectangle().stroke(Theme.text, lineWidth: 1))
+                        .position(x: x, y: g.size.height / 2)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { gg in
+                            if !dragBegan {
+                                grabbed = abs(gg.startLocation.x - x) <= 24
+                                guard grabbed else { return }
+                                dragBegan = true; runtime.pushUndo()
+                            }
+                            guard grabbed else { return }
+                            let n = Float(min(max((gg.location.x - 20) / (g.size.width - 40), 0), 1))
+                            value = range.lowerBound + n * (range.upperBound - range.lowerBound)
+                            runtime.setParam(nodeID, param.name, value)
+                        }
+                        .onEnded { _ in dragBegan = false; grabbed = false }
+                )
+            }
+            .frame(height: 22)
+        }
+        .frame(maxWidth: .infinity)
+        .onAppear { syncFromGraph() }
+        .onChange(of: nodeID) { syncFromGraph() }
+        .onChange(of: runtime.generation) { syncFromGraph() }
     }
 
     private func syncFromGraph() {

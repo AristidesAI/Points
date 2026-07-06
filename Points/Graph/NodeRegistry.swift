@@ -303,7 +303,7 @@ final class NodeRegistry: @unchecked Sendable {
             params: [.float("amp", 0...1, 0), .float("wavelength", 0.02...1, 0.15),
                      .float("speed", -4...4, 0.5), .float("falloff", 0...8, 2)],
             execution: .interpreterOp,
-            description: "Analytic rings radiating from a point — pure per-pin math, zero state.",
+            description: "Analytic rings radiating from the frame centre — pure per-pin math, zero state. Raise AMP (or wire a signal into amplitude) to see it; WAVELENGTH sizes the rings, SPEED travels them, FALLOFF fades them outward.",
             emit: { b, inputs, node in
                 let uv = b.reg(); b.emit(PinInstruction(.loadUV, dst: uv))
                 let d = b.reg()
@@ -730,7 +730,7 @@ final class NodeRegistry: @unchecked Sendable {
                      .option("alpha", ["OFF", "ON"], "OFF"),
                      .option("fps", ["30", "60"], "60")],
             execution: .render,
-            description: "Records the wired image to a video and saves it to Photos. RESOLUTION + ORIENTATION set the frame; ALPHA records a transparent background (HEVC-with-alpha); FPS sets the capture rate. Wire an image output (Output.image) → here; add several to capture different points of a larger network. RECORD=START begins, STOP saves."))
+            description: "Records the finished render to a video and saves it to Photos. RESOLUTION + ORIENTATION set the frame; ALPHA records a transparent background (HEVC-with-alpha); FPS sets the capture rate. Wire Output.image → here (one Record node per patch — the first one wins). RECORD=START begins, STOP saves."))
     }
 }
 

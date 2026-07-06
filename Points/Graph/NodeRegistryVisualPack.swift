@@ -308,33 +308,48 @@ extension NodeRegistry {
 
         // ────────────────────────  SHAPE / FIELD  ────────────────────────
 
-        // 16. Shape Blend — drive the sphere↔cube morph from any 0-1 field. Wire into Output.shape.
+        // Output.shape encoding: value = targetShapeIndex + morphAmount(0…0.999). A bare 0-1 value
+        // decodes as target 0 = sphere (no visible change), so these nodes bake a TARGET index in.
+        let shapeTargets = ["cube", "tube", "slab", "cone", "ring", "disc", "spike", "diamond"]
+        func shapeTargetIndex(_ name: String) -> Float {
+            Float((shapeTargets.firstIndex(of: name) ?? 0) + 1)   // sphere is 0 → targets start at 1
+        }
+
+        // 16. Shape Blend — drive the sphere↔TARGET morph from any 0-1 field. Wire into Output.shape.
         registerSpec(NodeSpec(
             id: "shape-blend", name: "Shape Blend", family: .shape,
             inputs: [PortSpec("amount", .fieldFloat, default: [0, 0, 0, 0])],
             outputs: [PortSpec("shape", .fieldFloat)],
+            params: [.option("target", shapeTargets, "cube")],
             execution: .interpreterOp,
-            description: "Passes a 0-1 field to the shape morph (0 sphere → 1 cube), per pin. Wire depth / noise / audio in, Output.shape out.",
-            emit: { b, inputs, _ in
+            description: "Morphs every pin from sphere toward the TARGET shape by a 0-1 field, per pin. Wire depth / Noise.out / audio → amount and shape → Output.shape: hot areas grow cubes (or spikes, rings…).",
+            emit: { b, inputs, node in
                 let a = b.materialize(inputs[0], default: .zero)
-                let r = b.reg(); b.emit(PinInstruction(.clampOp, dst: r, a: a, imm: [0, 1, 0, 0]))
+                let r = b.reg()
+                b.emit(PinInstruction(.clampOp, dst: r, a: a, imm: [0, 0.999, 0, 0]))
+                b.emit(PinInstruction(.madd, dst: r, a: r,
+                                      imm: [1, shapeTargetIndex(node.option("target", "cube")), 0, 0]))
                 return [r]
             }))
 
-        // 17. Shape by Depth — near pins spheres, far pins cubes (or reversed via range).
+        // 17. Shape by Depth — near pins one amount of the TARGET shape, far pins another.
         registerSpec(NodeSpec(
             id: "shape-by-depth", name: "Shape by Depth", family: .shape,
             inputs: [PortSpec("depth", .fieldFloat, default: [0.5, 0.5, 0.5, 0.5])],
             outputs: [PortSpec("shape", .fieldFloat)],
-            params: [.float("nearMorph", 0...1, 0), .float("farMorph", 0...1, 1)],
+            params: [.option("target", shapeTargets, "cube"),
+                     .float("nearMorph", 0...1, 0), .float("farMorph", 0...1, 1)],
             execution: .interpreterOp,
-            description: "Morphs pin shape across depth — near pins NEARMORPH, far pins FARMORPH. Wire into Output.shape.",
+            description: "Morphs pins toward the TARGET shape by depth — near pins NEARMORPH of the way there, far pins FARMORPH. Wire Depth.depth → depth and shape → Output.shape: spheres up close dissolve into cubes at distance.",
             emit: { b, inputs, node in
                 let d = b.materialize(inputs[0], default: [0.5, 0.5, 0.5, 0.5])
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.remap, dst: r, a: d,
                                              imm: [0, 1, node.float("farMorph", 1), node.float("nearMorph", 0)]),
                               key: "\(node.id).range", lanes: [2, 3])
+                b.emit(PinInstruction(.clampOp, dst: r, a: r, imm: [0, 0.999, 0, 0]))
+                b.emit(PinInstruction(.madd, dst: r, a: r,
+                                      imm: [1, shapeTargetIndex(node.option("target", "cube")), 0, 0]))
                 return [r]
             }))
 
@@ -384,7 +399,8 @@ extension NodeRegistry {
             emit: { b, inputs, node in
                 let ang = b.materialize(inputs[0], default: .zero)
                 let r = b.reg()
-                b.emitPatched(PinInstruction(.twistOp, dst: r, a: ang, imm: [0.5, 0.5, node.float("falloff", 1), 0]),
+                // centre = (0,0): twistOp works in view units (wall spans ±extX/±extY), not uv
+                b.emitPatched(PinInstruction(.twistOp, dst: r, a: ang, imm: [0, 0, node.float("falloff", 1), 0]),
                               key: "\(node.id).falloff", lanes: [2])
                 return [r]
             }))

@@ -32,7 +32,8 @@ enum PortType: String, Codable, Sendable {
              (.fieldVec3, .fieldColor), (.fieldColor, .fieldVec3),
              (.fieldFloat, .fieldColor),
              (.vec3, .fieldVec3), (.color, .fieldColor),   // broadcast vectors
-             (.signal, .trigger):                          // rising-edge coercion
+             (.signal, .trigger),                          // rising-edge coercion
+             (.trigger, .signal):                          // a pulse IS a 0/1 signal (displays, gates)
             return true
         default:
             return false
@@ -170,4 +171,6 @@ struct ControlContext: Sendable {
     var pinchLR: SIMD4<Float> = .zero  // pinchL, opennessL, pinchR, opennessR (by chirality)
     var gesturesL: SIMD4<Float> = .zero // left-hand palm/fist/peace/point
     var gesturesR: SIMD4<Float> = .zero // right-hand palm/fist/peace/point
+    var bodyC: SIMD4<Float> = .zero    // elbowLX, elbowLY, elbowRX, elbowRY (0-1; 0,0 = unseen)
+    var bodyD: SIMD4<Float> = .zero    // neckX, neckY, rootX, rootY (0-1; 0,0 = unseen)
 }

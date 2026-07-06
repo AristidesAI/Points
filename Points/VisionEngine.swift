@@ -17,6 +17,8 @@ nonisolated final class VisionEngine: @unchecked Sendable {
     private let lock = NSLock()
     private var _bodyA = SIMD4<Float>.zero      // headX, headY, handLX, handLY
     private var _bodyB = SIMD4<Float>.zero      // handRX, handRY, pinch, openness
+    private var _bodyC = SIMD4<Float>.zero      // elbowLX, elbowLY, elbowRX, elbowRY
+    private var _bodyD = SIMD4<Float>.zero      // neckX, neckY, rootX, rootY
     private var _gestures = SIMD4<Float>.zero   // palm, fist, peace, point (first hand seen)
     private var _pinchLR = SIMD4<Float>.zero    // pinchL, opennessL, pinchR, opennessR
     private var _gesturesL = SIMD4<Float>.zero  // left-hand palm/fist/peace/point
@@ -30,15 +32,17 @@ nonisolated final class VisionEngine: @unchecked Sendable {
     func setRunning(_ on: Bool) {
         running = on
         if !on { lock.lock(); _bodyA = .zero; _bodyB = .zero; _gestures = .zero
-                 _pinchLR = .zero; _gesturesL = .zero; _gesturesR = .zero; _present = .zero; lock.unlock() }
+                 _pinchLR = .zero; _gesturesL = .zero; _gesturesR = .zero; _present = .zero
+                 _bodyC = .zero; _bodyD = .zero; lock.unlock() }
     }
 
     /// Latest tracking (thread-safe). Gestures are CONTINUOUS (held between Vision frames);
     /// only the entered-pulse decays on read.
     func current() -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>,
-                       pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>) {
+                       pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>,
+                       bodyC: SIMD4<Float>, bodyD: SIMD4<Float>) {
         lock.lock(); defer { lock.unlock() }
-        let out = (_bodyA, _bodyB, _gestures, _present, _pinchLR, _gesturesL, _gesturesR)
+        let out = (_bodyA, _bodyB, _gestures, _present, _pinchLR, _gesturesL, _gesturesR, _bodyC, _bodyD)
         _present.y = 0   // entered-pulse is a one-shot edge; gestures stay high while recognised
         return out
     }
@@ -64,6 +68,7 @@ nonisolated final class VisionEngine: @unchecked Sendable {
 
     private func consume(front: Bool) {
         var bodyA = SIMD4<Float>.zero, bodyB = SIMD4<Float>.zero, gestures = SIMD4<Float>.zero
+        var bodyC = SIMD4<Float>.zero, bodyD = SIMD4<Float>.zero
         var present: Float = 0
 
         if let obs = bodyReq.results?.first {
@@ -75,6 +80,10 @@ nonisolated final class VisionEngine: @unchecked Sendable {
             if let h = jp(.nose) ?? jp(.neck) { bodyA.x = h.x; bodyA.y = h.y }
             if let l = jp(.leftWrist) { bodyA.z = l.x; bodyA.w = l.y }
             if let r = jp(.rightWrist) { bodyB.x = r.x; bodyB.y = r.y }
+            if let e = jp(.leftElbow) { bodyC.x = e.x; bodyC.y = e.y }      // Body Region arm masks
+            if let e = jp(.rightElbow) { bodyC.z = e.x; bodyC.w = e.y }
+            if let n = jp(.neck) { bodyD.x = n.x; bodyD.y = n.y }           // torso = neck↔root midpoint
+            if let r = jp(.root) { bodyD.z = r.x; bodyD.w = r.y }
         }
         var handL = SIMD2<Float>.zero, handR = SIMD2<Float>.zero      // (pinch, openness) per hand
         var gesturesL = SIMD4<Float>.zero, gesturesR = SIMD4<Float>.zero
@@ -93,7 +102,7 @@ nonisolated final class VisionEngine: @unchecked Sendable {
         }
 
         lock.lock()
-        _bodyA = bodyA; _bodyB = bodyB
+        _bodyA = bodyA; _bodyB = bodyB; _bodyC = bodyC; _bodyD = bodyD
         _gestures = gestures                                          // current frame, no decay → continuous
         _pinchLR = SIMD4(handL.x, handL.y, handR.x, handR.y)
         _gesturesL = gesturesL; _gesturesR = gesturesR

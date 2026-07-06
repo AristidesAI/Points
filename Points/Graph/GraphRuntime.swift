@@ -30,6 +30,9 @@ struct ProgramFrame {
     var depthStabilize: Float = 0     // EMA Smooth node amount (no node = raw depth)
     var holePersist = false           // Fill Holes node present + on
     var stems = false                 // Point Display "arms" — pull points back to their Z pins
+    var background: SIMD4<Float> = [0, 0, 0, 1]   // Background node → clear color
+    var lightPos: SIMD4<Float> = .zero            // Light node (w = type); lightParams.z = enabled
+    var lightParams: SIMD4<Float> = .zero
 }
 
 /// Owns the live graph: compiles it to a pin program, evaluates control-rate nodes,
@@ -67,11 +70,14 @@ final class GraphRuntime {
     private enum DynamicKind {
         case lagAlpha, trailStep, rippleWave, springKdt, springDmp, springVdt, freezeHold, echoAlpha
         case controlPort(String)
+        case regionCenter(Int)   // Face/Body Region mask centres (c0/c1) fed from Vision each frame
+        case wavePhase           // Wave node: phase lane advanced by SPEED per frame
     }
     private var dynamicKeys: [(key: String, nodeID: String, kind: DynamicKind)] = []
 
     // Shockwave ring (4 waves) — times in the frameProgram clock.
     private var waveBirths: [(t: Float, c: SIMD2<Float>)] = []
+    private var shockLatch: [String: Bool] = [:]   // per-node rising-edge latch for wired FIRE triggers
 
     // Touch (viewport finger) — feeds the Touch control node.
     private var touchValue: SIMD4<Float> = .zero
@@ -87,7 +93,7 @@ final class GraphRuntime {
     var usesMidiNodes: Bool { graph.nodes.contains { Self.midiIDs.contains($0.specID) } }
 
     // Live body/hand tracking (Vision), supplied by ContentView while a body node exists.
-    @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>))?
+    @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>, bodyC: SIMD4<Float>, bodyD: SIMD4<Float>))?
     private static let bodyFamily: Set<String> = ["hand-position", "pinch-amount", "hand-openness",
         "head-pose", "hand-gesture", "person-present", "joint", "body-region", "face-region",
         "left-hand-pinch", "right-hand-pinch", "left-hand-gesture", "right-hand-gesture"]
@@ -916,6 +922,9 @@ final class GraphRuntime {
             case ("spring", "vdt"): return (key, node.id, .springVdt)
             case ("freeze", "hold"): return (key, node.id, .freezeHold)
             case ("echo", "alpha"), ("echo", "alpha2"): return (key, node.id, .echoAlpha)
+            case ("face-region", "center"), ("body-region", "c0"): return (key, node.id, .regionCenter(0))
+            case ("body-region", "c1"): return (key, node.id, .regionCenter(1))
+            case ("wave", "wave"): return (key, node.id, .wavePhase)
             default:
                 if let spec = registry.spec(node.specID), spec.isControl,
                    spec.outputs.contains(where: { $0.name == suffix }) {
@@ -940,6 +949,7 @@ final class GraphRuntime {
         if let b = bodySource?() {                                                 // live Vision
             ctx.bodyA = b.bodyA; ctx.bodyB = b.bodyB; ctx.gestures = b.gestures; ctx.present = b.present
             ctx.pinchLR = b.pinchLR; ctx.gesturesL = b.gesturesL; ctx.gesturesR = b.gesturesR
+            ctx.bodyC = b.bodyC; ctx.bodyD = b.bodyD
         }
         evaluateControlGraph(ctx)
 
@@ -970,6 +980,13 @@ final class GraphRuntime {
             case .controlPort(let port):
                 let v = controlValues["\(nodeID).\(port)"] ?? .zero
                 lanes = [0: v.x, 1: v.y, 2: v.z, 3: v.w]
+            case .regionCenter(let which):
+                let c = Self.regionCenter(node, which, ctx)
+                lanes = [0: c.x, 1: c.y]
+            case .wavePhase:
+                // sin(pos·k + phase): march the phase so the sheet actually travels at SPEED
+                let k = node.float("frequency", 4) * 6.283
+                lanes[1] = -time * node.float("speed", 1) * k
             }
             for ref in refs {
                 guard workingInstructions.indices.contains(ref.instruction),
@@ -984,6 +1001,17 @@ final class GraphRuntime {
         }
 
         applyExposedParams()   // flat model — wired Signal nodes drive exposed params (on top of baked/control)
+
+        // Shockwave.fire: a wired trigger (Beat Trigger, Clock, gestures…) births a wave at the
+        // frame centre on its rising edge. Viewport taps / the pad still fire positioned waves.
+        for node in graph.nodes where node.specID == "shockwave" {
+            guard let w = graph.wireInto(node.id, "fire") else { continue }
+            let high = (controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero).x > 0.5
+            if high && !(shockLatch[node.id] ?? false) {
+                waveBirths.append((time, SIMD2(0, 0)))
+            }
+            shockLatch[node.id] = high
+        }
 
         // Shockwave uniforms (expired waves pruned lazily)
         waveBirths.removeAll { time - $0.t > 6 }
@@ -1000,8 +1028,9 @@ final class GraphRuntime {
         }
 
         // Camera node → renderer (read directly; camera isn't part of the pin-op chain).
+        // First camera in the graph wins — palette-added Cameras work, not just the default "cam".
         var cam = CameraFrame()
-        if let c = graph.node("cam") {
+        if let c = graph.node("cam") ?? graph.nodes.first(where: { $0.specID == "camera" }) {
             cam.fov = c.float("fov", 55); cam.zoom = c.float("zoom", 1)
             cam.parallax = c.float("parallax", 0.5); cam.depthPush = c.float("depthPush", 1)
             cam.centerX = c.float("centerX", 0); cam.centerY = c.float("centerY", 0)
@@ -1012,6 +1041,19 @@ final class GraphRuntime {
         let fill = graph.nodes.first { $0.specID == "fill-holes" }
         let stems = graph.node("pd")?.float("arms", 0) ?? 0
 
+        // STAGE sinks read by the renderer (like Camera): Background → clear color, Light → shading.
+        var bg = SIMD4<Float>(0, 0, 0, 1)
+        if let b = graph.nodes.first(where: { $0.specID == "background" }) {
+            bg = [b.float("r", 0), b.float("g", 0), b.float("b", 0), 1]
+        }
+        var lightPos = SIMD4<Float>.zero, lightParams = SIMD4<Float>.zero
+        if let l = graph.nodes.first(where: { $0.specID == "light" }) {
+            let type: Float = l.option("type", "point") == "directional" ? 1
+                            : l.option("type", "point") == "spot" ? 2 : 0
+            lightPos = [l.float("x", 0.5), l.float("y", 0.8), l.float("z", 2), type]
+            lightParams = [l.float("intensity", 1), l.float("falloff", 1), 1, 0]
+        }
+
         return ProgramFrame(instructions: workingInstructions,
                             stateStride: compiled.stateFloatsPerPin,
                             generation: generation,
@@ -1020,7 +1062,30 @@ final class GraphRuntime {
                             camera: cam,
                             depthStabilize: ema?.float("amount", 0.3) ?? 0,
                             holePersist: fill.map { $0.float("persist", 1) > 0.5 } ?? false,
-                            stems: stems > 0.5)
+                            stems: stems > 0.5,
+                            background: bg,
+                            lightPos: lightPos, lightParams: lightParams)
+    }
+
+    /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.
+    /// A joint Vision hasn't seen reads (0,0) → parked far offscreen so its mask reads 0.
+    private static func regionCenter(_ node: GraphNode, _ which: Int, _ ctx: ControlContext) -> SIMD2<Float> {
+        func pt(_ x: Float, _ y: Float) -> SIMD2<Float> {
+            (x == 0 && y == 0) ? SIMD2(99, 99) : SIMD2(x, y)
+        }
+        if node.specID == "face-region" { return pt(ctx.bodyA.x, ctx.bodyA.y) }
+        switch node.option("region", "person") {
+        case "head": return pt(ctx.bodyA.x, ctx.bodyA.y)
+        case "torso":
+            let n = pt(ctx.bodyD.x, ctx.bodyD.y), r = pt(ctx.bodyD.z, ctx.bodyD.w)
+            if n.x > 90 { return r }
+            if r.x > 90 { return n }
+            return (n + r) * 0.5
+        case "armL": return which == 0 ? pt(ctx.bodyA.z, ctx.bodyA.w) : pt(ctx.bodyC.x, ctx.bodyC.y)
+        case "armR": return which == 0 ? pt(ctx.bodyB.x, ctx.bodyB.y) : pt(ctx.bodyC.z, ctx.bodyC.w)
+        case "hands": return which == 0 ? pt(ctx.bodyA.z, ctx.bodyA.w) : pt(ctx.bodyB.x, ctx.bodyB.y)
+        default: return SIMD2(99, 99)   // person/background are depth-based, no centre
+        }
     }
 
     /// Apple's AVFoundation depth filtering — driven by the Apple Depth Filter node's
