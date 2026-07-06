@@ -195,16 +195,16 @@ final class NodeRegistry: @unchecked Sendable {
                    "Dropout persistence: points keep their last good depth through sensor holes instead of blinking out (pinout: instead of retracting).")
         passFilter("accumulate", "Accumulate",
                    [.float("frames", 1...30, 8)],
-                   "Blends multiple frames into a denser, cleaner cloud. Engine pass lands with the cleanup phase — registered, passthrough for now.")
+                   "Blends ~FRAMES frames of depth into a denser, calmer cloud (temporal average; holes keep the accumulated depth). Higher = smoother but laggier on motion. Runs while the node exists — the wire passes depth through.")
         passFilter("smooth-surface", "Smooth Surface",
                    [.float("radius", 0...4, 1)],
-                   "Spatial surface smoothing (bilateral). Engine pass lands with the cleanup phase — registered, passthrough for now.")
+                   "Bilateral surface smoothing: flattens sensor noise on surfaces WITHOUT bleeding across silhouette edges. RADIUS in pixels (0 = off). Runs while the node exists — the wire passes depth through.")
         passFilter("despeckle-voxel", "Despeckle Voxel",
                    [.float("size", 0...0.1, 0.02)],
-                   "Removes isolated speckle points by voxel occupancy. Engine pass lands with the cleanup phase — registered, passthrough for now.")
+                   "Removes isolated speckle returns: a point survives only with enough neighbours within SIZE metres of its depth. Kills floating dust around silhouettes. Runs while the node exists — the wire passes depth through.")
         passFilter("detail-upsample", "Detail Upsample",
                    [.float("factor", 1...4, 2)],
-                   "Joint bilateral depth upsample guided by RGB (TDLidar JBU). Engine pass lands with the cleanup phase — registered, passthrough for now.")
+                   "Joint bilateral depth upsample guided by RGB (TDLidar JBU). · NOT WIRED UP YET — registered, passthrough for now.")
     }
 
     // MARK: SHAPE

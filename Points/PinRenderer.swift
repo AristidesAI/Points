@@ -31,6 +31,13 @@ struct FillParamsSwift {
     var gapThresh: Float = 0.08     // metres — fill the shadow toward the foreground only
 }
 
+// Field order MUST match CleanParams in Shaders.metal.
+struct CleanParamsSwift {
+    var w: UInt32 = 0, h: UInt32 = 0
+    var gap: Float = 0.02, radius: Float = 1, alpha: Float = 0.125, reset: Float = 0
+    var pad0: Float = 0, pad1: Float = 0
+}
+
 // Field order MUST match EmaParams in Shaders.metal.
 struct EmaParamsSwift {
     var alpha: Float = 1, deadband: Float = 0, deadbandPerM: Float = 0, motionAdapt: Float = 5
@@ -73,6 +80,9 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var bloomBlur: MPSImageGaussianBlur!
     private var emaPipeline: MTLComputePipelineState!
     private var fillPipeline: MTLComputePipelineState!    // depth hole-fill (IR-shadow closer)
+    private var despecklePipeline: MTLComputePipelineState!
+    private var bilateralPipeline: MTLComputePipelineState!
+    private var accumulatePipeline: MTLComputePipelineState!
     private var depthState: MTLDepthStencilState!
     private var depthStateGhost: MTLDepthStencilState!    // always pass, no write
     private var textureCache: CVMetalTextureCache!
@@ -100,6 +110,10 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
 
     // Filter state (ping-pong r32Float at depth resolution)
     private var emaTex: [MTLTexture] = []
+    private var cleanTex: [MTLTexture] = []   // despeckle/bilateral scratch pair (r32Float)
+    private var accTex: [MTLTexture] = []     // Accumulate ping-pong (r32Float)
+    private var accParity = 0
+    private var accValid = false
     private var fillTex: MTLTexture?          // hole-filled depth scratch (r32Float)
     private var _fillRadius: Int = 3          // 0 = off; IR-shadow fill radius (front camera)
     private var emaParity = 0
@@ -316,6 +330,57 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             blit.endEncoding()
         }
 
+        // 5b. FILTER-node cleanup chain on the filtered depth: Despeckle → Smooth Surface →
+        //     Accumulate (each runs only while its node is in the graph).
+        var depthForVM: MTLTexture = filteredValid ? emaTex[emaParity] : fallbackDepth
+        if filteredValid, let src = emaTex.first {
+            let w = src.width, h = src.height
+            func clean(_ pipe: MTLComputePipelineState, _ input: MTLTexture, _ output: MTLTexture,
+                       _ p: inout CleanParamsSwift) {
+                guard let enc = cmd.makeComputeCommandEncoder() else { return }
+                enc.setComputePipelineState(pipe)
+                enc.setTexture(input, index: 0)
+                enc.setTexture(output, index: 1)
+                enc.setBytes(&p, length: MemoryLayout<CleanParamsSwift>.stride, index: 0)
+                enc.dispatchThreads(MTLSize(width: w, height: h, depth: 1),
+                                    threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+                enc.endEncoding()
+            }
+            if frame.despeckleGap > 0.0001 || frame.smoothRadius >= 1 { ensureCleanTextures(w: w, h: h) }
+            if frame.despeckleGap > 0.0001, cleanTex.count == 2 {
+                var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h), gap: frame.despeckleGap)
+                clean(despecklePipeline, depthForVM, cleanTex[0], &p)
+                depthForVM = cleanTex[0]
+            }
+            if frame.smoothRadius >= 1, cleanTex.count == 2 {
+                var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h), radius: frame.smoothRadius)
+                let dst = depthForVM === cleanTex[0] ? cleanTex[1] : cleanTex[0]
+                clean(bilateralPipeline, depthForVM, dst, &p)
+                depthForVM = dst
+            }
+            if frame.accumFrames > 1.5 {
+                ensureAccTextures(w: w, h: h)
+                if accTex.count == 2, let enc = cmd.makeComputeCommandEncoder() {
+                    var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h),
+                                             alpha: 1 / max(frame.accumFrames, 2),
+                                             reset: accValid ? 0 : 1)
+                    enc.setComputePipelineState(accumulatePipeline)
+                    enc.setTexture(depthForVM, index: 0)
+                    enc.setTexture(accTex[accParity], index: 1)
+                    enc.setTexture(accTex[1 - accParity], index: 2)
+                    enc.setBytes(&p, length: MemoryLayout<CleanParamsSwift>.stride, index: 0)
+                    enc.dispatchThreads(MTLSize(width: w, height: h, depth: 1),
+                                        threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+                    enc.endEncoding()
+                    accParity = 1 - accParity
+                    accValid = true
+                    depthForVM = accTex[accParity]
+                }
+            } else {
+                accValid = false   // node removed → reseed next time
+            }
+        }
+
         // FPS EMA for the test HUD
         let nowT = CACurrentMediaTime()
         if lastDrawAt > 0 {
@@ -337,7 +402,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             instrs.withUnsafeBytes { enc.setBytes($0.baseAddress!, length: $0.count, index: 2) }
             enc.setBuffer(stateBuf ?? instanceBuf, offset: 0, index: 3)   // dummy bind when stateless
             enc.setBuffer(instanceBuf, offset: 0, index: 4)
-            enc.setTexture(filteredValid ? emaTex[emaParity] : fallbackDepth, index: 0)
+            enc.setTexture(depthForVM, index: 0)
             enc.setTexture(colorTex ?? fallbackColor, index: 1)
             enc.setTexture(paletteTex, index: 2)
             enc.dispatchThreads(MTLSize(width: actual, height: 1, depth: 1),
@@ -576,6 +641,9 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
 
         emaPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_ema")!)
         fillPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_fill_holes")!)
+        despecklePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_despeckle")!)
+        bilateralPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_bilateral")!)
+        accumulatePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_accumulate")!)
         brightPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "bloom_brightpass")!)
         vmPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "pin_program")!)
         bloomBlur = MPSImageGaussianBlur(device: device, sigma: 6)
@@ -701,6 +769,24 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
 
         // Interpreter output: one InstanceOut (64B: posSize + color + rot + scl) per pin (~19.6MB, private)
         instanceBuf = device.makeBuffer(length: Self.maxPins * 64, options: .storageModePrivate)
+    }
+
+    private func ensureCleanTextures(w: Int, h: Int) {
+        if let t = cleanTex.first, t.width == w, t.height == h { return }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: w, height: h, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        cleanTex = [device.makeTexture(descriptor: d)!, device.makeTexture(descriptor: d)!]
+    }
+
+    private func ensureAccTextures(w: Int, h: Int) {
+        if let t = accTex.first, t.width == w, t.height == h { return }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: w, height: h, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        accTex = [device.makeTexture(descriptor: d)!, device.makeTexture(descriptor: d)!]
+        accParity = 0
+        accValid = false
     }
 
     private func ensureFillTex(w: Int, h: Int) {

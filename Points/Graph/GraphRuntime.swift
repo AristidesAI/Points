@@ -40,6 +40,9 @@ struct ProgramFrame {
     var uvTransform: SIMD4<Float> = [0, 0, 1, 0]  // UV Transform node: offset, scale, rotate
     var edgePolicy: SIMD4<Float> = .zero          // Edge Policy node: mode, margin
     var domain: SIMD4<Float> = .zero              // Domain node: topoA, topoB, morph
+    var despeckleGap: Float = 0                   // Despeckle Voxel node (0 = off)
+    var smoothRadius: Float = 0                   // Smooth Surface node (0 = off)
+    var accumFrames: Float = 0                    // Accumulate node (≤1 = off)
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -1063,6 +1066,9 @@ final class GraphRuntime {
         let ema = graph.nodes.first { $0.specID == "ema-smooth" }
         let fill = graph.nodes.first { $0.specID == "fill-holes" }
         let stems = graph.node("pd")?.float("arms", 0) ?? 0
+        let despeckle = graph.nodes.first { $0.specID == "despeckle-voxel" }?.float("size", 0.02) ?? 0
+        let smoothR = graph.nodes.first { $0.specID == "smooth-surface" }?.float("radius", 1) ?? 0
+        let accum = graph.nodes.first { $0.specID == "accumulate" }?.float("frames", 8) ?? 0
 
         // STAGE sinks read by the renderer (like Camera): Background, Light, and the post stack.
         var bg = SIMD4<Float>(0, 0, 0, 0)
@@ -1136,7 +1142,8 @@ final class GraphRuntime {
                             lights: lights,
                             post: post, ghost: ghost,
                             material: material, lookAt: lookAt, stem: stem,
-                            uvTransform: uvT, edgePolicy: edge, domain: domain)
+                            uvTransform: uvT, edgePolicy: edge, domain: domain,
+                            despeckleGap: despeckle, smoothRadius: smoothR, accumFrames: accum)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.

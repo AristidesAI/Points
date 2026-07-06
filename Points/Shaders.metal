@@ -730,6 +730,75 @@ kernel void depth_fill_holes(texture2d<float, access::read> inD [[texture(0)]],
     outD.write(float4(wSum > 1e-6 ? dSum / wSum : 0.0), gid);
 }
 
+// ---- FILTER-node cleanup chain (after fill-holes + EMA): Despeckle Voxel, Smooth
+//      Surface (bilateral), Accumulate (temporal). Presence of the node runs the pass. ----
+struct CleanParams { uint w; uint h; float gap; float radius; float alpha; float reset; float pad0; float pad1; };
+
+// Despeckle Voxel: drop isolated returns — a pixel survives only with enough neighbours
+// at a similar depth (within GAP metres) in its 5×5 window.
+kernel void depth_despeckle(texture2d<float, access::read> inD [[texture(0)]],
+                            texture2d<float, access::write> outD [[texture(1)]],
+                            constant CleanParams &P [[buffer(0)]],
+                            uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= P.w || gid.y >= P.h) return;
+    float d = inD.read(gid).r;
+    if (!(d > 0.05) || !isfinite(d)) { outD.write(float4(0.0), gid); return; }
+    int support = 0;
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            if (dx == 0 && dy == 0) continue;
+            int2 q = int2(gid) + int2(dx, dy);
+            if (q.x < 0 || q.y < 0 || q.x >= int(P.w) || q.y >= int(P.h)) continue;
+            float dn = inD.read(uint2(q)).r;
+            if (dn > 0.05 && isfinite(dn) && fabs(dn - d) < P.gap) support++;
+        }
+    }
+    outD.write(float4(support >= 4 ? d : 0.0), gid);
+}
+
+// Smooth Surface: 2D bilateral — smooths surfaces without bleeding across silhouettes
+// (range sigma ~5 cm). RADIUS 1-4 px.
+kernel void depth_bilateral(texture2d<float, access::read> inD [[texture(0)]],
+                            texture2d<float, access::write> outD [[texture(1)]],
+                            constant CleanParams &P [[buffer(0)]],
+                            uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= P.w || gid.y >= P.h) return;
+    float d = inD.read(gid).r;
+    if (!(d > 0.05) || !isfinite(d)) { outD.write(float4(0.0), gid); return; }
+    int R = clamp(int(P.radius), 1, 4);
+    float invS2 = 1.0 / (2.0 * float(R) * float(R) * 0.25 + 0.5);
+    float wSum = 0.0, dSum = 0.0;
+    for (int dy = -R; dy <= R; ++dy) {
+        for (int dx = -R; dx <= R; ++dx) {
+            int2 q = int2(gid) + int2(dx, dy);
+            if (q.x < 0 || q.y < 0 || q.x >= int(P.w) || q.y >= int(P.h)) continue;
+            float dn = inD.read(uint2(q)).r;
+            if (!(dn > 0.05) || !isfinite(dn)) continue;
+            float dz = (dn - d) / 0.05;                                  // range sigma 5 cm
+            float w = exp(-float(dx * dx + dy * dy) * invS2 - dz * dz);
+            wSum += w; dSum += dn * w;
+        }
+    }
+    outD.write(float4(wSum > 1e-6 ? dSum / wSum : d), gid);
+}
+
+// Accumulate: temporal blend toward the current frame (alpha = 1/FRAMES) — denser,
+// calmer cloud; holes keep the accumulated depth.
+kernel void depth_accumulate(texture2d<float, access::read> cur [[texture(0)]],
+                             texture2d<float, access::read> prev [[texture(1)]],
+                             texture2d<float, access::write> outT [[texture(2)]],
+                             constant CleanParams &P [[buffer(0)]],
+                             uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= P.w || gid.y >= P.h) return;
+    float d = cur.read(gid).r;
+    bool dv = d > 0.05 && isfinite(d);
+    if (P.reset > 0.5) { outT.write(float4(dv ? d : 0.0), gid); return; }
+    float p = prev.read(gid).r;
+    bool pv = p > 0.05 && isfinite(p);
+    float o = dv ? (pv ? p + (d - p) * P.alpha : d) : (pv ? p : 0.0);
+    outT.write(float4(o), gid);
+}
+
 kernel void depth_ema(texture2d<float, access::read> cur [[texture(0)]],
                       texture2d<float, access::read> prev [[texture(1)]],
                       texture2d<float, access::write> outT [[texture(2)]],
