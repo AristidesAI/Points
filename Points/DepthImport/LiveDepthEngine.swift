@@ -35,16 +35,15 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
         }
     }
 
-    /// One BGRA camera frame → depth → renderer. Drops frames while an inference is in flight.
-    func process(_ bgra: CVPixelBuffer) {
+    /// One BGRA camera frame (+ its real normalized intrinsics) → depth → renderer. Drops frames
+    /// while an inference is in flight.
+    func process(_ bgra: CVPixelBuffer, intrinsics: SIMD4<Float>) {
         lock.lock(); if busy || !runner.isLoaded { lock.unlock(); return }; busy = true; lock.unlock()
         defer { lock.lock(); busy = false; lock.unlock() }
         let src = CIImage(cvPixelBuffer: bgra)
         guard let cg = ci.createCGImage(src, from: src.extent),
               let (metres, w, h) = runner.depth(cg), let pb = buffer(metres, w, h) else { return }
-        // Approximate intrinsics for METRIC mode — these models are RELATIVE depth (not true metres)
-        // and the RGB frame is already upright, so a nominal ~53° FOV, centred, is close enough.
-        renderer.setIntrinsics(SIMD4(1, 1, 0.5, 0.5))
+        renderer.setIntrinsics(intrinsics)   // real per-frame camera intrinsics → METRIC mode
         renderer.ingest(depth: pb, color: nil, lumaOnly: false)
     }
 

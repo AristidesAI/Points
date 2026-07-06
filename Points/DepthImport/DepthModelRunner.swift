@@ -132,28 +132,25 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         lock.unlock()
         let span = max(hi - lo, 1e-4)
         let n = Self.nearM, f = Self.farM
+        // Map + temporal EMA in ONE pass. Monocular depth is noisy frame-to-frame and the renderer's
+        // EMA is off by default, so the raw jitter rendered as the "breathing/cloth" vortex; new frame
+        // weighted 0.55, rest history. The two-pass version (map, then a second EMA loop) added a whole
+        // extra per-pixel pass per frame → pushed the ViT frame budget over → dropped frames = SLOWER.
+        // ponytail: 0.55 is the smooth-vs-lag knob; raise toward 1 for snappier + noisier.
+        lock.lock(); let prev = prevOut; lock.unlock()   // COW snapshot — no copy, O(1)
+        let usePrev = prev.count == w * h
+        let a: Float = 0.55
         var out = [Float](repeating: 0, count: w * h)
         for i in 0..<(w * h) {
             let x = raw[i]
             guard x.isFinite, x > 0.02 else { out[i] = 0; continue }   // hole → 0 → culled by the shader
             var t = min(max((x - lo) / span, 0), 1)
             if inverse { t = 1 - t }
-            out[i] = n + (f - n) * t
+            var m = n + (f - n) * t
+            if usePrev, prev[i] > 0 { m = a * m + (1 - a) * prev[i] }
+            out[i] = m
         }
-        // Per-pixel temporal EMA on the display metres — monocular depth is NOISY frame-to-frame and
-        // the renderer's EMA is OFF by default (alpha 1 with no EMA Smooth node), so that jitter
-        // rendered as the "breathing / cloth-being-pulled" vortex. New frame weighted 0.55 (rest =
-        // history) → stable cloud with modest lag. Photos are one frame → untouched. // ponytail:
-        // 0.55 is the smooth-vs-lag knob; raise toward 1 for snappier + noisier.
-        lock.lock()
-        if prevOut.count == out.count {
-            let a: Float = 0.55
-            for i in 0..<out.count {
-                out[i] = (out[i] > 0 && prevOut[i] > 0) ? a * out[i] + (1 - a) * prevOut[i] : out[i]
-            }
-        }
-        prevOut = out
-        lock.unlock()
+        lock.lock(); prevOut = out; lock.unlock()
         return (out, w, h)
     }
 

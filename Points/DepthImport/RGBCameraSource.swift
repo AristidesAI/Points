@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreVideo
+import simd
 
 // Plain RGB capture for the LIVE depth-model nodes: phones without back LiDAR (and the MoGe-2 live
 // test) run the back/front camera's colour frames through a CoreML depth model → point cloud. This
@@ -38,8 +39,8 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         return found.isEmpty ? [.wide, .front] : found
     }
 
-    /// (bgra frame, rotation degrees to upright). Called on the capture queue.
-    var onFrame: (@Sendable (CVPixelBuffer, Int) -> Void)?
+    /// (bgra frame, normalized intrinsics fx/fy/cx/cy for METRIC mode). Called on the capture queue.
+    var onFrame: (@Sendable (CVPixelBuffer, SIMD4<Float>) -> Void)?
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "points.rgbcam", qos: .userInitiated)
@@ -99,6 +100,8 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         if let c = output.connection(with: .video) {
             if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
             if c.isVideoMirroringSupported { c.automaticallyAdjustsVideoMirroring = false; c.isVideoMirrored = false }
+            // Deliver the real per-frame camera intrinsics → METRIC-mode unprojection.
+            if c.isCameraIntrinsicMatrixDeliverySupported { c.isCameraIntrinsicMatrixDeliveryEnabled = true }
         }
         session.commitConfiguration()
     }
@@ -106,6 +109,19 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard running, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrame?(pb, 0)   // connection already rotates to upright
+        onFrame?(pb, Self.intrinsics(sampleBuffer))   // connection already rotates the buffer to upright
+    }
+
+    /// Normalized intrinsics (fx/W, fy/H, cx/W, cy/H) from the frame's camera-intrinsic-matrix
+    /// attachment, rotated 90° to match the portrait (upright) buffer we hand the model: the sensor
+    /// axes swap. cx/cy ≈ centre. Identity fallback if the attachment is missing.
+    private static func intrinsics(_ sb: CMSampleBuffer) -> SIMD4<Float> {
+        guard let raw = CMGetAttachment(sb, key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix,
+                                        attachmentModeOut: nil) as? Data, raw.count >= MemoryLayout<matrix_float3x3>.size
+        else { return SIMD4(1, 1, 0.5, 0.5) }
+        let m = raw.withUnsafeBytes { $0.load(as: matrix_float3x3.self) }
+        let fx = m.columns.0.x, fy = m.columns.1.y, cx = m.columns.2.x, cy = m.columns.2.y
+        let fxn = fx / max(2 * cx, 1), fyn = fy / max(2 * cy, 1)   // fx/W, fy/H (2·c ≈ dimension)
+        return SIMD4(fyn, fxn, 0.5, 0.5)                            // 90° rotation swaps the axes
     }
 }

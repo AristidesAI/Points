@@ -119,23 +119,34 @@ final class NodeRegistry: @unchecked Sendable {
                     return [mxy, mz]
                 }
                 let free = mode == "free"
-                let edge: Float = (!free && node.float("edgeLock") > 0.5) ? 1 : 0
-                let xy = b.reg()
                 if free {
-                    b.emitPatched(PinInstruction(.freeXY, dst: xy, a: d,
-                                                 imm: [node.float("separation", 1), node.float("focus", 1), 0, 0]),
+                    // FREE = the fan XY (its signature look) + a strong focus-referenced Z recession,
+                    // so the cloud now SHRINKS as it moves away (perspective zoom, close to metric) —
+                    // vs the old wide-near/far nearness push that barely receded. GAIN = zoom strength,
+                    // FOCUS = the depth that sits at the wall. Needs DEPTHPUSH ≥ 1 (multiplies the Z).
+                    let focus = node.float("focus", 1)
+                    let fxy = b.reg(), fz = b.reg()
+                    b.emitPatched(PinInstruction(.freeXY, dst: fxy, a: d,
+                                                 imm: [node.float("separation", 1), focus, 0, 0]),
                                   key: "\(node.id).xy", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).separation", lane: 0)   // §13 per-param keys (free mode)
+                    b.addPatchKey("\(node.id).separation", lane: 0)
                     b.addPatchKey("\(node.id).focus", lane: 1)
-                } else {
-                    b.emitPatched(PinInstruction(.pinFieldXY, dst: xy, a: d,
-                                                 imm: [node.float("separation", 1), node.float("volume", 0),
-                                                       node.float("wobble", 0), edge]),
-                                  key: "\(node.id).xy", lanes: [0, 1, 2])
-                    b.addPatchKey("\(node.id).separation", lane: 0)   // §13 per-param keys (pinout mode)
-                    b.addPatchKey("\(node.id).volume", lane: 1)
-                    b.addPatchKey("\(node.id).wobble", lane: 2)
+                    b.emitPatched(PinInstruction(.unprojectZ, dst: fz, a: d,
+                                                 imm: [node.float("gain", 1.2), focus, 0, 0]),
+                                  key: "\(node.id).z", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).gain", lane: 0)
+                    b.addPatchKey("\(node.id).focus", lane: 1)
+                    return [fxy, fz]
                 }
+                let edge: Float = (node.float("edgeLock") > 0.5) ? 1 : 0
+                let xy = b.reg()
+                b.emitPatched(PinInstruction(.pinFieldXY, dst: xy, a: d,
+                                             imm: [node.float("separation", 1), node.float("volume", 0),
+                                                   node.float("wobble", 0), edge]),
+                              key: "\(node.id).xy", lanes: [0, 1, 2])
+                b.addPatchKey("\(node.id).separation", lane: 0)   // §13 per-param keys (pinout mode)
+                b.addPatchKey("\(node.id).volume", lane: 1)
+                b.addPatchKey("\(node.id).wobble", lane: 2)
                 let z = b.reg()
                 b.emitPatched(PinInstruction(.pinFieldZ, dst: z, a: d,
                                              imm: [node.float("gain", 1.2), node.float("gamma", 1),
