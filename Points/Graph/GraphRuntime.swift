@@ -106,6 +106,15 @@ final class GraphRuntime {
     private static let midiIDs: Set<String> = ["midi-cc", "midi-note"]
     var usesMidiNodes: Bool { graph.nodes.contains { Self.midiIDs.contains($0.specID) } }
 
+    // OSC over UDP (OSCEngine), supplied by ContentView while an OSC node exists.
+    @ObservationIgnored var oscSource: (@Sendable () -> [Float])?
+    @ObservationIgnored var oscSend: (@Sendable (Int, Float) -> Void)?
+    private static let oscIDs: Set<String> = ["osc-in", "osc-out"]
+    var usesOSCNodes: Bool { graph.nodes.contains { Self.oscIDs.contains($0.specID) } }
+
+    // Nearest-subject depth (sparse CPU scan in PinRenderer.ingest) → the Proximity node.
+    @ObservationIgnored var proximitySource: (@Sendable () -> Float)?
+
     // Live body/hand tracking (Vision), supplied by ContentView while a body node exists.
     @ObservationIgnored var bodySource: (@Sendable () -> (bodyA: SIMD4<Float>, bodyB: SIMD4<Float>, gestures: SIMD4<Float>, present: SIMD4<Float>, pinchLR: SIMD4<Float>, gesturesL: SIMD4<Float>, gesturesR: SIMD4<Float>, bodyC: SIMD4<Float>, bodyD: SIMD4<Float>, joints: [SIMD2<Float>]))?
     private static let bodyFamily: Set<String> = ["hand-position", "pinch-amount", "hand-openness",
@@ -972,6 +981,8 @@ final class GraphRuntime {
         var ctx = ControlContext(time: time, dt: dt, beatPhase: beat, bpm: bpm, touch: touchValue)
         if let a = audioSource?() { ctx.audio = a.bands; ctx.onsets = a.onsets; ctx.fftBands = a.fft }
         if let m = midiSource?() { ctx.midi = m }                                  // live MIDI
+        if let o = oscSource?() { ctx.osc = o }                                    // live OSC in
+        if let p = proximitySource?() { ctx.proximity = [p, p > 0.05 ? 1 : 0, 0, 0] }
         if let b = bodySource?() {                                                 // live Vision
             ctx.bodyA = b.bodyA; ctx.bodyB = b.bodyB; ctx.gestures = b.gestures; ctx.present = b.present
             ctx.pinchLR = b.pinchLR; ctx.gesturesL = b.gesturesL; ctx.gesturesR = b.gesturesR
@@ -1027,6 +1038,15 @@ final class GraphRuntime {
         }
 
         applyExposedParams()   // flat model — wired Signal nodes drive exposed params (on top of baked/control)
+
+        // OSC Out: push each node's wired value to the network (the engine rate-limits).
+        if let send = oscSend {
+            for node in graph.nodes where node.specID == "osc-out" {
+                guard let w = graph.wireInto(node.id, "value") else { continue }
+                let v = (controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero).x
+                send(Int(node.float("slot", 1)), v)
+            }
+        }
 
         // Shockwave.fire: a wired trigger (Beat Trigger, Clock, gestures…) births a wave at the
         // frame centre on its rising edge. Viewport taps / the pad still fire positioned waves.

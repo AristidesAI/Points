@@ -176,12 +176,41 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     // MARK: - Public controls (callable from main)
 
     func ingest(depth: CVPixelBuffer, color: CVPixelBuffer?, lumaOnly: Bool) {
+        // Sparse nearest-depth scan for the Proximity node (every 16th pixel, ~1200 reads).
+        var nearest: Float = 0
+        if CVPixelBufferGetPixelFormatType(depth) == kCVPixelFormatType_DepthFloat32 ||
+           CVPixelBufferGetPixelFormatType(depth) == kCVPixelFormatType_OneComponent32Float {
+            CVPixelBufferLockBaseAddress(depth, .readOnly)
+            if let base = CVPixelBufferGetBaseAddress(depth) {
+                let w = CVPixelBufferGetWidth(depth), h = CVPixelBufferGetHeight(depth)
+                let rowBytes = CVPixelBufferGetBytesPerRow(depth)
+                var minD = Float.greatestFiniteMagnitude
+                var y = 0
+                while y < h {
+                    let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: Float.self)
+                    var x = 0
+                    while x < w {
+                        let d = row[x]
+                        if d > 0.05, d.isFinite, d < minD { minD = d }
+                        x += 16
+                    }
+                    y += 16
+                }
+                nearest = minD == .greatestFiniteMagnitude ? 0 : minD
+            }
+            CVPixelBufferUnlockBaseAddress(depth, .readOnly)
+        }
         lock.lock()
         pendingDepth = depth
         pendingColor = color
         pendingLumaOnly = lumaOnly
+        _nearestDepth = nearest
         lock.unlock()
     }
+
+    /// Nearest valid depth (metres) seen in the last frame — 0 while empty. Proximity node bus.
+    var nearestDepth: Float { lock.lock(); defer { lock.unlock() }; return _nearestDepth }
+    private var _nearestDepth: Float = 0
 
     func resetFilter() { lock.lock(); pendingReset = true; lock.unlock() }
     func setPinCount(_ n: Int) { lock.lock(); _pinCount = max(64, min(n, Self.maxPins)); lock.unlock() }

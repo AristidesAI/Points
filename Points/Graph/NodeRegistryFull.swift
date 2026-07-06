@@ -170,9 +170,25 @@ extension NodeRegistry {
             description: "Per-pin sensor confidence 0-1 (noisy edges score low). · Reads 1.0 until the confidence texture is bound.",
             emit: { b, _, _ in [b.constant([1, 1, 1, 1])] }))
 
-        stubControl("proximity", "Proximity", .source,
-                    [PortSpec("nearness", .signal), PortSpec("entered", .trigger)],
-                    "How close the nearest subject is, 0-1, with a threshold trigger. · Arrives with the depth-stats pass.") { _ in [.zero, .zero] }
+        registerSpec(NodeSpec(
+            id: "proximity", name: "Proximity", family: .source,
+            outputs: [PortSpec("nearness", .signal), PortSpec("entered", .trigger)],
+            params: [.float("near", 0.15...2, 0.4), .float("far", 0.5...6, 2.5),
+                     .float("threshold", 0...1, 0.5)],
+            execution: .control,
+            description: "How close the nearest subject is, live from the depth sensor: NEARNESS reads 0 at FAR metres → 1 at NEAR. ENTERED pulses once when nearness crosses THRESHOLD upward — someone stepping close fires it. Wire nearness → Size.base to swell as people approach; entered → Shockwave.fire.",
+            controlEvalStateful: { node, _, ctx, state in
+                var nearness: Float = 0
+                if ctx.proximity.y > 0.5 {
+                    let near = node.float("near", 0.4)
+                    let far = max(node.float("far", 2.5), near + 0.01)
+                    nearness = min(max((far - ctx.proximity.x) / (far - near), 0), 1)
+                }
+                let th = node.float("threshold", 0.5)
+                let entered: Float = nearness >= th && state.x < th ? 1 : 0
+                state.x = nearness
+                return [SIMD4(repeating: nearness), SIMD4(repeating: entered)]
+            }))
 
         // MARK: - GRID (rest)
 
@@ -856,14 +872,23 @@ extension NodeRegistry {
                     "Note gate (1 while held) + velocity 0-1. · Live: CoreMIDI + RTP network.") { ctx in
             [SIMD4(repeating: ctx.midi.y), SIMD4(repeating: ctx.midi.z)]
         }
-        stubControl("osc-in", "OSC In", .signal, [PortSpec("value", .signal)],
-                    "A float from the network (/points/mod/n). · Live when the OSC engine lands.") { _ in [.zero] }
+        registerSpec(NodeSpec(
+            id: "osc-in", name: "OSC In", family: .signal,
+            outputs: [PortSpec("value", .signal)],
+            params: [.float("slot", 1...8, 1)],
+            execution: .control,
+            description: "A float from the network, live: listens on UDP :9000 for /points/mod/1-8 (TouchDesigner, Max, TouchOSC…). Pick a SLOT; value carries whatever that address last sent, 0-1. One node per slot.",
+            controlEval: { node, _, ctx in
+                let i = min(max(Int(node.float("slot", 1)) - 1, 0), 7)
+                return [SIMD4(repeating: i < ctx.osc.count ? ctx.osc[i] : 0)]
+            }))
         registerSpec(NodeSpec(
             id: "osc-out", name: "OSC Out", family: .signal,
             inputs: [PortSpec("value", .signal)],
             outputs: [],
+            params: [.float("slot", 1...8, 1)],
             execution: .control,
-            description: "Sends a value to the network. · Live when the OSC engine lands.",
+            description: "Sends the wired value to the network, live: broadcasts /points/out/SLOT on UDP :9001 (rate-limited, only when it changes). Wire Audio Levels.bass → value and drive lights elsewhere from the patch.",
             controlEval: { _, _, _ in [] }))
 
         // MARK: - BODY (bus stubs + real region placeholders)

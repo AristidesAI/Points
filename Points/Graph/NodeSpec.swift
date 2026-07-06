@@ -175,4 +175,6 @@ struct ControlContext: Sendable {
     var bodyD: SIMD4<Float> = .zero    // neckX, neckY, rootX, rootY (0-1; 0,0 = unseen)
     var joints: [SIMD2<Float>] = []    // full skeleton, VisionEngine.jointOrder order; (0,0) = unseen
     var fftBands: [Float] = []         // 20 log-spaced mic bands 0-1 (FFT Band node)
+    var osc: [Float] = []              // OSC In slots /points/mod/1-8
+    var proximity: SIMD4<Float> = .zero // nearest subject: metres, present 0/1
 }

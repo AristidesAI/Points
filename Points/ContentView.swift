@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var runtime = GraphRuntime()
     @State private var audio = AudioEngine()
     @State private var midi = MIDIEngine()
+    @State private var osc = OSCEngine()
     @State private var recorder = RecordingManager()
     @State private var askedPhotos = false
     @State private var ndi = NDIManager()
@@ -262,6 +263,8 @@ struct ContentView: View {
             if runtime.usesAudioNodes { audio.start() } else { audio.stop() }
             // MIDI in runs only while a MIDI node is in the graph.
             if runtime.usesMidiNodes { midi.start() } else { midi.stop() }
+            // OSC (UDP :9000 in / :9001 out) runs only while an OSC node is in the graph.
+            if runtime.usesOSCNodes { osc.start() } else { osc.stop() }
             // Ask for Photos access as soon as a Record node exists — before any recording,
             // so STOP never has to prompt from inside a GPU completion handler (crash-safe).
             if runtime.hasRecordNode, !askedPhotos { askedPhotos = true; recorder.requestAuthorization() }
@@ -341,6 +344,12 @@ struct ContentView: View {
                 let m = midi
                 runtime.midiSource = { m.current() }          // was never assigned → MIDI nodes read 0
                 if runtime.usesMidiNodes { midi.start() }
+                let o = osc
+                runtime.oscSource = { o.current() }
+                runtime.oscSend = { o.send(slot: $0, value: $1) }
+                if runtime.usesOSCNodes { osc.start() }
+                let rend = renderer
+                runtime.proximitySource = { rend.nearestDepth }   // Proximity node bus
                 // NDI output tap — renderer pulls the live config each frame.
                 let n = ndi
                 renderer.ndi = n
