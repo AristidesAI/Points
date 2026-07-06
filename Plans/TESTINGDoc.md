@@ -336,3 +336,118 @@ counter - Not sure how its supposed to work
 On start - doesnt work, Should be a counter that start counting up as soon as you place the node - doesnt do that. 
 Toggle - Not sure what it does - Should explain a lot of these nodes better and also make sure they arent placeholders.
 
+
+
+## Live Model Node Notes:
+
+When I say camera effects I mean FOV,zoom, depth Curve, Parallax, etc - what you can change in the cameraview bottom bar.
+
+Dav2 video S is the only one that sort of works - is not wrapping around or 
+
+Dav2 metric outdoor is completely zoomed in - No matter what camera you set it too its not able to render the point cloud properly
+
+Dav2 metric indoor s is upside down some of the time. - the camera effect work on this model but not on most of the others.
+
+MOGE2 is flipped to 180  some of the time. - When it works its quite slow - the camera effects work on this model ![alt text](../IMG_8877.PNG) and when its not its unstable in outdoor areas and slow 
+
+Dav2 is flipped 180
+
+Dav3 wraps around itself, or its inverted so the far away is white and close is dark  ![ examples of it looping around on itself like its a cloth being pulled](../IMG_8873.PNG) ![ examples of it looping around on itself like its a cloth being pulled](../IMG_8874.PNG)
+
+MOGE2 image/video is flipped 180, 
+
+All of them don’t properly switch when you change camera - you have to change camera then change model the. They refresh 
+
+On first startup they take 9000ms + to load and freeze the app - adding a loading indicator would be useful
+
+In depth front facing there are all these points travelling towards the center like they are being pulled there  ![see the points pulled](../IMG_8874.PNG) ![see the points pulled](../IMG_8875.PNG) ![another example](../IMG_8873.PNG)
+
+Most of the problems occur on the wide and front lens - The issues dont appear as often when using the ultrawide - However the camera switch during model usage rarely works - and required switching to another model to change the camera.
+
+It looks like you need to "preload" and then keep the models "warm" or they will do strange things like wrap around themselves. 
+
+I propose when the live depth model node is created - you instigate a loading screen which preloads all models, Then when the node gets deleted you unload all that data. 
+
+THe processing screen for the models - loading circle works on the bottom edges but doesnt go around the top of the display above the dynamic island time and icons. For only this part of the app go fullscreen so that the loading indicator wraps around the display cleanly, then return to normal with the time and icons where they were ![ loading circle works on the bottom edges but doesnt go around the top of the display above the dynamic island time and icons. For only this part of the app go fullscreen so that the loading indicator wraps around the display cleanly, then return to normal with the time and icons where they were](../IMG_8852.PNG)
+
+The background loading indicator for the app does work but its the wrong loading dynamic island - I want the apple style dynamic island where it wraps around the camera in a small circle - what it currently looks like ![current background processing display](../IMG_8853.PNG) vs what it should look like ![ example from the timer app dynamic island small loading indicator with a circle, and the time remaining on the other side](image.png)
+
+Other lidar truedepth note: - the points are falling towards the center of the point cloud and passing infront of area where the face and head are - why are they doing that in the default file - The problem was addressed and then it became less prevelant but now its back - ![ points falling towards center frame infront of the head points](../IMG_8881.PNG) Compare the TDLidar point cloud mode to our own point cloud rendered - And determine why the points are moving like that (for free point display) - I want the truedepth free front output to look and function practically identical to how it works in TDLiDAR
+
+### Live Model Node feedback: (commits `9ea3056`, `0c36cb3`)
+
+Root-caused the whole live-model cluster to **three** systemic bugs, not per-model quirks. Fixed those;
+the rest were downstream of them. Full `xcodemcp` build green, committed in two.
+
+**1. Startup 9000 ms freeze → async load + warm cache + loading screen.**
+The MLModel build (`MLModel(contentsOf:)`) was running **on the main thread** inside the source-gating
+`onChange`, so the first use of any model (and *every* model switch) froze the UI for seconds. Now:
+- Loading is **off the main thread**; a **shared warm cache** keeps the last 3 models resident, so
+  switching back to one you've used is instant.
+- The model is **preloaded the moment a Live Depth node exists** (before you even wire it in), with a
+  **"Loading depth model…" overlay** while a cold model warms up — no more flashing garbage / freeze.
+- Deleting the last Live Depth node **frees all model memory** (`purgeCache`). ⚠ This is your
+  "preload on create / unload on delete" proposal — I capped resident models at 3 (LRU) rather than
+  holding all 6 in RAM at once (6 ViTs ≈ >1 GB → OOM risk). Say if you want eager-load-all instead.
+
+**2. "Zoomed in" (Outdoor) / "wraps around itself" (Dav3) / breathing → one normalization fix.**
+Metric models were **passed through as raw metres** — DA2 Outdoor emits 0–80 m (VKITTI), dumped into a
+2.5 m stage → everything past 2.5 m collapses to the wall = "completely zoomed in / can't render." Relative
+models used raw **min/max**, so a single sky/hole pixel blew out the range and the scene folded onto itself
+("cloth being pulled"). Now **every** model is **robust-percentile normalised (2nd–98th pct, rejects
+outliers) + temporally smoothed** into the stage range. This also fixes **"camera effects don't work on
+most models"** — FOV/zoom/curve/parallax looked dead because the cloud was flat/blown-out, not because the
+effects were off. They should work on all models now.
+
+**3. "Flipped 180 / upside down some of the time" → per-model orientation + no front mirror.**
+Confirmed deterministic per **model** (MoGe-2 image/video bake is *always* 180° — no camera involved), so
+each model now carries an **orientation constant**, applied on both the live path and baked playback:
+- **MoGe-2 → 180°**, **Depth Anything V2 → 180°** (your reports). **Metric Video DA S → 0** (the one that
+  worked). **Dav3 → inverse flipped** (you saw far=white/close=dark = inverted).
+- The **front lens is no longer mirrored** — a mirrored frame produces mirrored/handedness-flipped depth,
+  a big source of the front-lens weirdness.
+- The **"some of the time"** was the broken camera-switch (below) leaving stale orientation state; with
+  that fixed it should now be deterministic per (model, lens).
+⚠ **These orient values are calibration guesses from your notes — I can't see the camera from here.** Per
+model, tell me: upright / upside-down / mirrored / 180°, and I'll set the exact bits. Especially **DA2
+Metric Indoor + Outdoor** (I left at 0 pending your read) and **Dav3**.
+
+**4. "Camera switch only works if you also change the model."**
+Same root as #1 — the main-thread model load was stealing the run loop, so the lens reconfigure got
+starved. With loading off-main, changing **lens alone** reconfigures the camera immediately. ⚠ Verify the
+horizontal CAMERA switcher now cycles lenses live without touching the model.
+
+**5. Processing screen loop now wraps the TOP.**
+The bake screen was a **sheet** (an inset card) with the status bar visible, so the loop couldn't trace
+the top. It's now a **full-screen cover** and, **while baking**, the **status bar + home indicator are
+hidden** — the clockwise edge loop traces the whole display edge, above the clock/Island, then restores
+when it finishes. ⚠ Verify it wraps cleanly across the top now.
+
+---
+
+**Not done this round — two need you (deliberately not guessed):**
+
+**A. TrueDepth free-front "points pulled to centre" (TDLiDAR parity).** I did **not** touch the free-mode
+projection blind. Geometric read: free mode unprojects `worldXY = (pixel − centre) · depth`, which is
+*correct* pinhole behaviour — **near** points (your face) converge toward the optical axis, **far** points
+spread. So "points in front of the head" is most likely **invalid/edge depth** (IR-shadow fringe on the
+face silhouette) landing near centre, not the projection itself. To match TDLiDAR I need one thing from
+you: in TDLiDAR's cloud, does the face sit **flat facing you** (orthographic-ish) or **fanned into a
+frustum** like ours? That single answer tells me whether to (a) tighten the silhouette edge-cull, or (b)
+switch free-front to an orthographic unprojection. I'll fix it in one focused pass once I know which.
+
+**B. Timer-style background Dynamic Island.** The current one is the **system** `BGContinuedProcessingTask`
+progress Live Activity — the app **cannot restyle it** into the compact timer ring you screenshotted. That
+look requires a **custom ActivityKit Live Activity + a new Widget Extension target** (compactLeading ring /
+compactTrailing time-remaining / minimal + expanded views). It's a real, separate build (new Xcode target,
+signing, ActivityAttributes plumbing). Want me to add it? It's the clear next task — say go and I'll build
+the extension. (The in-app fullscreen loop, item A#5, is done.)
+
+⚠ **On-device checklist:** (1) create a Live Depth node → loading overlay appears, no freeze; (2) each
+model renders a proper 3D cloud (not zoomed/flat/folded) and camera effects respond; (3) tell me each
+model's flip state so I lock the orient bits; (4) CAMERA switcher changes lens live without a model change;
+(5) bake screen's loop wraps the top. Then I'll finalise orient + take on A/B.
+
+
+
+
