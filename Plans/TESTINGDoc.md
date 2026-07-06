@@ -451,17 +451,26 @@ model's flip state so I lock the orient bits; (4) CAMERA switcher changes lens l
 
 Live Depth new notes:
 
-adding the live depth node - even when its not connected to anything makes the front facing lidar mode temporarily rotate 180 with the bottom on the right side of the screen.
+adding the live depth node - even when its not connected to anything makes the front facing lidar mode temporarily rotate 180 with the bottom on the right side of the screen.  When you first select the live depth node - there is no model or camera shown as selected - however a model is clearly outputting something. Switching models, Their implementation is all incorrect - And its clear that they are outputting to what wants to be a flat surface - The point cloud is defaulting to the pinout stle and you can tell because when the model isnt getting input a 3:4 screen of points appears flat. Please redo the entire live depth node and functionality from scratch based on how the free or tdlidar style pins works. /Users/ari/Documents/XcodeProjects/TDLidar2/TDLidarBackup/Notes/MonodepthPC/MonocularDepthPC-Plan.md see this for assistance - we semi succesfully implemented this mode already in TDLidar but removed it. - 
+
+
 
 
 All of them are uniqely garbled and incorrect - They dont switch cameras when you change it in the node settings, Most of the outputs are worse than before. the ones that make something that looks sort of like what its supposed to are warped on a inner edge.
 
 
-Remove DAV2 S, Moge 2 DA 2 metric indoor and outdoor. They are all slow anyways. leave the rest and fix them.
+Remove DAV3 S ,DA 2 metric indoor and outdoor.  leave the rest (Video DA, DAV2 S, And Moge2)and fix them. 
+
+All the models when camera is in "front" setting output horizontally 180 degrees (bottom on the right side of the screen) 
+
+
 
 After you remove the live depth node and change back to the camera depth - The camera controls no longer work - Orbit, move or anything except for zoom, figure out why and resolved
 
-The preprocessed video output - Comes out (in the video processing preview) upside down - for all models it seems The resulting output from any model is garbled (for video anything - theres too much noise in the video processed which makes the point cloud output wobbly and pointy)- If you squint you can barely see the image. For models like Moge2 its better and you can see much more of what is there but theres still errors in the point cloud rendering like the points are a cloth being pulled in multiple directions.
+The preprocessed video output - Comes out (in the video processing preview) upside down - for all models it seems The resulting output from any model is garbled (for video anything -  theres too much noise in the video processed which makes the point cloud output wobbly and pointy - video depth anything works better in the actual point cloud mode its at least sort of showing what it sees if you squint) But its preview output for preproccessed video has noise on every edge of every object and noise on the edges and corners of the video.- If you squint you can barely see the image. For models like Moge2 its better and you can see much more of what is there but theres still errors in the point cloud rendering like the points are a cloth being pulled in multiple directions.
+
+
+The live depth mode should be using the free style of point cloud output - But even that is incorrect. The TDLidAr "free" pin display is still pulling points to a center point, And the points are not freely moving in 3D space they are like trapped/locked together and arent representitive of the actual truedepth infrared points that the phone is capturing. Go through it again and figure out why.
 
 ---
 
@@ -507,3 +516,65 @@ points stop piling centre-front? Crank parallax + depthPush → nose forward / e
 - Preprocessed **video upside-down + garbled ("cloth pulled")** — the orientation is the per-model orient
   I just added (baked path may need the flip the live path got); the garble is per-frame noise → needs
   the temporal depth smoothing the bake path doesn't do yet. Both next round. 
+
+---
+
+### Round — "somehow even worse" live-depth pass (commits `7f1858d`, `5c7c4c8`, `09f3113`)
+
+Took [MonocularDepthPC-Plan.md](../MonocularDepthPC-Plan.md) (the sibling TDLiDAR app's recipe) as the
+reference. Five fixes, each built green + committed.
+
+**1. Camera switch (your priority) — TWO root causes.**
+- `AVCaptureDevice.default(.builtInUltraWideCamera / .builtInTelephotoCamera …)` **returns nil** on many
+  configs → the code fell back to the wide camera for *every* back lens = "cameras don't switch." Now the
+  device comes from **`AVCaptureDevice.DiscoverySession`** (reliable for ultra-wide/tele).
+- **No handoff:** TrueDepth/LiDAR and the RGB session **can't share the physical camera**, but the code
+  stopped depth and started RGB in the same breath → RGB came up on a contested camera (garble / stuck
+  lens). Added a **~0.45 s handoff** before RGB starts; lens changes while already live reconfigure in
+  place. ⚠ Verify the CAMERA switcher cycles lenses live (incl. front↔back) without touching the model.
+
+**2. Adding the node rotated the front LiDAR 180°.** The model **preloads on node *presence*** (before
+it's wired), but `load()` was also calling `renderer.setOrient(0)`, stomping the live front-LiDAR
+orientation (it uses orient 1). Orient now applies **only** when RGB is the actual display source.
+
+**3. Removed the slow models.** Kept **Metric Video DA S** + **Depth Anything V3 S**; dropped DA2 Metric
+Indoor/Outdoor, MoGe-2, DA V2 S. The node's MODEL switcher shows just the two.
+
+**4. The "vortex / cloth-being-pulled" — the biggest one.** Right instinct that it's *systemic*, though
+not pinout: the **renderer's depth EMA is OFF by default** (alpha 1 unless an EMA Smooth node is added).
+LiDAR is stable enough without it, but **monocular depth is noisy frame-to-frame** so that jitter rendered
+straight as the breathing/vortex. Added a **per-pixel temporal EMA** in the shared runner (new frame 55 %,
+rest history), for **both live and baked video**. This is the sibling app's #1 fix ("the cloud
+breathes… needs a raw-metre EMA"). ⚠ Verify the cloud is much steadier (some lag is the trade).
+
+**5. Video bake upside-down (all models).** The bake applied `preferredTransform` **directly to a
+`CIImage`** — but that transform is y-**down** and `CIImage` is y-**up**, so it flipped every frame.
+Switched to `CIImage.oriented()` (same as the photo path). ⚠ Verify preview + output are upright. (The
+residual video *noise* is the same depth-quality issue → the new EMA.)
+
+⚠ **On-device:** (1) CAMERA switcher changes lens live incl. front↔back, no model change; (2) adding a
+live-depth node doesn't disturb the live LiDAR; (3) cloud is steady, not a breathing vortex; (4) baked
+video upright. If the live cloud still isn't 1:1 with TDLiDAR, the true parity path is **real-intrinsics
+unprojection + a metric mode** (the plan's Part B) — a bigger, separate build; say go.
+
+**6. Camera controls dead (orbit/move, only zoom) — FIXED** (commit `01bab4f`). Traced it: the
+camera-view **deck's** orbit/move/recenter pads hardcoded `setParam("cam", …)`, but a camera added from
+the palette (or in a loaded project) has a generated id like `c1` — and `setParam` **no-ops** when the id
+doesn't resolve. The zoom/fov/parallax/depthPush **sliders** already used the real node id, so only they
+worked. Now the pads use the current page's real camera id (like the node-view jog already does). ⚠ Note
+it's a **pre-existing** bug (the deletion didn't cause it — it surfaced when you orbited the cloud with a
+non-`cam` camera); if your default file's camera is the seeded `cam`, orbit already worked there.
+
+**7. Vortex "pinout bleed" — confirmed it is NOT pinout** (your theory, traced). Free mode (`freeXY`) and
+pinout (`pinFieldXY`) are **mutually exclusive** by the Point Display `mode` — the emit picks exactly one,
+nothing blends, and live-depth always renders through **free**. The "vortex" is intrinsic free-mode math:
+XY = `(uv−0.5)·(depth/focus)·separation`, so XY is **proportional to depth** → near points collapse toward
+the optical axis. That's mitigated by the near-cull (< 0.15 m) + the new temporal EMA. The **flat
+grid-square** in your shots is a **constant-depth region** (a wall / saturated background clamped to one
+depth by the normalizer) — a constant depth through `freeXY` is a regular scaled grid. Not a bug in
+itself, but it's why a flat surface reads as a hard grid next to the fanning midground. The real path to
+"looks like TDLiDAR" remains **real-intrinsics unprojection** (plan Part B) — say go and I build it.
+
+⚠ **Full checklist this round:** (1) lens switch live incl. front↔back w/o model change; (2) node-add
+doesn't rotate live LiDAR; (3) steady cloud (EMA); (4) baked video upright; (5) orbit/move work again on
+any camera. Then: is the live cloud close enough, or do we go for real-intrinsics parity (Part B)?
