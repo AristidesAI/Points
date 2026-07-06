@@ -334,7 +334,13 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 // cloud sits on the pinout grid at the focus depth and fans into a frustum off it.
                 // imm = (separation, focusM, 0, 0). Culls live in the Grazing Cull FILTER node (op 45).
                 float rawZ = depthTex.sample(smp, duv).r;
-                bool valid = rawZ > 0.05 && isfinite(rawZ);
+                // TrueDepth/LiDAR read garbage closer than ~15 cm; because free XY ∝ z (pinhole),
+                // those too-close points COLLAPSE onto the optical axis, and being "nearest" they get
+                // Z-pushed in FRONT of the face — the "points falling to centre in front of the head".
+                // Cull them (TDLiDAR clamps its depth range the same way) instead of piling at centre.
+                // ponytail: 0.15 m = TrueDepth near floor; raise to keep less, lower to keep more.
+                const float nearGate = 0.15;
+                bool valid = rawZ > nearGate && isfinite(rawZ);
                 if (!valid) { r = float4(0.0); keep = 0.0; break; }
                 // fan: sensor-space displacement scaled by z/focus, mapped back to screen axes
                 float2 n = (duv - 0.5) * (rawZ / max(ins.imm.y, 0.05)) * ins.imm.x;

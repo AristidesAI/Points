@@ -188,7 +188,10 @@ final class GraphRuntime {
         // never overlapping. Self-plumbed nodes (shockwave/freeze) are placed clear at runtime.
         g.nodes = [
             n("d1", "depth", 60, 130),
-            n("pd", "point-display", 330, 110),
+            // focus 0.5 m ≈ a front-selfie distance so the face fills the frame in FREE mode. Free XY
+            // spread ∝ z/focus, so the default 1.0 m made a 0.4 m face shrink to ~40% (centre-hug).
+            // ponytail: front default; back LiDAR (rooms ~2 m) wants focus ~2 — the subject-distance knob.
+            n("pd", "point-display", 330, 110, ["focus": .float(0.5)]),
             n("sz", "size", 330, 410),
             n("cam", "camera", 620, 60),
             n("out", "output", 620, 320),
