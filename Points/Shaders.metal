@@ -8,8 +8,11 @@ struct Uniforms {
     float extX; float extY; float zWorldScale; float pinSize;   // zWorldScale = Camera node depth push
     float stemThickness; float nearM; float farM; uint colorMode;
     uint isStem; uint pad0; uint pad1; uint pad2;
-    float4 lightPos;      // Light node: xyz = position (point/spot) or direction (directional); w = type 0/1/2
-    float4 lightParams;   // x intensity, y falloff, z enabled (0 = built-in default light), w unused
+    float4 lightPos[4];    // Light nodes: xyz = position (point/spot) or direction (directional); w = type 0/1/2
+    float4 lightParams[4]; // x intensity, y falloff, z enabled, w unused
+    float4 material;       // Material node: x mode (0 unlit / 1 lit / 2 matcap), y roughness, z metallic, w lightCount
+    float4 lookAt;         // Look At node: xyz target (view units), w amount (0 = off)
+    float4 stemParams;     // Stem node: x profile (0 square / 1 round / 2 blade), y taper, z thickness×, w unused
 };
 
 // Field order MUST match VMParams in PinRenderer.swift.
@@ -411,7 +414,12 @@ vertex VOut pin_vertex(VIn vin [[stage_in]],
     float3 nrm = vin.nrm;
     if (U.isStem != 0u) {
         float len = max(z - size * 0.4, 0.0);
-        wp = float3(xy + vin.pos.xy * U.stemThickness * io.posSize.w, (vin.pos.z + 0.5) * len);
+        // Stem node styling: BLADE flattens the profile, TAPER narrows toward the cap.
+        float2 prof = vin.pos.xy;
+        if (U.stemParams.x > 1.5) prof *= float2(2.2, 0.28);            // blade
+        float along = vin.pos.z + 0.5;                                  // 0 wall → 1 cap
+        prof *= max(1.0 - U.stemParams.y * along, 0.05);                // taper
+        wp = float3(xy + prof * U.stemThickness * U.stemParams.z * io.posSize.w, along * len);
     } else {
         // SHAPE family: morph the sphere toward a target shape, stretch per-axis, then rotate.
         // Every target is a continuous remap of the same unit-sphere vertex → fully blendable, no
@@ -463,6 +471,16 @@ vertex VOut pin_vertex(VIn vin [[stage_in]],
             lp = rotateEuler(lp, e);
             nrm = rotateEuler(nrm, e);
         }
+        // Look At node: orient every pin's +z toward a point — iron-filings tracking.
+        if (U.lookAt.w > 0.001) {
+            float3 dirL = normalize(U.lookAt.xyz - float3(xy, z) + float3(1e-5, 0.0, 0.0));
+            float3 xA = normalize(cross(float3(0.0, 1.0, 0.0), dirL));
+            float3 yA = cross(dirL, xA);
+            float3 lp2 = xA * lp.x + yA * lp.y + dirL * lp.z;
+            float3 n2 = xA * nrm.x + yA * nrm.y + dirL * nrm.z;
+            lp = mix(lp, lp2, U.lookAt.w);
+            nrm = normalize(mix(nrm, n2, U.lookAt.w));
+        }
         wp = float3(xy + lp.xy * size, z + lp.z * size);
     }
 
@@ -477,29 +495,55 @@ vertex VOut pin_vertex(VIn vin [[stage_in]],
 fragment float4 pin_fragment(VOut in [[stage_in]],
                              constant Uniforms &U [[buffer(1)]]) {
     float3 n = normalize(in.nrm);
-    float rim = pow(1.0 - max(n.z, 0.0), 2.0) * 0.22;
+    float3 albedo = in.color;
+    float rim = pow(1.0 - max(n.z, 0.0), 2.0);
+    int mode = int(U.material.x + 0.5);
+    if (mode == 0) return float4(albedo, 1.0);                    // Material UNLIT: flat color
+
+    float rough = U.material.y, metal = U.material.z;
+    int lightCount = clamp(int(U.material.w + 0.5), 0, 4);
+    // ponytail: frontal view dir for specular; pass the real eye if orbit specular reads wrong
+    float3 v = float3(0.0, 0.0, 1.0);
+    float3 specCol = mix(float3(1.0), albedo, metal);
     float3 c;
-    if (U.lightParams.z > 0.5) {
-        // Light node: 0 point, 1 directional, 2 spot (cone aimed from the light at the cloud centre).
-        float3 l; float atten = 1.0;
-        if (U.lightPos.w > 0.5 && U.lightPos.w < 1.5) {
-            l = normalize(U.lightPos.xyz);                       // directional: xyz is a direction
-        } else {
-            float3 d = U.lightPos.xyz - in.wpos;
-            float dist = length(d);
-            l = d / max(dist, 1e-4);
-            atten = 1.0 / (1.0 + U.lightParams.y * dist * dist); // falloff
-            if (U.lightPos.w > 1.5) {                            // spot: soft ~35° cone toward centre
-                float3 axis = normalize(-U.lightPos.xyz);
-                atten *= smoothstep(0.55, 0.85, dot(-l, axis));
+
+    if (mode == 2) {                                              // MATCAP: analytic studio look
+        float3 key = normalize(float3(0.5, 0.6, 0.65));
+        float diff = max(dot(n, key), 0.0);
+        float spec = pow(max(dot(reflect(-key, n), v), 0.0), mix(64.0, 6.0, rough));
+        c = albedo * (0.22 + 0.62 * diff)
+          + specCol * spec * (1.0 - rough * 0.6)
+          + rim * 0.35 * mix(float3(1.0), albedo, 0.5);
+    } else if (lightCount > 0) {                                  // Light nodes (up to 4)
+        c = albedo * 0.12;
+        for (int i = 0; i < lightCount; i++) {
+            if (U.lightParams[i].z < 0.5) continue;
+            float3 l; float atten = 1.0;
+            float type = U.lightPos[i].w;
+            if (type > 0.5 && type < 1.5) {
+                l = normalize(U.lightPos[i].xyz);                 // directional
+            } else {
+                float3 d = U.lightPos[i].xyz - in.wpos;
+                float dist = length(d);
+                l = d / max(dist, 1e-4);
+                atten = 1.0 / (1.0 + U.lightParams[i].y * dist * dist);
+                if (type > 1.5) {                                 // spot: soft cone toward the centre
+                    float3 axis = normalize(-U.lightPos[i].xyz);
+                    atten *= smoothstep(0.55, 0.85, dot(-l, axis));
+                }
             }
+            float e = U.lightParams[i].x * atten;
+            c += albedo * max(dot(n, l), 0.0) * 0.9 * e;
+            float spec = pow(max(dot(reflect(-l, n), v), 0.0), mix(64.0, 4.0, rough));
+            c += specCol * spec * (1.0 - rough) * e;
         }
-        float diff = max(dot(n, l), 0.0) * U.lightParams.x * atten;
-        c = in.color * (0.15 + 0.95 * diff) + rim * in.color * min(diff + 0.25, 1.0);
-    } else {
-        float3 l = normalize(float3(0.35, 0.5, 0.8));            // built-in default light
+        c += rim * 0.22 * albedo;
+    } else {                                                      // built-in default light
+        float3 l = normalize(float3(0.35, 0.5, 0.8));
         float diff = max(dot(n, l), 0.0);
-        c = in.color * (0.35 + 0.72 * diff) + rim * in.color;
+        c = albedo * (0.35 + 0.72 * diff) + rim * 0.22 * albedo;
+        float spec = pow(max(dot(reflect(-l, n), v), 0.0), mix(64.0, 4.0, rough));
+        c += specCol * spec * (1.0 - rough) * 0.5;
     }
     return float4(c, 1.0);
 }

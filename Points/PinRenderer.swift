@@ -48,8 +48,12 @@ struct PinUniforms {
     var extX: Float = 1.5, extY: Float = 2.0, zWorldScale: Float = 1.0, pinSize: Float = 0.012
     var stemThickness: Float = 0.004, nearM: Float = 0.25, farM: Float = 2.5, colorMode: UInt32 = 0
     var isStem: UInt32 = 0, pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
-    var lightPos: SIMD4<Float> = .zero      // Light node (see Uniforms in Shaders.metal)
-    var lightParams: SIMD4<Float> = .zero
+    // Light nodes (up to 4) — tuples lay out like float4[4] in the Metal struct.
+    var lightPos: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+    var lightParams: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+    var material: SIMD4<Float> = [1, 1, 0, 0]   // mode, roughness, metallic, lightCount
+    var lookAt: SIMD4<Float> = .zero            // target xyz + amount
+    var stemParams: SIMD4<Float> = [0, 0, 1, 0] // profile, taper, thickness×, unused
 }
 
 /// Instanced pin-wall renderer. Fixed camera, Z=0 wall, depth pulls pins toward the camera.
@@ -80,7 +84,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var recSceneTargets: SceneTargets?
 
     // Meshes (interleaved pos+normal, stride 32)
-    private var sphereHi: Mesh!, sphereLo: Mesh!, stemBox: Mesh!
+    private var sphereHi: Mesh!, sphereLo: Mesh!, stemBox: Mesh!, stemRound: Mesh!
     private var fallbackColor: MTLTexture!   // 1×1 white, used before first camera frame
     private var fallbackDepth: MTLTexture!   // 1×1 zero → all pins rest on the wall
 
@@ -277,8 +281,11 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         u.cols = UInt32(cols); u.rows = UInt32(rows); u.count = UInt32(actual)
         u.orient = orientNow
         u.zWorldScale = frame.camera.depthPush
-        u.lightPos = frame.lightPos
-        u.lightParams = frame.lightParams
+        u.lightPos = (frame.light(0).0, frame.light(1).0, frame.light(2).0, frame.light(3).0)
+        u.lightParams = (frame.light(0).1, frame.light(1).1, frame.light(2).1, frame.light(3).1)
+        u.material = frame.material
+        u.lookAt = frame.lookAt
+        u.stemParams = frame.stem
         // pin size scales with grid pitch so pins tile the wall at any density
         let pitch = 3.0 / Float(cols - 1)
         u.pinSize = pitch * 0.42 * pinScaleNow
@@ -616,11 +623,12 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         enc.setVertexBuffer(instanceBuf, offset: 0, index: 2)
         if drawStems {
             u.isStem = 1
+            let stemMesh = frame.stem.x > 0.5 && frame.stem.x < 1.5 ? stemRound! : stemBox!
             enc.setVertexBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
             enc.setFragmentBytes(&u, length: MemoryLayout<PinUniforms>.stride, index: 1)
-            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
-                                      indexType: .uint16, indexBuffer: stemBox.indices,
+            enc.setVertexBuffer(stemMesh.vertices, offset: 0, index: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemMesh.indexCount,
+                                      indexType: .uint16, indexBuffer: stemMesh.indices,
                                       indexBufferOffset: 0, instanceCount: actual)
         }
         u.isStem = 0
@@ -729,6 +737,25 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         sphereHi = makeSphere(rings: 6, segs: 10)
         sphereLo = makeSphere(rings: 3, segs: 4)
         stemBox = makeBox()
+        stemRound = makeCylinder(segs: 8)
+    }
+
+    /// Open-ended cylinder for the Stem node's ROUND profile (ends hidden by wall/cap).
+    private func makeCylinder(segs: Int) -> Mesh {
+        var verts: [(SIMD3<Float>, SIMD3<Float>)] = []
+        var idx: [UInt16] = []
+        for s in 0...segs {
+            let a = Float(s) / Float(segs) * 2 * .pi
+            let n = SIMD3<Float>(cos(a), sin(a), 0)
+            verts.append((SIMD3(n.x * 0.5, n.y * 0.5, -0.5), n))
+            verts.append((SIMD3(n.x * 0.5, n.y * 0.5, 0.5), n))
+        }
+        for s in 0..<segs {
+            let a = UInt16(s * 2), b = UInt16(s * 2 + 1)
+            let c = UInt16(s * 2 + 2), d = UInt16(s * 2 + 3)
+            idx += [a, c, b, b, c, d]
+        }
+        return packMesh(verts, idx)
     }
 
     /// Interleaved [pos.xyz pad][nrm.xyz pad] — SIMD3<Float> stride 16, total 32B/vertex.

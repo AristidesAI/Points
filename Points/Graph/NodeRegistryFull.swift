@@ -381,18 +381,26 @@ extension NodeRegistry {
                                       imm: SIMD4<Float>(node.float("x", 0), node.float("y", 0), node.float("z", 0.25), 0)))
                 return [r]
             }))
-        passthrough("look-at", "Look At", .shape,
-                    params: [.float("amount", 0...1, 1)],
-                    "Orients every pin to face a point — iron-filings tracking.")
-        passthrough("stem", "Stem", .shape,
-                    params: [.bool("enabled", true),
-                             .option("profile", ["round", "square", "blade"], "square"),
-                             .float("thickness", 0...1, 0.3), .float("taper", 0...1, 0.2)],
-                    "The arm from the Z-origin wall to each cap — profile, thickness, taper.")
-        passthrough("material", "Material", .shape,
-                    params: [.option("shading", ["unlit", "lit", "matcap"], "lit"),
-                             .float("roughness", 0...1, 0.5), .float("metallic", 0...1, 0)],
-                    "How pins are shaded: flat, lit by Stage lights, or matcap studio looks.")
+        // Look At / Stem / Material are render-read sinks like Camera and Light: no wires,
+        // the renderer reads the first node of each per frame.
+        registerSpec(NodeSpec(
+            id: "look-at", name: "Look At", family: .shape,
+            params: [.float("x", -2...2, 0), .float("y", -2...2, 0), .float("z", 0...4, 2),
+                     .float("amount", 0...1, 1)],
+            execution: .render,
+            description: "Orients every pin to face the X/Y/Z point — iron-filings tracking. Needs a non-sphere Shape (cube, slab, spike…) to be visible; AMOUNT blends the effect in. Expose X/Y and wire Hand Position to have the whole cloud track your hand."))
+        registerSpec(NodeSpec(
+            id: "stem", name: "Stem", family: .shape,
+            params: [.option("profile", ["square", "round", "blade"], "square"),
+                     .float("thickness", 0...1, 0.3), .float("taper", 0...1, 0.2)],
+            execution: .render,
+            description: "Styles the arms from the Z-wall to each cap (turn ARMS on in Point Display to see them): PROFILE square/round/blade, THICKNESS scales their width, TAPER narrows them toward the cap. Just add the node."))
+        registerSpec(NodeSpec(
+            id: "material", name: "Material", family: .shape,
+            params: [.option("shading", ["unlit", "lit", "matcap"], "lit"),
+                     .float("roughness", 0...1, 0.5), .float("metallic", 0...1, 0)],
+            execution: .render,
+            description: "How pins are shaded: UNLIT = flat poster color, LIT = shaded by the Light nodes (or the default light) with ROUGHNESS/METALLIC speculars, MATCAP = a fixed studio look. Low ROUGHNESS = glossy highlights; METALLIC tints them with the pin's own color."))
 
         registerSpec(NodeSpec(
             id: "hide", name: "Hide", family: .shape,

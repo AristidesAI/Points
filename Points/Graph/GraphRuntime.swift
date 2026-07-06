@@ -31,10 +31,16 @@ struct ProgramFrame {
     var holePersist = false           // Fill Holes node present + on
     var stems = false                 // Point Display "arms" — pull points back to their Z pins
     var background: SIMD4<Float> = [0, 0, 0, 0]   // Background node: rgb + gradient amount
-    var lightPos: SIMD4<Float> = .zero            // Light node (w = type); lightParams.z = enabled
-    var lightParams: SIMD4<Float> = .zero
+    var lights: [(SIMD4<Float>, SIMD4<Float>)] = []   // Light nodes (≤4): (pos+type, intensity/falloff/enabled)
     var post: SIMD4<Float> = .zero                // bloomThreshold, bloomIntensity, grain, vignette
     var ghost = false                             // Render Settings: additive ghost blending
+    var material: SIMD4<Float> = [1, 1, 0, 0]     // Material node: mode, roughness, metallic, lightCount
+    var lookAt: SIMD4<Float> = .zero              // Look At node: target xyz + amount
+    var stem: SIMD4<Float> = [0, 0, 1, 0]         // Stem node: profile, taper, thickness×
+
+    func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
+        i < lights.count ? lights[i] : (.zero, .zero)
+    }
 }
 
 /// Owns the live graph: compiles it to a pin program, evaluates control-rate nodes,
@@ -1060,12 +1066,29 @@ final class GraphRuntime {
         if let b = graph.nodes.first(where: { $0.specID == "background" }) {
             bg = [b.float("r", 0), b.float("g", 0), b.float("b", 0), b.float("gradient", 0)]
         }
-        var lightPos = SIMD4<Float>.zero, lightParams = SIMD4<Float>.zero
-        if let l = graph.nodes.first(where: { $0.specID == "light" }) {
+        var lights: [(SIMD4<Float>, SIMD4<Float>)] = []
+        for l in graph.nodes.filter({ $0.specID == "light" }).prefix(4) {
             let type: Float = l.option("type", "point") == "directional" ? 1
                             : l.option("type", "point") == "spot" ? 2 : 0
-            lightPos = [l.float("x", 0.5), l.float("y", 0.8), l.float("z", 2), type]
-            lightParams = [l.float("intensity", 1), l.float("falloff", 1), 1, 0]
+            lights.append(([l.float("x", 0.5), l.float("y", 0.8), l.float("z", 2), type],
+                           [l.float("intensity", 1), l.float("falloff", 1), 1, 0]))
+        }
+        var material = SIMD4<Float>(1, 1, 0, Float(lights.count))   // default = current lit look
+        if let m = graph.nodes.first(where: { $0.specID == "material" }) {
+            let mode: Float = m.option("shading", "lit") == "unlit" ? 0
+                            : m.option("shading", "lit") == "matcap" ? 2 : 1
+            material = [mode, m.float("roughness", 0.5), m.float("metallic", 0), Float(lights.count)]
+        }
+        var lookAt = SIMD4<Float>.zero
+        if let la = graph.nodes.first(where: { $0.specID == "look-at" }) {
+            lookAt = [la.float("x", 0), la.float("y", 0), la.float("z", 2), la.float("amount", 1)]
+        }
+        var stem = SIMD4<Float>(0, 0, 1, 0)
+        if let s = graph.nodes.first(where: { $0.specID == "stem" }) {
+            let profile: Float = s.option("profile", "square") == "round" ? 1
+                               : s.option("profile", "square") == "blade" ? 2 : 0
+            // thickness param 0-1, default 0.3 → 1× the base pitch-derived thickness
+            stem = [profile, s.float("taper", 0.2), s.float("thickness", 0.3) / 0.3, 0]
         }
         var post = SIMD4<Float>.zero   // (bloomThreshold, bloomIntensity, grain, vignette)
         if let n = graph.nodes.first(where: { $0.specID == "bloom" }) {
@@ -1086,8 +1109,9 @@ final class GraphRuntime {
                             holePersist: fill.map { $0.float("persist", 1) > 0.5 } ?? false,
                             stems: stems > 0.5,
                             background: bg,
-                            lightPos: lightPos, lightParams: lightParams,
-                            post: post, ghost: ghost)
+                            lights: lights,
+                            post: post, ghost: ghost,
+                            material: material, lookAt: lookAt, stem: stem)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.
