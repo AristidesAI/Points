@@ -147,7 +147,10 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             throw NSError(domain: "bake", code: 3, userInfo: [NSLocalizedDescriptionKey: "No video track"])
         }
         let srcFPS = (try? await track.load(.nominalFrameRate)) ?? 30
-        let transform = (try? await track.load(.preferredTransform)) ?? .identity   // upright portrait video
+        // The track's preferredTransform is a y-DOWN display transform; applying it directly to a
+        // y-UP CIImage flips the frame vertically (the "video preview upside down"). Convert it to a
+        // CGImagePropertyOrientation and use .oriented(), which respects CIImage's coordinate system.
+        let orient = Self.orientation(from: (try? await track.load(.preferredTransform)) ?? .identity)
         let dur = (try? await asset.load(.duration).seconds) ?? 0
         // Sample ~6 model runs / second of video so a test clip bakes quickly with a live preview.
         let stride = max(1, Int((srcFPS <= 0 ? 30 : srcFPS) / 6))
@@ -170,7 +173,7 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             defer { read += 1 }
             if Task.isCancelled || BakeShared.snapshot.cancelled { reader.cancelReading(); return }
             guard read % stride == 0, let pb = CMSampleBufferGetImageBuffer(sample) else { continue }
-            let cgi = CIImage(cvPixelBuffer: pb).transformed(by: transform)   // upright per track transform
+            let cgi = CIImage(cvPixelBuffer: pb).oriented(orient)   // upright per track orientation
             guard let cg = ci.createCGImage(cgi, from: cgi.extent) else { continue }
             guard let (metres, w, h) = runner.depth(cg) else { continue }
             baked += 1
@@ -178,6 +181,17 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
             await record(metres: metres, w: w, h: h, frame: baked, total: total,
                          fps: elapsed > 0 ? Double(baked) / elapsed : 0,
                          playbackFPS: playbackFPS, isVideo: true, first: baked == 1, preview: Self.preview(metres, w, h))
+        }
+    }
+
+    /// A video track's preferredTransform → the equivalent CGImagePropertyOrientation (rotation only;
+    /// iPhone capture transforms are pure 90° multiples). Used with CIImage.oriented().
+    private nonisolated static func orientation(from t: CGAffineTransform) -> CGImagePropertyOrientation {
+        switch (t.a, t.b, t.c, t.d) {
+        case (0, 1, -1, 0):   return .right   // 90° CW  — portrait
+        case (0, -1, 1, 0):   return .left    // 90° CCW
+        case (-1, 0, 0, -1):  return .down    // 180°
+        default:              return .up      // identity / landscape
         }
     }
 
