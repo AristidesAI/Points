@@ -211,16 +211,12 @@ struct ContentView: View {
                         } else if let sources {
                             CameraDeckBar(sources: sources, runtime: runtime, page: $deckPage,
                                           direction: deckDir, onPad: { signals?.tappedPad.toggle() },
-                                          onOpenNode: { id in selection = [id]; setNodes(true) })
-                                .simultaneousGesture(
-                                    DragGesture(minimumDistance: 25).onEnded { g in
-                                        guard abs(g.translation.width) > abs(g.translation.height) * 1.5,
-                                              abs(g.translation.width) > 50 else { return }
-                                        deckDir = g.translation.width < 0 ? 1 : -1
-                                        signals?.swipedDeck.toggle()
-                                        withAnimation(.easeInOut(duration: 0.22)) { deckPage += deckDir }
-                                    }
-                                )
+                                          onOpenNode: { id in selection = [id]; setNodes(true) },
+                                          onSwipe: { dir in
+                                              deckDir = dir
+                                              signals?.swipedDeck.toggle()
+                                              withAnimation(.easeInOut(duration: 0.22)) { deckPage += dir }
+                                          })
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -347,7 +343,7 @@ struct ContentView: View {
                 let eng = LiveDepthEngine(renderer: renderer)
                 liveEngine = eng
                 let cam = RGBCameraSource()
-                cam.onFrame = { pb, _ in eng.process(pb) }   // each RGB frame → model → point cloud
+                cam.onFrame = { pb, intr in eng.process(pb, intrinsics: intr) }   // RGB frame + intrinsics → model → cloud
                 rgbCam = cam
                 runtime.requestMedia = { nodeID in importForLiveNode = nodeID; importCover = true }
                 let rt = runtime

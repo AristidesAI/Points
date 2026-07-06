@@ -116,6 +116,7 @@ struct DeckPad: View {
 struct MicroJoystickPad: View {
     let side: CGFloat
     var label: String = ""
+    var active: Binding<Bool>? = nil     // true WHILE dragging → the deck suppresses its page-swipe
     var onVector: (CGVector) -> Void
     @State private var knob: CGSize = .zero
     @State private var pump: Task<Void, Never>?
@@ -143,7 +144,8 @@ struct MicroJoystickPad: View {
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { g in
-                    let dx = max(-reach, min(reach, g.translation.width))
+                    active?.wrappedValue = true              // claim the drag — no page-swipe even if the
+                    let dx = max(-reach, min(reach, g.translation.width))   // finger leaves the pad box
                     let dy = max(-reach, min(reach, g.translation.height))
                     knob = CGSize(width: dx, height: dy)
                     if pump == nil { startPump() }
@@ -151,6 +153,8 @@ struct MicroJoystickPad: View {
                 .onEnded { _ in
                     withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) { knob = .zero }
                     pump?.cancel(); pump = nil
+                    // Clear NEXT runloop so the deck's swipe .onEnded (same event) still sees it true.
+                    DispatchQueue.main.async { active?.wrappedValue = false }
                 }
         )
     }
@@ -195,8 +199,11 @@ struct CameraDeckBar: View {
     let runtime: GraphRuntime
     @Binding var page: Int
     var direction: Int = 1
+    @State private var padActive = false      // camera joystick/jog is being dragged → block page-swipe
     var onPad: () -> Void = {}
     var onOpenNode: (String) -> Void = { _ in }
+    var onSwipe: (Int) -> Void = { _ in }     // horizontal page-swipe (dir ±1) — lives here so it can
+                                              // skip while the camera pad is being dragged (padActive)
 
     @State private var padStrobe = false
     @State private var padFreeze = false
@@ -265,6 +272,16 @@ struct CameraDeckBar: View {
             if currentNodeSpecID == "camera" { cameraPadRow } else { padRow }
         }
         .padding(.bottom, 8)
+        // Page-swipe — suppressed while the camera joystick/jog is being dragged, so dragging the pad
+        // out of its box never flips the deck page.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 25).onEnded { g in
+                guard !padActive,
+                      abs(g.translation.width) > abs(g.translation.height) * 1.5,
+                      abs(g.translation.width) > 50 else { return }
+                onSwipe(g.translation.width < 0 ? 1 : -1)
+            }
+        )
     }
 
     private var currentNodeSpecID: String? {
@@ -299,9 +316,9 @@ struct CameraDeckBar: View {
                 }
                 .buttonStyle(PadPressStyle())
 
-                MicroJoystickPad(side: side, label: camMove ? "MOVE" : "ORBIT") { v in
+                MicroJoystickPad(side: side, label: camMove ? "MOVE" : "ORBIT", active: $padActive) { v in
                     let (xp, yp) = camMove ? ("centerX", "centerY") : ("orbitX", "orbitY")
-                    let limit: Float = camMove ? 1.0 : 0.9
+                    let limit: Float = camMove ? 5.0 : 100.0     // move far / orbit unbounded (full turns)
                     nudgeCam(xp, Float(v.dx) * 0.03, limit)
                     nudgeCam(yp, Float(-v.dy) * 0.03, limit)   // up = +param (matches jog chevrons)
                 }

@@ -664,8 +664,8 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let dEff = dFrame * (1 - 0.65 * min(max(c.parallax, 0), 1))   // parallax pulls the camera in
         let fovEff = 2 * atan(halfH / dEff)                      // widen FOV to keep framing constant
         let proj = perspective(fovY: fovEff, aspect: a, near: 0.05, far: 200)
-        let yaw = min(max(c.orbitX, -1.2), 1.2)
-        let pitch = min(max(c.orbitY, -1.2), 1.2)
+        let yaw = c.orbitX                                        // unbounded — full turntable both ways
+        let pitch = min(max(c.orbitY, -1.5), 1.5)                 // ~±86°; avoids the up-vector flip over the pole
         let dir = SIMD3<Float>(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
         let center = SIMD3<Float>(c.centerX, c.centerY, 0)
         let eye = center + dir * dEff
