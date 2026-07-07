@@ -47,6 +47,16 @@ struct ProgramFrame {
     var jbuFactor: Float = 0                      // Detail Upsample node (≤1 = off)
     var showGizmo = false                         // Orbit Cube node present → draw the orbit-pivot cube
     var gizmoPos: SIMD3<Float> = .zero            // world position of the Orbit Cube handle (moves with its joystick)
+    // Exposed tuning params (previously hardcoded constants) — defaults match the old values.
+    var edgeReject: Float = 0.06                  // Depth node EDGECULL — built-in flying-pixel reject (m)
+    var emaDeadband: Float = 0.008                // EMA Smooth DEADBAND — hold threshold (m, × amount)
+    var emaAdapt: Float = 5                       // EMA Smooth ADAPT — motion → alpha boost
+    var fillRadius: Float = 3                     // Fill Holes RADIUS (px, 0 = off; default even w/o node)
+    var fillGap: Float = 0.08                     // Fill Holes GAP — foreground-only band (m)
+    var despeckleSupport: Float = 4               // Despeckle SUPPORT — required neighbours
+    var smoothSigma: Float = 0.05                 // Smooth Surface SIGMA — range sigma (m)
+    var jbuEdge: Float = 0.08                     // Detail Upsample EDGE — luma sigma
+    var bloomSigma: Float = 6                     // Bloom RADIUS — gaussian sigma (px)
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -1154,11 +1164,16 @@ final class GraphRuntime {
         }
         // FILTER nodes configure capture/EMA by presence (their wires pass depth through).
         let ema = graph.nodes.first { $0.specID == "ema-smooth" }
-        let stems = graph.nodes.first(where: { $0.specID == "depth" })?.float("arms", 0) ?? 0
-        let despeckle = graph.nodes.first { $0.specID == "despeckle-voxel" }?.float("size", 0.02) ?? 0
-        let smoothR = graph.nodes.first { $0.specID == "smooth-surface" }?.float("radius", 1) ?? 0
+        let depthNode = graph.nodes.first { $0.specID == "depth" }
+        let stems = depthNode?.float("arms", 0) ?? 0
+        let despeckleNode = graph.nodes.first { $0.specID == "despeckle-voxel" }
+        let despeckle = despeckleNode?.float("size", 0.02) ?? 0
+        let smoothNode = graph.nodes.first { $0.specID == "smooth-surface" }
+        let smoothR = smoothNode?.float("radius", 1) ?? 0
         let accum = graph.nodes.first { $0.specID == "accumulate" }?.float("frames", 8) ?? 0
-        let jbu = graph.nodes.first { $0.specID == "detail-upsample" }?.float("factor", 2) ?? 0
+        let jbuNode = graph.nodes.first { $0.specID == "detail-upsample" }
+        let jbu = jbuNode?.float("factor", 2) ?? 0
+        let fillNode = graph.nodes.first { $0.specID == "fill-holes" }
 
         // STAGE sinks read by the renderer (like Camera): Background, Light, and the post stack.
         var bg = SIMD4<Float>(0, 0, 0, 0)
@@ -1249,7 +1264,16 @@ final class GraphRuntime {
                             uvTransform: uvT, edgePolicy: edge, domain: domain,
                             despeckleGap: despeckle, smoothRadius: smoothR, accumFrames: accum,
                             jbuFactor: jbu,
-                            showGizmo: hasCube, gizmoPos: gizmo)
+                            showGizmo: hasCube, gizmoPos: gizmo,
+                            edgeReject: depthNode?.float("edgeCull", 0.06) ?? 0.06,
+                            emaDeadband: ema?.float("deadband", 0.008) ?? 0.008,
+                            emaAdapt: ema?.float("adapt", 5) ?? 5,
+                            fillRadius: fillNode?.float("radius", 3) ?? 3,
+                            fillGap: fillNode?.float("gap", 0.08) ?? 0.08,
+                            despeckleSupport: despeckleNode?.float("support", 4) ?? 4,
+                            smoothSigma: smoothNode?.float("sigma", 0.05) ?? 0.05,
+                            jbuEdge: jbuNode?.float("edge", 0.08) ?? 0.08,
+                            bloomSigma: graph.nodes.first(where: { $0.specID == "bloom" })?.float("radius", 6) ?? 6)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.

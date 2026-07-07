@@ -7,7 +7,8 @@ struct Uniforms {
     uint cols; uint rows; uint count; uint orient;      // orient bits: 1 swapUV, 2 flipU, 4 flipV
     float extX; float extY; float zWorldScale; float pinSize;   // zWorldScale = Camera node depth push
     float stemThickness; float nearM; float farM; uint colorMode;
-    uint isStem; uint pad0; uint pad1; uint pad2;
+    uint isStem; uint pad1; uint pad2;
+    float edgeReject;   // Depth node EDGECULL — built-in silhouette flying-pixel reject (metres)
     float4 lightPos[4];    // Light nodes: xyz = position (point/spot) or direction (directional); w = type 0/1/2
     float4 lightParams[4]; // x intensity, y falloff, z enabled, w unused
     float4 material;       // Material node: x mode (0 unlit / 1 lit / 2 matcap), y roughness, z metallic, w lightCount
@@ -194,7 +195,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             if (isfinite(zL) && isfinite(zR) && isfinite(zU) && isfinite(zD)) {
                 float lo = min(min(zL, zR), min(zU, zD));
                 float hi = max(max(zL, zR), max(zU, zD));
-                if (hi - lo > 0.06) keep = 0.0;      // ~6 cm spread = silhouette flying pixel
+                if (U.edgeReject > 0.0001 && hi - lo > U.edgeReject) keep = 0.0;   // silhouette flying pixel
             }
         }
     }
@@ -352,17 +353,17 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             case 45: {                                                          // grazeCull (FILTER node)
                 // TDLidar cleanup pass as a node: silhouette edge-reject + grazing-normal cull.
                 // A passes through untouched; culled pins get size 0 via the kernel keep flag.
-                // imm = (grazing01, edgeThreshM, 0, 0).
+                // imm = (grazing01, edgeThreshM, gateM, baselineTexels).
                 // ponytail: principal point ≈ frame centre; rays use span 1.2 (~63° TrueDepth hFOV).
                 r = A;
                 float rawZ = depthTex.sample(smp, duv).r;
                 if (!(rawZ > 0.05) || !isfinite(rawZ)) break;
-                // 2-texel baseline: per-pixel sensor noise over a 1-texel step (~1 mm lateral at
-                // 0.5 m) swung the normal wildly, so flat frontal areas culled random flickering
-                // dots. Doubling the baseline halves the slope noise; the noise gate below does
-                // the rest — edge LINES still read a big spread, so they still cull.
-                float2 texel = 2.0 * float2(1.0 / float(depthTex.get_width()),
-                                            1.0 / float(depthTex.get_height()));
+                // BASELINE slider: per-pixel sensor noise over a 1-texel step (~1 mm lateral at
+                // 0.5 m) swings the normal wildly, so flat frontal areas culled random flickering
+                // dots. A wider baseline calms the slope noise; the GATE below does the rest —
+                // edge LINES still read a big spread, so they still cull.
+                float2 texel = max(ins.imm.w, 1.0) * float2(1.0 / float(depthTex.get_width()),
+                                                            1.0 / float(depthTex.get_height()));
                 float zL = depthTex.sample(smp, duv - float2(texel.x, 0)).r;
                 float zR = depthTex.sample(smp, duv + float2(texel.x, 0)).r;
                 float zU = depthTex.sample(smp, duv - float2(0, texel.y)).r;
@@ -374,11 +375,11 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 float hi = max(max(zL, zR), max(zU, zD));
                 if (ins.imm.y > 0.0001 && hi - lo > ins.imm.y) { keep = 0.0; break; }
                 if (ins.imm.x > 0.001) {
-                    // Noise gate: the grazing cull fires only where the local depth spread is a
-                    // REAL change (~6 mm + 1.2 %/m covers TrueDepth noise). Solid frontal areas
-                    // (face, chest) sit under the floor → never culled, no jitter; silhouette
-                    // edges and steep cheek/side surfaces far exceed it → cull as before.
-                    if (hi - lo < 0.006 + 0.012 * rawZ) break;
+                    // GATE slider: the grazing cull fires only where the local depth spread is
+                    // a REAL change (gate + 2·gate per metre; default 6 mm covers TrueDepth
+                    // noise). Solid frontal areas sit under the floor → never culled, no jitter;
+                    // silhouette edges and steep grazing surfaces far exceed it → cull as before.
+                    if (hi - lo < ins.imm.z * (1.0 + 2.0 * rawZ)) break;
                     const float span = 1.2;
                     float2 cen = duv - 0.5;
                     float3 pL = float3((cen - float2(texel.x, 0)) * span * zL, zL);
@@ -782,7 +783,7 @@ kernel void depth_despeckle(texture2d<float, access::read> inD [[texture(0)]],
             if (dn > 0.05 && isfinite(dn) && fabs(dn - d) < P.gap) support++;
         }
     }
-    outD.write(float4(support >= 4 ? d : 0.0), gid);
+    outD.write(float4(support >= max(int(P.radius), 1) ? d : 0.0), gid);   // SUPPORT slider
 }
 
 // Smooth Surface: 2D bilateral — smooths surfaces without bleeding across silhouettes
@@ -803,7 +804,7 @@ kernel void depth_bilateral(texture2d<float, access::read> inD [[texture(0)]],
             if (q.x < 0 || q.y < 0 || q.x >= int(P.w) || q.y >= int(P.h)) continue;
             float dn = inD.read(uint2(q)).r;
             if (!(dn > 0.05) || !isfinite(dn)) continue;
-            float dz = (dn - d) / 0.05;                                  // range sigma 5 cm
+            float dz = (dn - d) / max(P.gap, 0.005);                     // SIGMA slider (range sigma, m)
             float w = exp(-float(dx * dx + dy * dy) * invS2 - dz * dz);
             wSum += w; dSum += dn * w;
         }

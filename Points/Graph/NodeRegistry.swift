@@ -42,7 +42,9 @@ final class NodeRegistry: @unchecked Sendable {
             params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
                      .option("mode", ["free", "metric"], "metric"),
                      .float("separation", 0...4, 2.5), .float("focus", 0.3...3, 1.0),
-                     .float("gain", 0...3, 2.5), .bool("arms", false)],
+                     .float("gain", 0...3, 2.5), .bool("arms", false),
+                     // The built-in silhouette flying-pixel reject (was a hardcoded 6 cm).
+                     .float("edgeCull", 0...0.3, 0.06)],
             execution: .interpreterOp,
             description: "The sensor AND the cloud (the old Point Display lives here now). POSITION + Z = the TDLidar point cloud: METRIC unprojects with the real camera intrinsics — objects keep true size and shrink as they move away, 1:1 with reality. SEPARATION = metres→view scale, FOCUS = the depth that sits at the wall. FREE = the intrinsic-free fan (GAIN = Z zoom strength). ARMS pull every point back to its Z-origin pin. DEPTH = plain nearness (near→far → 1→0) for palettes/modulation. Cleanup (EMA, fill holes, despeckle…) works by node presence.",
             emit: { b, _, node in
@@ -153,15 +155,21 @@ final class NodeRegistry: @unchecked Sendable {
         register(NodeSpec(
             id: "grazing-cull", name: "Grazing Cull", family: .filter,
             inputs: [PortSpec("depth", .fieldFloat)], outputs: [PortSpec("out", .fieldFloat)],
-            params: [.float("cull", 0...1, 0.25), .float("edge", 0...0.4, 0.10)],
+            params: [.float("cull", 0...1, 0.25), .float("edge", 0...0.4, 0.10),
+                     .float("gate", 0...0.05, 0.006), .float("baseline", 1...4, 2)],
             execution: .interpreterOp,
-            description: "TDLidar cleanup A1: rejects grazing-angle ToF returns (CULL, 0 = off) and silhouette flying-pixel fringes (EDGE, metres of neighbour spread). Culled points disappear.",
+            description: "TDLidar cleanup A1: rejects grazing-angle ToF returns (CULL, 0 = off) and silhouette flying-pixel fringes (EDGE, metres of neighbour spread). GATE = the noise floor the grazing test needs before it may cull (higher = solid areas rock-still, only hard edges cull); BASELINE = the sampling radius in texels for the surface normal (wider = calmer, softer edges). Culled points disappear.",
             emit: { b, inputs, node in
                 let d = b.materialize(inputs[0], default: .zero)
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.grazeCull, dst: r, a: d,
-                                             imm: [node.float("cull", 0.25), node.float("edge", 0.10), 0, 0]),
-                              key: "\(node.id).cull", lanes: [0, 1])
+                                             imm: [node.float("cull", 0.25), node.float("edge", 0.10),
+                                                   node.float("gate", 0.006), node.float("baseline", 2)]),
+                              key: "\(node.id).cull", lanes: [0, 1, 2, 3])
+                b.addPatchKey("\(node.id).cull", lane: 0)
+                b.addPatchKey("\(node.id).edge", lane: 1)
+                b.addPatchKey("\(node.id).gate", lane: 2)
+                b.addPatchKey("\(node.id).baseline", lane: 3)
                 return [r]
             }))
 
@@ -178,23 +186,24 @@ final class NodeRegistry: @unchecked Sendable {
                    [.bool("enabled", true)],
                    "Apple's built-in AVFoundation depth smoothing (front camera). OFF by default app-wide — add this node to turn it on. It fills holes and steadies depth but smears silhouettes at range.")
         passFilter("ema-smooth", "EMA Smooth",
-                   [.float("amount", 0...1, 0.3)],
-                   "TDLidar temporal EMA: deadband hysteresis hold (zero static jitter) + velocity-adaptive alpha (motion never lags). 0 = raw sensor, 1 = statue. Without this node depth is raw.")
+                   [.float("amount", 0...1, 0.3), .float("deadband", 0...0.05, 0.008),
+                    .float("adapt", 0...10, 5)],
+                   "TDLidar temporal EMA: deadband hysteresis hold (zero static jitter) + velocity-adaptive alpha (motion never lags). AMOUNT 0 = raw sensor, 1 = statue. DEADBAND = the hold threshold in metres (scaled by AMOUNT; higher = stiller statics). ADAPT = how hard motion snaps the filter awake (0 = dreamy lag). Without this node depth is raw.")
         passFilter("fill-holes", "Fill Holes",
-                   [.bool("persist", true)],
-                   "Dropout persistence: points keep their last good depth through sensor holes instead of blinking out (pinout: instead of retracting).")
+                   [.float("radius", 0...6, 3), .float("gap", 0.02...0.3, 0.08)],
+                   "IR-shadow hole fill (always on at RADIUS 3 even without this node — add it to tune). Each invalid pixel fills from valid neighbours within RADIUS px, foreground-only within GAP metres so the shadow closes onto the face, never a face/background blend. RADIUS 0 = fill off (raw holes).")
         passFilter("accumulate", "Accumulate",
                    [.float("frames", 1...30, 8)],
                    "Blends ~FRAMES frames of depth into a denser, calmer cloud (temporal average; holes keep the accumulated depth). Higher = smoother but laggier on motion. Runs while the node exists — the wire passes depth through.")
         passFilter("smooth-surface", "Smooth Surface",
-                   [.float("radius", 0...4, 1)],
-                   "Bilateral surface smoothing: flattens sensor noise on surfaces WITHOUT bleeding across silhouette edges. RADIUS in pixels (0 = off). Runs while the node exists — the wire passes depth through.")
+                   [.float("radius", 0...4, 1), .float("sigma", 0.01...0.2, 0.05)],
+                   "Bilateral surface smoothing: flattens sensor noise on surfaces WITHOUT bleeding across silhouette edges. RADIUS in pixels (0 = off); SIGMA = the depth range in metres that still counts as the same surface (higher = smoother but starts rounding edges). Runs while the node exists — the wire passes depth through.")
         passFilter("despeckle-voxel", "Despeckle Voxel",
-                   [.float("size", 0...0.1, 0.02)],
-                   "Removes isolated speckle returns: a point survives only with enough neighbours within SIZE metres of its depth. Kills floating dust around silhouettes. Runs while the node exists — the wire passes depth through.")
+                   [.float("size", 0...0.1, 0.02), .float("support", 1...8, 4)],
+                   "Removes isolated speckle returns: a point survives only with at least SUPPORT neighbours within SIZE metres of its depth (5×5 window). Higher SUPPORT = stricter, kills more dust. Runs while the node exists — the wire passes depth through.")
         passFilter("detail-upsample", "Detail Upsample",
-                   [.float("factor", 1...4, 2)],
-                   "Joint bilateral depth upsample (TDLidar JBU): depth is resampled at FACTOR× resolution with edges snapped to the RGB image, so silhouettes sharpen. Needs the camera color feed. Runs while the node exists — the wire passes depth through.")
+                   [.float("factor", 1...4, 2), .float("edge", 0.02...0.3, 0.08)],
+                   "Joint bilateral depth upsample (TDLidar JBU): depth is resampled at FACTOR× resolution with edges snapped to the RGB image, so silhouettes sharpen. EDGE = how strong a colour difference counts as an edge (lower = sharper snapping). Needs the camera color feed. Runs while the node exists — the wire passes depth through.")
     }
 
     // MARK: SHAPE

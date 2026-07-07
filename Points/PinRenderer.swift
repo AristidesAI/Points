@@ -57,7 +57,8 @@ struct PinUniforms {
     var cols: UInt32 = 200, rows: UInt32 = 150, count: UInt32 = 30_000, orient: UInt32 = 1
     var extX: Float = 1.5, extY: Float = 2.0, zWorldScale: Float = 1.0, pinSize: Float = 0.012
     var stemThickness: Float = 0.004, nearM: Float = 0.25, farM: Float = 2.5, colorMode: UInt32 = 0
-    var isStem: UInt32 = 0, pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
+    var isStem: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
+    var edgeReject: Float = 0.06   // Depth node EDGECULL — built-in silhouette flying-pixel reject
     // Light nodes (up to 4) — tuples lay out like float4[4] in the Metal struct.
     var lightPos: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
     var lightParams: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
@@ -87,6 +88,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var gizmoPipeline: MTLRenderPipelineState!    // orbit-pivot cube marker
     private var brightPipeline: MTLComputePipelineState!  // bloom bright-pass
     private var bloomBlur: MPSImageGaussianBlur!
+    private var bloomSigmaNow: Float = 6                   // rebuilt when the Bloom RADIUS changes
     private var emaPipeline: MTLComputePipelineState!
     private var fillPipeline: MTLComputePipelineState!    // depth hole-fill (IR-shadow closer)
     private var despecklePipeline: MTLComputePipelineState!
@@ -126,7 +128,6 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var accParity = 0
     private var accValid = false
     private var fillTex: MTLTexture?          // hole-filled depth scratch (r32Float)
-    private var _fillRadius: Int = 3          // 0 = off; IR-shadow fill radius (front camera)
     private var emaParity = 0
     private var filteredValid = false
     private var colorTexRef: CVMetalTexture?   // keep wrapper alive through GPU work
@@ -289,15 +290,15 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             // 0. Hole-fill the IR depth shadow (front camera) so it closes without Apple's filter,
             //    THEN feed the EMA. This kills the black band + the persist "trail".
             var emaInput = wrapped
-            if _fillRadius > 0 {
+            if frame.fillRadius >= 0.5 {
                 ensureFillTex(w: wrapped.width, h: wrapped.height)
                 if let ft = fillTex, let enc = cmd.makeComputeCommandEncoder() {
                     enc.setComputePipelineState(fillPipeline)
                     enc.setTexture(wrapped, index: 0)
                     enc.setTexture(ft, index: 1)
                     var fp = FillParamsSwift(w: UInt32(wrapped.width), h: UInt32(wrapped.height),
-                                             radius: Int32(_fillRadius))
-                    enc.setBytes(&fp, length: MemoryLayout<FillParamsSwift>.stride, index: 0)
+                                             radius: Int32(frame.fillRadius.rounded()),
+                                             gapThresh: frame.fillGap)
                     let tg = MTLSize(width: 16, height: 16, depth: 1)
                     enc.dispatchThreads(MTLSize(width: wrapped.width, height: wrapped.height, depth: 1),
                                         threadsPerThreadgroup: tg)
@@ -314,9 +315,9 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
                 enc.setTexture(emaTex[1 - emaParity], index: 2)      // out
                 // TDLidar host constants: alpha = 1-0.9s, deadband 0.008s (+0.012s/m), motionAdapt 5
                 var p = EmaParamsSwift(alpha: 1 - 0.9 * s,
-                                       deadband: 0.008 * s,
-                                       deadbandPerM: 0.012 * s,
-                                       motionAdapt: 5,
+                                       deadband: frame.emaDeadband * s,
+                                       deadbandPerM: 1.5 * frame.emaDeadband * s,
+                                       motionAdapt: frame.emaAdapt,
                                        holePersist: frame.holePersist ? 1 : 0,
                                        reset: effectiveReset ? 1 : 0)
                 enc.setBytes(&p, length: MemoryLayout<EmaParamsSwift>.stride, index: 0)
@@ -350,6 +351,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         var u = PinUniforms(viewProj: viewProj)
         u.eyePos = SIMD4(eye, 0)
         u.camIntrin = camIntrinNow
+        u.edgeReject = frame.edgeReject
         u.cols = UInt32(cols); u.rows = UInt32(rows); u.count = UInt32(actual)
         u.orient = orientNow
         u.zWorldScale = frame.camera.depthPush
@@ -403,12 +405,14 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             }
             if frame.despeckleGap > 0.0001 || frame.smoothRadius >= 1 { ensureCleanTextures(w: w, h: h) }
             if frame.despeckleGap > 0.0001, cleanTex.count == 2 {
-                var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h), gap: frame.despeckleGap)
+                var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h), gap: frame.despeckleGap,
+                                         radius: frame.despeckleSupport)
                 clean(despecklePipeline, depthForVM, cleanTex[0], &p)
                 depthForVM = cleanTex[0]
             }
             if frame.smoothRadius >= 1, cleanTex.count == 2 {
-                var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h), radius: frame.smoothRadius)
+                var p = CleanParamsSwift(w: UInt32(w), h: UInt32(h), gap: frame.smoothSigma,
+                                         radius: frame.smoothRadius)
                 let dst = depthForVM === cleanTex[0] ? cleanTex[1] : cleanTex[0]
                 clean(bilateralPipeline, depthForVM, dst, &p)
                 depthForVM = dst
@@ -447,7 +451,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
                 }
                 if let jt = jbuTex, let enc = cmd.makeComputeCommandEncoder() {
                     var p = CleanParamsSwift(w: UInt32(jw), h: UInt32(jh),
-                                             gap: 0.08, alpha: lumaOnly ? 1 : 0)
+                                             gap: frame.jbuEdge, alpha: lumaOnly ? 1 : 0)
                     enc.setComputePipelineState(jbuPipeline)
                     enc.setTexture(depthForVM, index: 0)
                     enc.setTexture(guide, index: 1)
@@ -501,7 +505,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         if let targets = mainTargets {
             encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
                         actual: actual, capMesh: capMesh, drawStems: drawStems)
-            if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x) }
+            if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x, sigma: frame.bloomSigma) }
             encodePost(cmd: cmd, targets: targets, rpd: rpd, frame: frame, alphaKey: false)
         }
 
@@ -556,7 +560,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         guard let targets = ndiSceneTargets else { return }
         encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
                     actual: actual, capMesh: capMesh, drawStems: drawStems)
-        if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x) }
+        if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x, sigma: frame.bloomSigma) }
 
         let rpd = MTLRenderPassDescriptor()
         rpd.colorAttachments[0].texture = color
@@ -623,7 +627,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         guard let targets = recSceneTargets else { return }
         encodeScene(cmd: cmd, targets: targets, u: &u, frame: frame,
                     actual: actual, capMesh: capMesh, drawStems: drawStems)
-        if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x) }
+        if frame.post.y > 0.001 { encodeBloom(cmd: cmd, targets: targets, threshold: frame.post.x, sigma: frame.bloomSigma) }
 
         let rpd = MTLRenderPassDescriptor()
         rpd.colorAttachments[0].texture = color
@@ -824,7 +828,12 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     }
 
     /// Bloom: bright-pass at half res, gaussian blur (MPS), sampled back in the composite.
-    private func encodeBloom(cmd: MTLCommandBuffer, targets: SceneTargets, threshold: Float) {
+    private func encodeBloom(cmd: MTLCommandBuffer, targets: SceneTargets, threshold: Float,
+                             sigma: Float = 6) {
+        if abs(sigma - bloomSigmaNow) > 0.01 {   // Bloom RADIUS param — MPS sigma is immutable
+            bloomBlur = MPSImageGaussianBlur(device: device, sigma: max(sigma, 0.5))
+            bloomSigmaNow = sigma
+        }
         guard let enc = cmd.makeComputeCommandEncoder() else { return }
         enc.setComputePipelineState(brightPipeline)
         enc.setTexture(targets.color, index: 0)

@@ -1153,9 +1153,10 @@ extension NodeRegistry {
             description: "The void behind the pins — set its R/G/B and the backdrop changes instantly (also behind NDI/Record frames unless ALPHA keys it out). GRADIENT fades the colour radially: bright centre, dark edges. No wires needed."))
         registerSpec(NodeSpec(
             id: "bloom", name: "Bloom", family: .stage,
-            params: [.float("threshold", 0...1, 0.7), .float("intensity", 0...2, 0.4)],
+            params: [.float("threshold", 0...1, 0.7), .float("intensity", 0...2, 0.4),
+                     .float("radius", 1...12, 6)],
             execution: .render,
-            description: "Bright pins glow — the signature synth halo. THRESHOLD picks how bright a pin must be to bloom; INTENSITY sets the halo strength. Pairs beautifully with Palette's hot ends and Strobe Color flashes. Just add the node."))
+            description: "Bright pins glow — the signature synth halo. THRESHOLD picks how bright a pin must be to bloom; INTENSITY sets the halo strength; RADIUS sets how far the glow spreads (blur sigma in px). Pairs beautifully with Palette's hot ends and Strobe Color flashes. Just add the node."))
         registerSpec(NodeSpec(
             id: "grain", name: "Grain", family: .stage,
             params: [.float("amount", 0...1, 0.2)],
