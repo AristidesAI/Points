@@ -821,3 +821,12 @@ node. Defaults = the old hardcoded values, so nothing changes until you touch th
 Fill Holes matters even without the node (radius 3 is the app-wide default; add the node to tune or
 zero it). Grazing Cull's GATE/BASELINE are the two knobs behind the jitter fix — GATE up = solid
 areas ever stiller; BASELINE up = calmer, softer edge lines.
+
+### Round — flashing near-camera spheres: RESOLVED (commit `995acfa`, confirmed on-device)
+
+Cause: the pin kernel sampled the depth texture with a LINEAR sampler. At a silhouette adjacent to
+holes, linear filtering averages face depth (~0.4 m) with hole ZEROS → fabricated 0.1–0.3 m values
+that pass the validity check → giant nearer-than-face spheres flashing at the hole boundary. The
+depth map itself was clean — which is why despeckle/fill guards changed nothing (both reverted).
+All depth reads now use NEAREST (exact texels, same as TDLidar's per-pixel compute); color/palette
+stay linear. **Rule: depth is data, not an image — never filter it at sample time.**
