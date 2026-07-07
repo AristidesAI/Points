@@ -668,7 +668,8 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let halfH = (1.5 / a) / max(c.zoom, 0.1)                 // vertical half-extent for this aspect
         let fovBase = max(min(c.fov, 110), 10) * .pi / 180
         let dFrame = halfH / tan(fovBase * 0.5)                  // distance that frames the wall at fovBase
-        let dEff = dFrame * (1 - 0.65 * min(max(c.parallax, 0), 1))   // parallax pulls the camera in
+        let dol = min(max(c.dolly, -0.95), 0.95)                     // Orbit Cube Z: +closer / −further
+        let dEff = dFrame * (1 - 0.65 * min(max(c.parallax, 0), 1)) * (1 - 0.6 * dol)
         let fovEff = 2 * atan(halfH / dEff)                      // widen FOV to keep framing constant
         let proj = perspective(fovY: fovEff, aspect: a, near: 0.05, far: 200)
         let yaw = c.orbitX                                        // unbounded — full turntable both ways
@@ -797,9 +798,10 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         // — and orbit around — where the Orbit Cube node points. Occluded properly by nearer pins.
         if frame.showGizmo {
             let s: Float = 0.09
+            let gp = frame.gizmoPos
             var model = matrix_identity_float4x4
             model.columns.0.x = s; model.columns.1.y = s; model.columns.2.z = s
-            model.columns.3 = SIMD4(frame.camera.centerX, frame.camera.centerY, 0, 1)
+            model.columns.3 = SIMD4(gp.x + frame.camera.centerX, gp.y + frame.camera.centerY, gp.z, 1)
             var g = GizmoUniformsSwift(mvp: u.viewProj * model)
             enc.setRenderPipelineState(gizmoPipeline)
             enc.setDepthStencilState(depthState)

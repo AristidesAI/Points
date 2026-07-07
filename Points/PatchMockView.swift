@@ -1264,12 +1264,35 @@ struct OrbitCubeControls: View {
     let runtime: GraphRuntime
     let nodeID: String
     // Two rows of preset yaw angles (degrees) around the full circle — tap to SNAP the view to that
-    // angle and stop the auto-spin. Fine-tune with the SPIN / PITCH sliders below.
+    // angle and stop the auto-spin. Fine-tune with the joystick / SPIN slider.
     private let rows: [[Int]] = [[0, 45, 90, 135], [180, -135, -90, -45]]
-    private var current: Int { Int((runtime.activeGraph.node(nodeID)?.float("yaw", 0) ?? 0) * 360) }
+    // x is unbounded turns; fold to −180…180° so a preset lights up regardless of wrap.
+    private var current: Int {
+        let turns = runtime.activeGraph.node(nodeID)?.float("x", 0) ?? 0
+        var deg = Int((turns * 360).rounded()) % 360
+        if deg > 180 { deg -= 360 }; if deg < -180 { deg += 360 }
+        return deg
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Move the handle in 3D: joystick = yaw (L/R) + pitch (U/D); Z buttons = dolly in/out.
+            HStack(spacing: 12) {
+                MicroJoystickPad(side: 64, label: "YAW / PITCH") { v in
+                    nudge("x", Float(v.dx) * 0.02)      // unbounded — full turns
+                    nudge("y", Float(-v.dy) * 0.02, lo: -1, hi: 1)   // up = look up
+                }
+                VStack(spacing: 6) {
+                    Text("DOLLY").font(.system(size: 7, weight: .bold)).tracking(0.5).foregroundStyle(Theme.text2)
+                    JogButton(symbol: "arrow.up.to.line") { nudge("z", +0.05, lo: -1, hi: 1) }   // forward / closer
+                    JogButton(symbol: "arrow.down.to.line") { nudge("z", -0.05, lo: -1, hi: 1) } // back / further
+                }
+                JogButton(symbol: "scope") {                 // recenter the handle
+                    runtime.pushUndo()
+                    for p in ["x", "y", "z", "spin"] { runtime.setParam(nodeID, p, 0) }
+                }
+                Spacer(minLength: 0)
+            }
             Text("VIEW ANGLE").font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: 6) {
@@ -1277,7 +1300,7 @@ struct OrbitCubeControls: View {
                         let on = current == deg
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            runtime.setParam(nodeID, "yaw", Float(deg) / 360)   // turns
+                            runtime.setParam(nodeID, "x", Float(deg) / 360)     // turns
                             runtime.setParam(nodeID, "spin", 0)                 // snap → stop auto-orbit
                         } label: {
                             Text("\(deg)°").font(.system(size: 12, weight: .semibold))
@@ -1291,6 +1314,12 @@ struct OrbitCubeControls: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 4)
+    }
+
+    private func nudge(_ name: String, _ delta: Float, lo: Float = -1e9, hi: Float = 1e9) {
+        guard abs(delta) > 0.0001 else { return }
+        let v = runtime.nodeParam(nodeID, name, 0) + delta
+        runtime.setParam(nodeID, name, min(max(v, lo), hi))
     }
 }
 
@@ -1418,7 +1447,7 @@ struct NodeSettingsBar: View {
                     }
                     if spec.id == "camera" {
                         CamJogRow(runtime: runtime, nodeID: node.id, label: "ORBIT",
-                                  xParam: "orbitX", yParam: "orbitY", step: 0.12, limit: 0.9)
+                                  xParam: "orbitX", yParam: "orbitY", step: 0.12, limit: 100, showSmooth: true)
                         CamJogRow(runtime: runtime, nodeID: node.id, label: "POSITION",
                                   xParam: "centerX", yParam: "centerY", step: 0.1, limit: 1.0)
                     }
@@ -1441,8 +1470,8 @@ struct NodeSettingsBar: View {
                         OrbitCubeControls(runtime: runtime, nodeID: node.id)
                     }
                     // Camera's orbit/center are driven by the jog rows above — don't duplicate them as sliders.
-                    let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY"]
-                        : (spec.id == "orbit-cube" ? ["yaw"] : [])   // yaw is the preset buttons above
+                    let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY", "smooth"]
+                        : (spec.id == "orbit-cube" ? ["x", "y", "z"] : [])   // handled by joystick / preset buttons / Z
                     let floats = spec.params.filter { $0.range != nil && !jogged.contains($0.name) }
                     if floats.count > 4 {
                         // Param-heavy nodes (Noise…): compact grid, up to 3 sliders per row,
@@ -1722,6 +1751,35 @@ struct NDISwitchRow: View {
 
 /// Square-button jog pad for the Camera node. ORBIT walks the eye around the cloud
 /// centre; POSITION slides the pivot itself (no re-centering). Scope = reset that pair.
+/// Press = one step; HOLD = keep stepping (~16×/s after a short delay) so you don't tap repeatedly.
+/// Same tap-and-hold gesture the camera joystick uses (minimumDistance 0 → fires on touch-down).
+struct JogButton: View {
+    let symbol: String
+    let action: () -> Void
+    @State private var pump: Task<Void, Never>?
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.text)
+            .frame(width: 38, height: 30)
+            .background(pump == nil ? Theme.panel : Theme.text.opacity(0.18))
+            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard pump == nil else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.8)
+                    action()                                   // immediate — a tap feels instant
+                    pump = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 300_000_000)   // hold threshold before repeat
+                        while !Task.isCancelled { action(); try? await Task.sleep(nanoseconds: 60_000_000) }
+                    }
+                }
+                .onEnded { _ in pump?.cancel(); pump = nil })
+    }
+}
+
 struct CamJogRow: View {
     let runtime: GraphRuntime
     let nodeID: String   // the selected Camera node (not always the default "cam")
@@ -1730,6 +1788,9 @@ struct CamJogRow: View {
     let yParam: String
     let step: Float
     let limit: Float
+    var showSmooth = false   // ORBIT row shows the SMOOTH toggle (eases motion instead of snap)
+
+    private var smoothOn: Bool { (runtime.activeGraph.node(nodeID)?.float("smooth", 0) ?? 0) > 0.001 }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1737,14 +1798,28 @@ struct CamJogRow: View {
                 .font(.system(size: 8, weight: .semibold)).tracking(1.1)
                 .foregroundStyle(Theme.text2)
                 .frame(width: 70, alignment: .leading)
-            jog("chevron.up") { nudge(yParam, +step) }
-            jog("chevron.down") { nudge(yParam, -step) }
-            jog("chevron.left") { nudge(xParam, -step) }
-            jog("chevron.right") { nudge(xParam, +step) }
-            jog("scope") {
+            JogButton(symbol: "chevron.up") { nudge(yParam, +step) }
+            JogButton(symbol: "chevron.down") { nudge(yParam, -step) }
+            JogButton(symbol: "chevron.left") { nudge(xParam, -step) }
+            JogButton(symbol: "chevron.right") { nudge(xParam, +step) }
+            JogButton(symbol: "scope") {
                 runtime.pushUndo()
                 runtime.setParam(nodeID, xParam, 0)
                 runtime.setParam(nodeID, yParam, 0)
+            }
+            if showSmooth {
+                Button {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.9)
+                    runtime.setParam(nodeID, "smooth", smoothOn ? 0 : 0.22)   // off ↔ eased
+                } label: {
+                    Image(systemName: "wind")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(smoothOn ? Color.black : Theme.text)
+                        .frame(width: 38, height: 30)
+                        .background(smoothOn ? Theme.text : Theme.panel)
+                        .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                }
+                .buttonStyle(PadPressStyle())
             }
             Spacer(minLength: 0)
         }
@@ -1755,21 +1830,6 @@ struct CamJogRow: View {
     private func nudge(_ name: String, _ delta: Float) {
         let v = runtime.nodeParam(nodeID, name, 0) + delta
         runtime.setParam(nodeID, name, min(max(v, -limit), limit))
-    }
-
-    private func jog(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            action()
-        } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .frame(width: 38, height: 30)
-                .background(Theme.panel)
-                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-        }
-        .buttonStyle(PadPressStyle())
     }
 }
 

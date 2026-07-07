@@ -132,23 +132,37 @@ final class GraphRuntime {
     @ObservationIgnored var requestMedia: ((String) -> Void)?
     private static let importedMediaIDs: Set<String> = ["still-image", "clip-transport"]
     var usesImportedMedia: Bool { graph.nodes.contains { Self.importedMediaIDs.contains($0.specID) } }
-    /// True when a Still Image / Video Source node is WIRED into Point Display — that connection (not
+    /// True when a Still Image / Video Source node FEEDS Point Display — that connection (not
     /// mere presence) switches the render to the imported clip; wiring Depth back returns to live.
     var importedSourceWired: Bool {
         guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }) else { return false }
-        return graph.wires.contains { w in
-            w.toNode == pd.id && (graph.node(w.fromNode).map { Self.importedMediaIDs.contains($0.specID) } ?? false)
-        }
+        return upstreamNode(from: pd.id, where: { Self.importedMediaIDs.contains($0.specID) }) != nil
     }
     /// Any Live Depth Model node in the graph (wired or not) — presence triggers model preload so
     /// wiring it into Point Display never freezes on a cold model build.
     var firstLiveDepthNode: GraphNode? { graph.nodes.first { $0.specID == "live-depth" } }
-    /// The Live Depth Model node wired into Point Display (to read its model/lens choice), or nil.
+    /// The Live Depth Model node feeding Point Display (to read its model/lens choice), or nil.
+    /// Followed TRANSITIVELY: the docs tell users to insert FILTER nodes (Grazing Cull → Despeckle →
+    /// EMA…) between a source and Point Display — a direct-wire-only check silently killed the whole
+    /// live-model branch (camera never started, lens switcher dead) whenever a filter sat in between.
     var liveDepthNode: GraphNode? {
-        guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }),
-              let w = graph.wires.first(where: { $0.toNode == pd.id && graph.node($0.fromNode)?.specID == "live-depth" })
-        else { return nil }
-        return graph.node(w.fromNode)
+        guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }) else { return nil }
+        return upstreamNode(from: pd.id, where: { $0.specID == "live-depth" })
+    }
+    /// First node upstream of `startID` (breadth-first through every input wire) matching `pred`.
+    private func upstreamNode(from startID: String, where pred: (GraphNode) -> Bool) -> GraphNode? {
+        var queue = [startID]
+        var seen: Set<String> = [startID]
+        var i = 0
+        while i < queue.count {
+            let id = queue[i]; i += 1
+            for w in graph.wires where w.toNode == id {
+                guard seen.insert(w.fromNode).inserted, let n = graph.node(w.fromNode) else { continue }
+                if pred(n) { return n }
+                queue.append(w.fromNode)
+            }
+        }
+        return nil
     }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,
@@ -1154,7 +1168,7 @@ final class GraphRuntime {
             // SMOOTH: ease the view toward its target so jog/joystick moves glide instead of snapping.
             let smooth = c.float("smooth", 0)
             if smooth > 0.001 {
-                let a = 1 - exp(-dt / max(smooth * 0.5, 0.0001))   // time constant ≤0.5s
+                let a = min(1, dt / max(smooth * 0.5, dt))         // dt-scaled ease, time constant ≤0.5s
                 camEase.x += (cam.orbitX - camEase.x) * a; camEase.y += (cam.orbitY - camEase.y) * a
                 camEase.z += (cam.centerX - camEase.z) * a; camEase.w += (cam.centerY - camEase.w) * a
                 dollyEase += (cam.dolly - dollyEase) * a
@@ -1258,7 +1272,7 @@ final class GraphRuntime {
                             uvTransform: uvT, edgePolicy: edge, domain: domain,
                             despeckleGap: despeckle, smoothRadius: smoothR, accumFrames: accum,
                             jbuFactor: jbu,
-                            showGizmo: graph.nodes.contains { $0.specID == "orbit-cube" })
+                            showGizmo: hasCube, gizmoPos: gizmo)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.
