@@ -91,25 +91,26 @@ final class NodeRegistry: @unchecked Sendable {
             id: "point-display", name: "Point Display", family: .grid,
             inputs: [PortSpec("depth", .fieldFloat)],
             outputs: [PortSpec("position", .fieldVec3), PortSpec("z", .fieldFloat)],
-            params: [.float("separation", 0...3, 1), .float("volume", 0...2, 0),
-                     // gain 2.5 matches the lateral fan scale (sep·2·extX/focus with the ~63° TrueDepth
-                     // span) so FREE's Z recession is uniform with XY → true perspective shrink (TDLidar).
-                     .float("wobble", 0...0.5, 0), .float("gain", 0...3, 2.5),
-                     .option("mode", ["free", "pinout", "metric"], "free"),
+            params: [.float("separation", 0...4, 2.5), .float("volume", 0...2, 0),
+                     .float("wobble", 0...0.5, 0), .float("gain", 0...3, 1.2),
+                     .option("mode", ["free", "pinout"], "free"),
                      .bool("arms", false),
                      .float("focus", 0.3...3, 1.0),
                      .float("gamma", 0.25...4, 1), .float("zFlatten", 0...1, 1),
                      .bool("edgeLock", true)],
             execution: .interpreterOp,
-            description: "How the pins hold together. FREE = the TDLidar TrueDepth point cloud: pixels fan into a real frustum; FOCUS is the depth that stays put. PINOUT locks XY to the fixed grid (EDGE LOCK pins the outer ring). ARMS pull every point back to its Z-origin pin (off = freestanding cloud). SEPARATION spreads, VOLUME opens with depth, WOBBLE adds sensor life; GAIN/GAMMA/Z-FLATTEN shape the forward push. Cleanup (grazing cull, EMA, hole fill…) lives in red FILTER nodes between Depth and here.",
+            description: "How the pins hold together. FREE = the TDLidar point cloud: real camera-intrinsics unprojection to metric XYZ, so objects keep true size and shrink as they move away. SEPARATION = metres→view scale, FOCUS = the depth that sits at the wall. PINOUT = pin-art toy: XY locked to the fixed grid (EDGE LOCK pins the outer ring), depth pushes each pin out — GAIN/GAMMA/Z-FLATTEN shape the push, ARMS draw the rods. Cleanup (grazing cull, EMA, hole fill…) lives in red FILTER nodes between Depth and here.",
             emit: { b, inputs, node in
                 let d = b.materialize(inputs[0], default: .zero)
                 let mode = node.option("mode", "free")
-                // METRIC: real camera-intrinsics unprojection to metric XYZ — objects keep true size,
-                // so moving away shrinks them (TDLidar 1:1). SEPARATION = metres→view scale, FOCUS =
-                // reference depth (sits at the wall). Needs DEPTHPUSH ≥ 1 (multiplies the metric Z).
-                if mode == "metric" {
-                    let scale = node.float("separation", 1), zRef = node.float("focus", 1)
+                // FREE (and legacy "metric" saves): real camera-intrinsics unprojection to metric
+                // XYZ — the TDLidar cloud. The old intrinsic-free fan (freeXY) + decoupled Z gain
+                // approximated this with a slightly different lateral scale and an independent
+                // Z knob; the two "TDLidar copies" are now ONE path so the look can't diverge.
+                // SEPARATION scales BOTH XY and Z (uniform → true perspective); FOCUS = reference
+                // depth at the wall. Needs DEPTHPUSH = 1 (any other value stretches Z only).
+                if mode != "pinout" {
+                    let scale = node.float("separation", 2.5), zRef = node.float("focus", 1)
                     let mxy = b.reg(), mz = b.reg()
                     b.emitPatched(PinInstruction(.unprojectXY, dst: mxy, a: d, imm: [scale, 0, 0, 0]),
                                   key: "\(node.id).xy", lanes: [0])
@@ -119,26 +120,6 @@ final class NodeRegistry: @unchecked Sendable {
                     b.addPatchKey("\(node.id).separation", lane: 0)
                     b.addPatchKey("\(node.id).focus", lane: 1)
                     return [mxy, mz]
-                }
-                let free = mode == "free"
-                if free {
-                    // FREE = the fan XY (its signature look) + a strong focus-referenced Z recession,
-                    // so the cloud now SHRINKS as it moves away (perspective zoom, close to metric) —
-                    // vs the old wide-near/far nearness push that barely receded. GAIN = zoom strength,
-                    // FOCUS = the depth that sits at the wall. Needs DEPTHPUSH ≥ 1 (multiplies the Z).
-                    let focus = node.float("focus", 1)
-                    let fxy = b.reg(), fz = b.reg()
-                    b.emitPatched(PinInstruction(.freeXY, dst: fxy, a: d,
-                                                 imm: [node.float("separation", 1), focus, 0, 0]),
-                                  key: "\(node.id).xy", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).separation", lane: 0)
-                    b.addPatchKey("\(node.id).focus", lane: 1)
-                    b.emitPatched(PinInstruction(.unprojectZ, dst: fz, a: d,
-                                                 imm: [node.float("gain", 2.5), focus, 0, 0]),
-                                  key: "\(node.id).z", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).gain", lane: 0)
-                    b.addPatchKey("\(node.id).focus", lane: 1)
-                    return [fxy, fz]
                 }
                 let edge: Float = (node.float("edgeLock") > 0.5) ? 1 : 0
                 let xy = b.reg()

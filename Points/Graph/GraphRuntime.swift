@@ -324,26 +324,25 @@ final class GraphRuntime {
         func p(_ id: String, _ k: String, _ v: Float) { graph.setParam(id, k, .float(v)) }
         let hasCam = graph.node("cam") != nil
         if mode == "pinout" {
-            p(pdID, "separation", 0.5); p(pdID, "volume", 0); p(pdID, "wobble", 0)
-            p(pdID, "gain", 0.34); p(pdID, "focus", 1); p(pdID, "gamma", 1); p(pdID, "zFlatten", 1)
+            // Pin-art toy: XY LOCKED to the grid (separation 1 = exact pitch, no fan/volume/wobble),
+            // depth pushes each pin straight out, ARMS draw the rods. Long lens + full parallax
+            // flatten the view into the classic pin-screen relief.
+            p(pdID, "separation", 1); p(pdID, "volume", 0); p(pdID, "wobble", 0)
+            p(pdID, "gain", 0.8); p(pdID, "focus", 1); p(pdID, "gamma", 1.2); p(pdID, "zFlatten", 1)
+            graph.setParam(pdID, "arms", .bool(true))
             if hasCam {
                 p("cam", "fov", 15); p("cam", "zoom", 2); p("cam", "parallax", 1); p("cam", "depthPush", 3)
                 p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
             }
-        } else if mode == "metric" {
-            // Real-intrinsics metric cloud (1:1 with reality). SEPARATION = metres→view scale, FOCUS =
-            // reference depth (sits at the wall — raise to ~3 for room-scale LiDAR). DEPTHPUSH scales Z.
-            // FOV 60 = the TDLidar viewer's default lens.
-            p(pdID, "separation", 2.5); p(pdID, "focus", 1.0)
+        } else {   // free = the TDLidar metric cloud (registry defaults)
+            // SEPARATION = metres→view scale (2.5 ≈ TDLidar framing), FOCUS = reference depth at the
+            // wall (raise to ~3 for room-scale LiDAR). DEPTHPUSH must stay 1 — it scales Z only, so
+            // any other value breaks the uniform metric geometry. FOV 60 = the TDLidar viewer lens.
+            p(pdID, "separation", 2.5); p(pdID, "volume", 0); p(pdID, "wobble", 0)
+            p(pdID, "gain", 1.2); p(pdID, "focus", 1); p(pdID, "gamma", 1); p(pdID, "zFlatten", 1)
+            graph.setParam(pdID, "arms", .bool(false))
             if hasCam {
                 p("cam", "fov", 60); p("cam", "zoom", 1); p("cam", "parallax", 0.3); p("cam", "depthPush", 1)
-                p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
-            }
-        } else {   // free = registry defaults
-            p(pdID, "separation", 1); p(pdID, "volume", 0); p(pdID, "wobble", 0)
-            p(pdID, "gain", 2.5); p(pdID, "focus", 1); p(pdID, "gamma", 1); p(pdID, "zFlatten", 1)
-            if hasCam {
-                p("cam", "fov", 60); p("cam", "zoom", 1); p("cam", "parallax", 0.5); p("cam", "depthPush", 1)
                 p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
             }
         }
