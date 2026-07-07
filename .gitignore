@@ -5,7 +5,7 @@
 Points/NDI/libndi_ios.a
 # Vendored CoreML depth models (large, ~50-200 MB each). Copy the .mlpackages into
 # Points/DepthImport/ locally — they must be present to build the depth features. Sources:
-# MoGe2_ViTB_Normal_504, DepthAnythingV2SmallF16, DepthAnythingV3_small_504, …
+# MoGe2_ViTB_Normal_504, DepthAnythingV2SmallF16, MetricVideoDA_S, …
 Points/DepthImport/*.mlpackage
 
 # Xcode

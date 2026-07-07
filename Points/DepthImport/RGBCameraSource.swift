@@ -50,16 +50,28 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
 
     func start(lens: Lens) {
         queue.async { [self] in
-            if running && lens == self.lens { return }   // idempotent — no restart on the same lens
+            // Idempotent ONLY when the session is genuinely healthy on this lens — a session that
+            // came up without an input (camera still held by the departing TrueDepth/LiDAR session)
+            // used to early-return here forever, so re-tapping the same lens never recovered it.
+            if running && lens == self.lens && session.isRunning && !session.inputs.isEmpty { return }
             // Switching to a DIFFERENT physical camera on a running session is unreliable (the input
             // swap can silently fail to take) — stop the session, reconfigure, restart. That's what
             // actually makes the lens switcher change the feed.
             let switching = session.isRunning
             self.lens = lens
             if switching { session.stopRunning() }
-            configure()
+            let ok = configure()
             session.startRunning()
             running = true
+            if !ok {
+                // Camera not free yet (handoff race) — one retry once the other session let go.
+                queue.asyncAfter(deadline: .now() + 0.4) { [self] in
+                    guard running, session.inputs.isEmpty else { return }
+                    if session.isRunning { session.stopRunning() }
+                    _ = configure()
+                    session.startRunning()
+                }
+            }
         }
     }
 
@@ -70,23 +82,19 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         }
     }
 
-    func setLens(_ lens: Lens) {
-        queue.async { [self] in
-            guard running, lens != self.lens else { return }
-            self.lens = lens
-            configure()
-        }
-    }
-
     // MARK: capture configuration (on the capture queue)
 
-    private func configure() {
+    /// Returns false when the lens's device couldn't be attached (usually the physical camera is
+    /// still held by the departing depth session) — the caller retries once.
+    @discardableResult private func configure() -> Bool {
         session.beginConfiguration()
         session.sessionPreset = .high
         for i in session.inputs { session.removeInput(i) }
+        var attached = false
         if let dev = Self.device(for: lens),
            let input = try? AVCaptureDeviceInput(device: dev), session.canAddInput(input) {
             session.addInput(input)
+            attached = true
         }
         if session.outputs.isEmpty {
             output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -104,6 +112,7 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
             if c.isCameraIntrinsicMatrixDeliverySupported { c.isCameraIntrinsicMatrixDeliveryEnabled = true }
         }
         session.commitConfiguration()
+        return attached
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
