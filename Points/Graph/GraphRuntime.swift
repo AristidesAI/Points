@@ -139,10 +139,14 @@ final class GraphRuntime {
     /// Any Live Depth Model node in the graph — presence triggers model preload so adding it never
     /// freezes on a cold model build.
     var firstLiveDepthNode: GraphNode? { graph.nodes.first { $0.specID == "live-depth" } }
-    /// The active Live Depth Model node (to read its model/lens choice), or nil. PRESENCE-based:
-    /// the node existing in the graph takes over the camera — no wiring required (wire checks kept
-    /// silently killing the branch when filters or nothing sat between it and the display).
-    var liveDepthNode: GraphNode? { firstLiveDepthNode }
+    /// The active Live Depth Model node (to read its model/lens choice), or nil. WIRE-driven: the
+    /// node takes over the camera only once ANY of its outputs is wired into the patch — a parked,
+    /// unwired node does nothing (it only preloads its model via `firstLiveDepthNode`).
+    var liveDepthNode: GraphNode? {
+        graph.nodes.first { n in
+            n.specID == "live-depth" && graph.wires.contains { $0.fromNode == n.id }
+        }
+    }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,
     // and persistent per-node state (envelopes/counters/S&H).

@@ -55,34 +55,7 @@ final class NodeRegistry: @unchecked Sendable {
                 b.addPatchKey("\(node.id).near", lane: 0)   // §13 — per-param keys so nested triggers can drive each
                 b.addPatchKey("\(node.id).far", lane: 1)
                 b.addPatchKey("\(node.id).invert", lane: 2)
-                let xy = b.reg(), z = b.reg()
-                let focus = node.float("focus", 1)
-                if node.option("mode", "metric") == "free" {
-                    // FREE: the TDLidar fan, intrinsic-free — XY spreads with z/focus, Z recedes
-                    // from FOCUS with GAIN (2.5 ≈ uniform with the lateral scale at sep 1).
-                    b.emitPatched(PinInstruction(.freeXY, dst: xy, a: r,
-                                                 imm: [node.float("separation", 1), focus, 0, 0]),
-                                  key: "\(node.id).xy", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).separation", lane: 0)
-                    b.addPatchKey("\(node.id).focus", lane: 1)
-                    b.emitPatched(PinInstruction(.unprojectZ, dst: z, a: r,
-                                                 imm: [node.float("gain", 2.5), focus, 0, 0]),
-                                  key: "\(node.id).z", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).gain", lane: 0)
-                    b.addPatchKey("\(node.id).focus", lane: 1)
-                } else {
-                    // METRIC: real camera-intrinsics unprojection to metric XYZ (TDLidar 1:1).
-                    // SEPARATION scales BOTH XY and Z — uniform geometry → true perspective.
-                    // Needs DEPTHPUSH = 1 (any other value stretches Z only).
-                    let scale = node.float("separation", 2.5)
-                    b.emitPatched(PinInstruction(.unprojectXY, dst: xy, a: r, imm: [scale, 0, 0, 0]),
-                                  key: "\(node.id).xy", lanes: [0])
-                    b.addPatchKey("\(node.id).separation", lane: 0)
-                    b.emitPatched(PinInstruction(.unprojectZ, dst: z, a: r, imm: [scale, focus, 0, 0]),
-                                  key: "\(node.id).z", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).separation", lane: 0)
-                    b.addPatchKey("\(node.id).focus", lane: 1)
-                }
+                let (xy, z) = b.emitCloud(node, depthReg: r)
                 return [r, xy, z]
             }))
 
@@ -803,5 +776,43 @@ nonisolated enum PaletteLUT {
             }
         }
         return data
+    }
+}
+
+// MARK: - Shared cloud emitter
+extension PinProgramBuilder {
+    /// The depth-source cloud: free/metric position + z ops from the node's
+    /// mode/separation/focus/gain params. Shared by every node that outputs the cloud
+    /// (Depth, Live Depth Model) so the geometry can never diverge between sources.
+    mutating func emitCloud(_ node: GraphNode, depthReg r: Int32) -> (xy: Int32, z: Int32) {
+        let xy = reg(), z = reg()
+        let focus = node.float("focus", 1)
+        if node.option("mode", "metric") == "free" {
+            // FREE: the TDLidar fan, intrinsic-free — XY spreads with z/focus, Z recedes
+            // from FOCUS with GAIN (2.5 ≈ uniform with the lateral scale at sep 1).
+            emitPatched(PinInstruction(.freeXY, dst: xy, a: r,
+                                       imm: [node.float("separation", 1), focus, 0, 0]),
+                        key: "\(node.id).xy", lanes: [0, 1])
+            addPatchKey("\(node.id).separation", lane: 0)
+            addPatchKey("\(node.id).focus", lane: 1)
+            emitPatched(PinInstruction(.unprojectZ, dst: z, a: r,
+                                       imm: [node.float("gain", 2.5), focus, 0, 0]),
+                        key: "\(node.id).z", lanes: [0, 1])
+            addPatchKey("\(node.id).gain", lane: 0)
+            addPatchKey("\(node.id).focus", lane: 1)
+        } else {
+            // METRIC: real camera-intrinsics unprojection to metric XYZ (TDLidar 1:1).
+            // SEPARATION scales BOTH XY and Z — uniform geometry → true perspective.
+            // Needs DEPTHPUSH = 1 (any other value stretches Z only).
+            let scale = node.float("separation", 2.5)
+            emitPatched(PinInstruction(.unprojectXY, dst: xy, a: r, imm: [scale, 0, 0, 0]),
+                        key: "\(node.id).xy", lanes: [0])
+            addPatchKey("\(node.id).separation", lane: 0)
+            emitPatched(PinInstruction(.unprojectZ, dst: z, a: r, imm: [scale, focus, 0, 0]),
+                        key: "\(node.id).z", lanes: [0, 1])
+            addPatchKey("\(node.id).separation", lane: 0)
+            addPatchKey("\(node.id).focus", lane: 1)
+        }
+        return (xy, z)
     }
 }

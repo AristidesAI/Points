@@ -126,13 +126,17 @@ extension NodeRegistry {
 
         registerSpec(NodeSpec(
             id: "live-depth", name: "Live Depth Model", family: .source,
-            outputs: [PortSpec("depth", .fieldFloat)],
+            outputs: [PortSpec("depth", .fieldFloat), PortSpec("position", .fieldVec3),
+                      PortSpec("z", .fieldFloat)],
             params: [.option("model", ["Metric Video DA S", "Depth Anything V2 S", "MoGe-2"], "Metric Video DA S"),
                      .option("lens", ["Wide", "Ultra-wide", "Tele", "Front"], "Wide"),
                      .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
+                     .option("mode", ["free", "metric"], "metric"),
+                     .float("separation", 0...4, 2.5), .float("focus", 0.3...3, 1.0),
+                     .float("gain", 0...3, 2.5),
                      .bool("media", false)],   // set by the node's video/image button — loops baked media instead of live camera
             execution: .interpreterOp,
-            description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS; its presence takes over the depth feed — no wiring needed.",
+            description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS. POSITION + Z are the same free/metric cloud outputs as the Depth node — wire them (or depth) into the patch to take over the feed; an unwired node does nothing.",
             emit: { b, _, node in
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.loadDepth, dst: r,
@@ -141,7 +145,8 @@ extension NodeRegistry {
                 b.addPatchKey("\(node.id).near", lane: 0)
                 b.addPatchKey("\(node.id).far", lane: 1)
                 b.addPatchKey("\(node.id).invert", lane: 2)
-                return [r]
+                let (xy, z) = b.emitCloud(node, depthReg: r)
+                return [r, xy, z]
             }))
 
         registerSpec(NodeSpec(

@@ -49,6 +49,9 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
         if src.extent.width > src.extent.height {
             src = src.oriented(front ? .left : .right)
         }
+        // Selfie-mirror the FRONT lens so camera movement lines up with what you see (move left →
+        // cloud moves left, like a mirror). cx stays 0.5 so the intrinsics survive the flip.
+        if front { src = src.oriented(.upMirrored) }
         // Centre-crop to the pin wall's 3:4 aspect BEFORE inference. The camera delivers 9:16;
         // scale-filling that to the model's square input and painting it on the 3:4 wall squashed
         // everything vertically ("too wide / hydraulic press"). The TrueDepth path never had this
