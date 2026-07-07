@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page.title }} | Points</title>
+  <link rel="stylesheet" href="{{ '/assets/css/just-the-docs.css' | relative_url }}">
+  {% if site.color_scheme == "mono" %}
+  <link rel="stylesheet" href="{{ '/assets/css/color_schemes/mono.css' | relative_url }}">
+  {% endif %}
+</head>
+<body>
+  <canvas id="bg-canvas" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.5;"></canvas>
+  <div style="position:relative;z-index:1;">
+    {{ content }}
+  </div>
+  <script src="{{ '/assets/boids.js' | relative_url }}"></script>
+</body>
+</html>

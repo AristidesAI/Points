@@ -4,100 +4,131 @@ layout: default
 nav_order: 2
 ---
 
-# Getting Started with Points
+# Getting Started
 
-{: .no_toc }
+## The Interface
 
-Points is a visual synthesizer — you build patches by wiring nodes together in a graph. Each node does one thing (read depth, apply a color palette, spin points), and wires carry data between them. The result is a real-time Metal-rendered point cloud.
+Points has three zones:
 
-## Table of contents
-{: .text-delta }
-- TOC
-{:toc}
+| Zone | Location | Purpose |
+|------|----------|---------|
+| **Viewport** | Top 75% | Live 3D point cloud — 200,000 points at 60fps via Metal |
+| **Nodeview** | Bottom bar | Drag nodes from the palette, wire them together on the canvas |
+| **Cameraview** | Bottom bar | Sliders, pads, and buttons for the selected node or global controls |
 
----
+### Navigating the Nodeview
 
-## The Canvas
+The **Nodeview** is the bottom bar where you build your patch:
 
-When you open the app, you land on the **Browser** — pick a template or start blank. After that, you're on the **Stage**:
+1. Tap the **+** button to open the node palette — nodes are organized by family (SOURCE, GRID, FILTER, etc.)
+2. Tap a node to add it to the canvas
+3. Drag from an output port (right side) to an input port (left side) to wire nodes together
+4. Tap any node to select it — its parameters appear in the Cameraview
+5. Long-press a node to delete or duplicate it
 
-| Zone | What It Is |
-|------|-----------|
-| **Viewport** (top ¾) | The live 3D point cloud. 200,000 points rendered at 60fps via Metal. |
-| **Nodebar** (bottom bar) | Drag nodes from the palette onto the canvas. Each node is a card you wire together. |
-| **Camerabar** (control bar) | Sliders, pads, and buttons for the current selection. Param sliders update in real time. |
+### Navigating the Cameraview
+
+The **Cameraview** shows controls for the currently selected node:
+
+- **Sliders** — Adjust float parameters in real time. Changes apply instantly to the GPU pipeline
+- **Option pickers** — Switch between modes (metric/free, thermal/viridis, etc.)
+- **Toggle buttons** — Boolean on/off params
+- **Expose** — Tap the expose icon on any slider to create an input port on the node, letting you wire a signal into it
+
+### Global Controls
+
+The Cameraview also has global pads:
+
+- **BPM** — Global beats-per-minute for clock-synced nodes
+- **Color Mode** — none / video / palette override
+- **Strobe** — Global strobe toggle
+- **Invert** — Global color invert
+
+## Node Structure
+
+Every node follows the same structure:
+
+```
+┌─────────────────────────┐
+│  NODE NAME              │  ← family badge + name
+│  ─────────────────────  │
+│  [param controls]       │  ← toggles/sliders/pickers
+│                         │
+│  ○ input1    output1 ○  │  ← ports (left = input, right = output)
+│  ○ input2    output2 ○  │
+└─────────────────────────┘
+```
+
+A node spec defines:
+- **ID** — Unique string key (e.g. `depth`, `palette`, `spin`)
+- **Family** — Category (SOURCE, GRID, FILTER, SHAPE, MOVE, COLOR, SIGNAL, BODY, TIME, STAGE, OUTPUT)
+- **Inputs/Outputs** — Typed ports that accept specific data types
+- **Params** — Float, bool, or option parameters with ranges
+- **Execution** — GPU (per-pin, field-rate) or CPU (control-rate)
+
+### Port Types
+
+| Type | Description | Direction |
+|------|-------------|-----------|
+| `fieldFloat` | Per-pin float (GPU) | GPU nodes |
+| `fieldVec3` | Per-pin vec3 (GPU) | GPU nodes |
+| `fieldColor` | Per-pin RGBA (GPU) | GPU nodes |
+| `signal` | Single float per frame (CPU) | Control nodes |
+| `trigger` | Event pulse (CPU) | Control nodes |
+| `vec3` | Single vec3 per frame (CPU) | Control nodes |
+| `color` | Single RGBA per frame (CPU) | Control nodes |
+| `domain` | Pin-set handle | Grid nodes |
+| `source` | Depth+color stream bundle | Source node |
+
+### Auto-Adapt
+
+Ports auto-convert when wired:
+- `signal` → `fieldFloat` (broadcasts to every pin)
+- `vec3` → `color` and vice versa
+- `fieldFloat` → `fieldVec3` (splats to all channels)
 
 ## Your First Patch
 
-Let's build the simplest possible patch — depth → pinout → output:
+Build a thermal-colored LiDAR point cloud in 4 steps:
 
-1. **Add a Depth node** — This is your sensor. It reads the LiDAR/TrueDepth/RGB camera and turns it into per-point depth data.
-2. **Add a Pinout node** — This snaps every point to its home grid position and pushes Z by the depth value. Think of it like a pin-screen toy.
-3. **Add Output** — This sends the final position, size, and color to the renderer. Without it, nothing draws.
-4. **Wire them up**:
-   - Depth `position` → Pinout `position`
-   - Depth `z` → Pinout `z`
-   - Pinout `position` → Output `position`
-   - Pinout `z` → Output `z`
+1. **Add Depth** — Source family. Reads the camera and produces per-point depth data
+2. **Add Pinout** — Grid family. Snaps points to grid, pushes Z by depth
+3. **Add Palette** — Color family. Maps depth 0–1 through a color gradient
+4. **Add Output** — Always present. Wire everything into it
 
 ```mermaid
 graph LR
-    D[Depth] -->|position| P[Pinout]
-    D -->|z| P
-    P -->|position| O[Output]
-    P -->|z| O
+    depth[Depth<br/>mode: metric] -->|"depth"| palette[Palette<br/>map: thermal]
+    palette -->|"color"| output[Output.color]
+    depth -->|"position"| pinout[Pinout]
+    depth -->|"z"| pinout
+    pinout -->|"position"| output[Output.position]
 ```
 
-{: .note }
-The Output node is always present — it's the final sink. Everything must route through it to appear on screen.
+### Adding Modulation
 
-## Adding Color
-
-Now let's make it colorful. Add a **Palette** node between Depth and Output:
+Drop in a **Spin** node (Shape family) to rotate continuously:
 
 ```mermaid
 graph LR
-    D[Depth] -->|depth| PAL[Palette<br/>map: thermal]
-    PAL -->|color| O[Output]
-    D -->|position| PI[Pinout]
-    D -->|z| PI
-    PI -->|position| O
-    PI -->|z| O
+    spin[Spin<br/>z: 0.25] -->|"rot"| output[Output.rotation]
+    shape[Shape<br/>type: cube] -->|"shape"| output[Output.shape]
 ```
 
-The Palette node maps the 0–1 depth value through a color gradient (thermal, viridis, plasma, etc.). Wire `palette.color → Output.color`.
+### Adding Audio Reactivity
 
-## Adding Motion
-
-Drop in a **Spin** node to make points rotate continuously:
+Expose a param on any node, then wire audio into it:
 
 ```mermaid
-graph LR
-    SPIN[Spin<br/>z: 0.25 t/s] -->|rot| O[Output]
+graph TD
+    volume[Audio Volume] --> remap[t-Remap<br/>outMin:0.2 outMax:3]
+    remap --> size[Size<br/>base exposed]
+    beat[Beat Detect] --> shockwave[Shockwave<br/>fire port]
 ```
-
-Set Z to 0.25 turns/second. Wire `spin.rot → Output.rotation`. Switch the Shape from sphere to cube to see the spin visibly.
 
 ## Wiring Rules
 
-- **One wire per input port** — An input can only receive from one output. Use a Mix or Add node to combine signals.
-- **Auto-adapt** — You can wire a `signal` into a `fieldFloat` port (it broadcasts to every pin). `vec3 ↔ color` auto-converts.
-- **Exposed params** — Any slider on a node can be "exposed" as an input port. Wire a Time, LFO, or Hand Position node into it for live modulation.
-- **Trigger layer** — Control-rate nodes (If/Then, Envelope, Spring, Threshold) run on the CPU. Wire them into exposed params to create reactive behaviors.
-
-## Naming Conventions
-
-Throughout the app and docs:
-
-| Term | Means |
-|------|-------|
-| Points / dots / circles / spheres | All the same — point cloud points |
-| Nodebar | The bottom bar with the node browser |
-| Camerabar | The bottom bar with sliders, pads, buttons |
-| Pin | One point in the pin-screen grid |
-
-## Next Steps
-
-- Browse the [node reference](/nodes/) for every node's parameters and examples
-- Read the [integrations guide](/integrations) for MIDI, OSC, and NDI setup
-- Learn about [trigger nodes](/nodes/signal#trigger-nodes) for reactive behaviors
+- One wire per input port — use Mix or Add to combine signals
+- Expose any slider to create an input port
+- GPU nodes run per-point; CPU (trigger) nodes run once per frame
+- The Output node is always present — everything routes through it

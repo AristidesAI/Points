@@ -1,0 +1,285 @@
+// Mono Black & White theme — matches Points app UI (sharp rectangles, SF Pro, no color)
+// No rounded corners. No gradients. No purple.
+
+$body-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+$mono-font-family: "SF Mono", "Menlo", "Consolas", monospace;
+
+// Pure mono palette
+$white: #ffffff;
+$black: #000000;
+$grey-100: #f5f5f5;
+$grey-200: #e5e5e5;
+$grey-300: #d4d4d4;
+$grey-400: #a3a3a3;
+$grey-500: #737373;
+$grey-600: #525252;
+$grey-700: #404040;
+$grey-800: #262626;
+$grey-900: #171717;
+$grey-950: #0a0a0a;
+
+$body-background-color: $black;
+$sidebar-color: $grey-950;
+$border-color: $grey-800;
+
+$body-text-color: $grey-300;
+$body-heading-color: $white;
+$nav-child-link-color: $grey-500;
+$search-background-color: $grey-900;
+$search-result-preview-color: $grey-500;
+
+$link-color: $white;
+$btn-primary-color: $white;
+
+$code-background-color: $grey-900;
+$feedback-color: $grey-900;
+
+$nav-width: 280px;
+$nav-width-md: 248px;
+
+$content-width: 800px;
+
+$border-radius: 0px;
+
+$table-background-color: $grey-950;
+$table-border-color: $grey-800;
+$table-stripe-color: rgba(255,255,255,0.02);
+
+// No rounded corners anywhere
+* {
+  border-radius: 0 !important;
+}
+
+// Typography
+body {
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+
+// Sharp rectangular buttons
+.btn, .btn-primary, .btn-green, .btn-outline {
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 8px 20px;
+  border: 1px solid $white;
+  background: transparent;
+  color: $white;
+  border-radius: 0;
+  transition: background 0.1s;
+
+  &:hover {
+    background: $white;
+    color: $black;
+  }
+}
+
+// Mermaid diagrams
+.mermaid {
+  background: $grey-950;
+  border: 1px solid $grey-800;
+  padding: 20px;
+  margin: 20px 0;
+  border-radius: 0;
+
+  svg {
+    max-width: 100%;
+  }
+}
+
+// Code blocks
+pre, code {
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 12px;
+  border-radius: 0;
+  background: $grey-950;
+  border: 1px solid $grey-800;
+}
+
+// Tables — sharp
+table {
+  border: 1px solid $grey-800;
+}
+
+th, td {
+  border: 1px solid $grey-800;
+  padding: 8px 14px;
+  font-size: 12px;
+}
+
+th {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: $grey-400;
+}
+
+// Navigation
+.site-nav {
+  padding-top: 0;
+}
+
+.nav-list .nav-list-item .nav-list-link {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+
+  &:hover {
+    background-image: none;
+    background: $grey-800;
+  }
+
+  &.active {
+    background-image: none;
+    background: $white;
+    color: $black;
+    font-weight: 600;
+  }
+}
+
+.nav-list .nav-list-item .nav-list-expander {
+  color: $grey-500;
+}
+
+// Section headers in sidebar
+.nav-category {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: $grey-600;
+  padding: 12px 16px 4px;
+}
+
+// Search
+.search-input {
+  border: 1px solid $grey-800;
+  background: $grey-900;
+  color: $white;
+  font-family: "SF Mono", monospace;
+  font-size: 12px;
+
+  &:focus {
+    border-color: $white;
+    outline: none;
+    box-shadow: none;
+  }
+}
+
+// Scrollbar
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: $black; }
+::-webkit-scrollbar-thumb {
+  background: $grey-700;
+  &:hover { background: $grey-500; }
+}
+
+// Footer
+.site-footer {
+  border-top: 1px solid $grey-800;
+  color: $grey-600;
+  font-size: 11px;
+}
+
+// Back to top
+.back-to-top {
+  background: $grey-900;
+  color: $grey-400;
+  border: 1px solid $grey-700;
+  &:hover { background: $white; color: $black; }
+}
+
+// Main content area
+.main-content {
+  h1 { font-size: 24px; }
+  h2 { font-size: 18px; margin-top: 40px; border-bottom: 1px solid $grey-800; padding-bottom: 8px; }
+  h3 { font-size: 14px; margin-top: 28px; }
+  p, li { line-height: 1.7; }
+  a { text-decoration: underline; text-underline-offset: 3px; }
+}
+
+// Node operator menu (TouchDesigner style)
+.op-menu {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1px;
+  background: $grey-800;
+  border: 1px solid $grey-800;
+  margin: 20px 0;
+}
+
+.op-category {
+  background: $grey-950;
+  padding: 0;
+
+  .op-category-header {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: $grey-500;
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid $grey-800;
+  }
+
+  .op-link {
+    display: block;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: $grey-300;
+    text-decoration: none;
+    font-family: "SF Mono", "Menlo", monospace;
+    transition: background 0.05s;
+
+    &:hover {
+      background: $white;
+      color: $black;
+      text-decoration: none;
+    }
+  }
+}
+
+// Param table (node detail pages)
+.param-table {
+  width: 100%;
+  border: 1px solid $grey-800;
+  margin: 16px 0;
+
+  th { background: $grey-900; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+}
+
+// Port tags
+.port-tag {
+  display: inline-block;
+  font-family: "SF Mono", monospace;
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid $grey-700;
+  margin: 2px;
+  text-transform: uppercase;
+}
+
+.port-in { border-left: 2px solid $grey-400; }
+.port-out { border-right: 2px solid $white; }
+
+// Breadcrumb
+.breadcrumb-nav {
+  font-size: 11px;
+  color: $grey-500;
+  margin-bottom: 24px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+
+  a { color: $grey-400; text-decoration: none; }
+  a:hover { color: $white; }
+}
