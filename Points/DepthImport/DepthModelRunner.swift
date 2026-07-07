@@ -16,13 +16,12 @@ struct LiveModel: Sendable, Equatable {
     var metric: Bool = false // METRIC models output true metres (kept for reference; still normalised)
     var orient: UInt32 = 0  // per-model sensor→grid orientation bits (1 swapUV, 2 flipU, 4 flipV) —
                             // some conversions come out rotated/180°; calibration knob (see below).
-    // Dropped only the two slow scene-specific metric models (DA2 Metric Indoor/Outdoor). Kept the
-    // fast general ones + MoGe-2 (per testing — that one's wanted back).
+    // Dropped the two slow scene-specific metric models (DA2 Metric Indoor/Outdoor) and DA v3
+    // (removed per testing). Kept the fast general ones + MoGe-2 (per testing — wanted back).
     static let all: [LiveModel] = [
         LiveModel(name: "Metric Video DA S",   resource: "MetricVideoDA_S",           inverse: false, metric: true, orient: 0),
-        LiveModel(name: "Depth Anything V3 S", resource: "DepthAnythingV3_small_504",  inverse: false, orient: 0),
         LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",    inverse: true,  orient: 6),
-        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",      inverse: false, orient: 6),
+        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",      inverse: false, metric: true, orient: 6),
     ]
     static func named(_ n: String) -> LiveModel { all.first { $0.name == n } ?? all[0] }
     /// The models offered in the import page + live node pickers (display names).
@@ -78,6 +77,7 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
     private var inputName = "image", outputName = "depth"
     private var inputW = 518, inputH = 518
     private var inverse = false
+    private var metric = false
     private var loadedResource = ""
     private var smLo = Float.nan, smHi = Float.nan     // temporally-smoothed depth range (stops breathing)
     private var prevOut: [Float] = []                  // previous frame's display metres (per-pixel EMA)
@@ -93,34 +93,69 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         guard let l = Self.loaded(m) else { return false }
         lock.lock()
         model = l.model; inputName = l.inputName; inputW = l.inputW; inputH = l.inputH; outputName = l.outputName
-        inverse = m.inverse; loadedResource = m.resource
+        inverse = m.inverse; metric = m.metric; loadedResource = m.resource
         smLo = .nan; smHi = .nan; prevOut = []         // new model → forget the old range + EMA history
         lock.unlock()
         return true
     }
 
-    /// CGImage → display-metre depth (row-major) + (w, h). Nil if not loaded or inference fails.
+    /// CGImage → metre depth (row-major) + (w, h). Nil if not loaded or inference fails.
+    /// Metric models return RAW metres (EMA-smoothed); relative models are normalised for display.
     func depth(_ cg: CGImage) -> ([Float], Int, Int)? {
         lock.lock()
         guard let model else { lock.unlock(); return nil }
-        let inName = inputName, outName = outputName, iw = inputW, ih = inputH, inv = inverse
+        let inName = inputName, outName = outputName, iw = inputW, ih = inputH
+        let inv = inverse, met = metric
         lock.unlock()
         guard let feat = try? MLFeatureValue(cgImage: cg, pixelsWide: iw, pixelsHigh: ih,
                                              pixelFormatType: kCVPixelFormatType_32ARGB, options: nil),
               let provider = try? MLDictionaryFeatureProvider(dictionary: [inName: feat]),
               let out = try? model.prediction(from: provider),
               let dv = out.featureValue(for: outName) else { return nil }
-        return metres(dv, inverse: inv)
+        // MoGe-2 extras: `mask` marks valid pixels (depth is arbitrary garbage where mask == 0 —
+        // rendering it unmasked was the "garbled" cloud), `metric_scale` lifts its relative depth
+        // to metres. Both nil for every other model.
+        let mask = out.featureValue(for: "mask")?.multiArrayValue
+        let mScale = out.featureValue(for: "metric_scale")?.multiArrayValue
+        return metres(dv, inverse: inv, metric: met, mask: mask, metricScale: mScale)
     }
 
-    // MARK: depth feature → display metres
+    // MARK: depth feature → metres
 
-    private func metres(_ v: MLFeatureValue, inverse: Bool) -> ([Float], Int, Int)? {
+    private func metres(_ v: MLFeatureValue, inverse: Bool, metric: Bool,
+                        mask: MLMultiArray?, metricScale: MLMultiArray?) -> ([Float], Int, Int)? {
         var raw: [Float] = []; var w = 0, h = 0
         if let a = v.multiArrayValue { (raw, w, h) = arrayFloats(a) }
         else if let px = v.imageBufferValue, let f = imageFloats(px) { (raw, w, h) = f }
         else { return nil }
         guard w > 0, h > 0, raw.count >= w * h else { return nil }
+        // Valid-pixel mask (MoGe-2): zero out invalid pixels BEFORE any range/EMA work.
+        if let mask {
+            let (mf, mw, mh) = arrayFloats(mask)
+            if mw == w, mh == h {
+                for i in 0..<(w * h) where mf[i] < 0.5 { raw[i] = 0 }
+            }
+        }
+        if metric {
+            // METRIC models (TDLidar plan §2d): feed RAW metres — the same contract as the
+            // TrueDepth/LiDAR feed — with a per-pixel EMA on the metres to stop the cloud
+            // breathing. NO percentile normalisation (that destroyed absolute scale and was
+            // the core of the garbled metric output).
+            let s: Float = metricScale.flatMap { $0.count >= 1 ? $0[0].floatValue : nil } ?? 1
+            lock.lock(); let prev = prevOut; lock.unlock()
+            let usePrev = prev.count == w * h
+            let a: Float = 0.55
+            var out = [Float](repeating: 0, count: w * h)
+            for i in 0..<(w * h) {
+                let x = raw[i] * s
+                guard x.isFinite, x > 0.02 else { out[i] = 0; continue }   // hole → 0 → culled
+                var m = x
+                if usePrev, prev[i] > 0 { m = a * m + (1 - a) * prev[i] }
+                out[i] = m
+            }
+            lock.lock(); prevOut = out; lock.unlock()
+            return (out, w, h)
+        }
         // Robust range (2nd–98th percentile of valid pixels) rejects sky/hole outliers that used to
         // blow out raw min/max → the scene compresses to ~flat and folds ("wraps around itself").
         guard let (loP, hiP) = robustRange(raw, count: w * h) else { return nil }

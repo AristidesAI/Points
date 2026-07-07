@@ -13,6 +13,7 @@ struct CameraFrame {
     var centerY: Float = 0
     var orbitX: Float = 0      // yaw around the pivot (radians) — joystick
     var orbitY: Float = 0      // pitch around the pivot (radians)
+    var dolly: Float = 0       // −1 further … +1 closer (Orbit Cube Z); scales the eye distance
 }
 
 /// One frame's program snapshot handed to the renderer.
@@ -45,6 +46,7 @@ struct ProgramFrame {
     var accumFrames: Float = 0                    // Accumulate node (≤1 = off)
     var jbuFactor: Float = 0                      // Detail Upsample node (≤1 = off)
     var showGizmo = false                         // Orbit Cube node present → draw the orbit-pivot cube
+    var gizmoPos: SIMD3<Float> = .zero            // world position of the Orbit Cube handle (moves with its joystick)
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -154,6 +156,8 @@ final class GraphRuntime {
     private var controlOrder: [GraphNode] = []
     private var controlValues: [String: SIMD4<Float>] = [:]   // "nodeID.port" → value
     private var controlState: [String: SIMD4<Float>] = [:]
+    private var camEase = SIMD4<Float>(0, 0, 0, 0)            // smoothed orbitX, orbitY, centerX, centerY
+    private var dollyEase: Float = 0                          // smoothed dolly (Camera SMOOTH)
     // §13 v2 — per-host nested trigger subgraphs: cached control order + persistent per-host state.
     private var nestedOrders: [String: [GraphNode]] = [:]                       // hostID → nested control order
     private var nestedControlState: [String: [String: SIMD4<Float>]] = [:]      // hostID → nestedID → state
@@ -1140,7 +1144,25 @@ final class GraphRuntime {
             cam.fov = p("fov", 55); cam.zoom = p("zoom", 1)
             cam.parallax = p("parallax", 0.5); cam.depthPush = p("depthPush", 1)
             cam.centerX = p("centerX", 0); cam.centerY = p("centerY", 0)
-            cam.orbitX = p("orbitX", 0); cam.orbitY = p("orbitY", 0)
+            // ORBIT ◇: one wire from an Orbit Cube carries yaw/pitch/dolly in x/y/z. Else the static jog value.
+            if let w = graph.wireInto(c.id, "orbit") {
+                let o = controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero
+                cam.orbitX = o.x; cam.orbitY = o.y; cam.dolly = o.z
+            } else {
+                cam.orbitX = p("orbitX", 0); cam.orbitY = p("orbitY", 0)
+            }
+            // SMOOTH: ease the view toward its target so jog/joystick moves glide instead of snapping.
+            let smooth = c.float("smooth", 0)
+            if smooth > 0.001 {
+                let a = 1 - exp(-dt / max(smooth * 0.5, 0.0001))   // time constant ≤0.5s
+                camEase.x += (cam.orbitX - camEase.x) * a; camEase.y += (cam.orbitY - camEase.y) * a
+                camEase.z += (cam.centerX - camEase.z) * a; camEase.w += (cam.centerY - camEase.w) * a
+                dollyEase += (cam.dolly - dollyEase) * a
+                cam.orbitX = camEase.x; cam.orbitY = camEase.y
+                cam.centerX = camEase.z; cam.centerY = camEase.w; cam.dolly = dollyEase
+            } else {
+                camEase = [cam.orbitX, cam.orbitY, cam.centerX, cam.centerY]; dollyEase = cam.dolly
+            }
         }
         // FILTER nodes configure capture/EMA by presence (their wires pass depth through).
         let ema = graph.nodes.first { $0.specID == "ema-smooth" }
@@ -1209,6 +1231,16 @@ final class GraphRuntime {
         if let n = graph.nodes.first(where: { $0.specID == "vignette" }) { post.w = n.float("amount", 0.3) }
         let ghost = graph.nodes.first { $0.specID == "render-settings" }
             .map { $0.option("blend", "solid") == "ghost" } ?? false
+
+        // Orbit Cube handle → gizmo world position (moves with its joystick, so you see where it sits).
+        // x/y are orbit turns/pitch, z is dolly; scale into the cloud so the cube reads on-screen.
+        var gizmo = SIMD3<Float>.zero
+        let hasCube = graph.nodes.contains { $0.specID == "orbit-cube" }
+        if let cube = graph.nodes.first(where: { $0.specID == "orbit-cube" }) {
+            let yaw = (time * cube.float("spin", 0) + cube.float("x", 0)) * 2 * .pi
+            gizmo = [sin(yaw) * 0.9, min(max(cube.float("y", 0), -1), 1) * 0.9,
+                     min(max(cube.float("z", 0), -1), 1) * 0.6]
+        }
 
         return ProgramFrame(instructions: workingInstructions,
                             stateStride: compiled.stateFloatsPerPin,

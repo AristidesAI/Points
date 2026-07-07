@@ -701,25 +701,29 @@ final class NodeRegistry: @unchecked Sendable {
     private func registerStage() {
         register(NodeSpec(
             id: "camera", name: "Camera", family: .stage,
+            inputs: [PortSpec("orbit", .signal)],   // ◇ — wire an Orbit Cube here to drive the view angle
             params: [.float("fov", 15...110, 60), .float("zoom", 0.5...2, 1),
                      .float("parallax", 0...1, 0.5), .float("depthPush", 0...3, 1),
                      .float("centerX", -1...1, 0), .float("centerY", -1...1, 0),
-                     .float("orbitX", -0.9...0.9, 0), .float("orbitY", -0.9...0.9, 0)],
+                     .float("orbitX", -100...100, 0), .float("orbitY", -1.5...1.5, 0),
+                     .float("smooth", 0...1, 0)],   // 0 = hard move-then-stop, >0 = eased motion
             execution: .render,
-            description: "The camera, always orbiting the middle of the cloud so the 3D pins warp around that centre. FOV flat↔wide, ZOOM frames the cloud, PARALLAX dials perspective warp, DEPTH PUSH exaggerates how far pins travel, CENTRE nudges the pivot, ORBIT steps the view angle (joystick). Read straight by the renderer — not part of the per-pin chain. Every param can also be DRIVEN by wiring a control node into its exposed ◇."))
+            description: "The camera, always orbiting the middle of the cloud so the 3D pins warp around that centre. FOV flat↔wide, ZOOM frames the cloud, PARALLAX dials perspective warp, DEPTH PUSH exaggerates how far pins travel, CENTRE nudges the pivot, ORBIT walks the view angle (unbounded — full 360). SMOOTH eases jog/joystick moves. Wire an Orbit Cube into the ORBIT ◇ to drive yaw/pitch/dolly from a movable 3D handle. Read straight by the renderer — not part of the per-pin chain."))
 
         register(NodeSpec(
             id: "orbit-cube", name: "Orbit Cube", family: .stage,
-            outputs: [PortSpec("orbitX", .signal), PortSpec("orbitY", .signal)],
-            params: [.float("spin", -1...1, 0.1),      // turns / second (auto-turntable)
-                     .float("yaw", -1...1, 0),          // manual yaw offset (turns)
-                     .float("pitch", -1...1, 0.15)],    // tilt up/down (−1…1 → ±~86°)
+            outputs: [PortSpec("orbit", .signal)],   // one wire → Camera's ORBIT ◇ (yaw=.x, pitch=.y, dolly=.z)
+            params: [.float("x", -100...100, 0),      // horizontal orbit (turns) — joystick L/R + preset buttons
+                     .float("y", -1...1, 0),          // vertical orbit / pitch — joystick U/D
+                     .float("z", -1...1, 0),          // dolly in/out — Z buttons (forward/back)
+                     .float("spin", -1...1, 0)],       // turns / second added to yaw (auto-turntable; 0 = still)
             execution: .control,
-            description: "Turntable driver for the Camera. Expose the Camera's orbitX / orbitY ◇ and wire ORBIT X → orbitX, ORBIT Y → orbitY; the view then auto-orbits. SPIN = turns per second, YAW = a fixed angle offset, PITCH = tilt. Feed SPIN/YAW from an LFO or audio for reactive moves.",
+            description: "A movable 3D handle that drives the Camera's orbit. Wire ORBIT → the Camera's ORBIT ◇ (one wire). Move the cube with the joystick (L/R = yaw, U/D = pitch) and the Z buttons (forward/back = dolly); the red gizmo shows where it sits. Preset buttons snap to fixed angles. SPIN adds a continuous turntable. Feed SPIN/X from an LFO or audio for reactive moves.",
             controlEval: { node, _, ctx in
-                let yaw = (ctx.time * node.float("spin", 0.1) + node.float("yaw", 0)) * 2 * .pi
-                let pitch = node.float("pitch", 0.15) * 1.5
-                return [[yaw, yaw, yaw, yaw], [pitch, pitch, pitch, pitch]]
+                let yaw = (ctx.time * node.float("spin", 0) + node.float("x", 0)) * 2 * .pi
+                let pitch = min(max(node.float("y", 0), -1), 1) * 1.5
+                let dolly = min(max(node.float("z", 0), -1), 1)
+                return [[yaw, pitch, dolly, 0]]
             }))
 
         register(NodeSpec(
