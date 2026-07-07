@@ -44,6 +44,7 @@ struct ProgramFrame {
     var smoothRadius: Float = 0                   // Smooth Surface node (0 = off)
     var accumFrames: Float = 0                    // Accumulate node (≤1 = off)
     var jbuFactor: Float = 0                      // Detail Upsample node (≤1 = off)
+    var showGizmo = false                         // Orbit Cube node present → draw the orbit-pivot cube
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -1223,7 +1224,8 @@ final class GraphRuntime {
                             material: material, lookAt: lookAt, stem: stem,
                             uvTransform: uvT, edgePolicy: edge, domain: domain,
                             despeckleGap: despeckle, smoothRadius: smoothR, accumFrames: accum,
-                            jbuFactor: jbu)
+                            jbuFactor: jbu,
+                            showGizmo: graph.nodes.contains { $0.specID == "orbit-cube" })
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.

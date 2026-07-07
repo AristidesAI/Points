@@ -68,6 +68,12 @@ struct PinUniforms {
     var camIntrin: SIMD4<Float> = [1, 1, 0.5, 0.5]  // fx_n, fy_n, cx_n, cy_n (METRIC unproject)
 }
 
+// Field order MUST match GizmoUniforms in Shaders.metal.
+struct GizmoUniformsSwift {
+    var mvp: simd_float4x4
+    var color: SIMD4<Float> = [1, 0.28, 0.28, 1]
+}
+
 /// Instanced pin-wall renderer. Fixed camera, Z=0 wall, depth pulls pins toward the camera.
 /// ponytail: single-file MVP renderer — domain warps / node engine / shape morphs come later.
 nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
@@ -78,6 +84,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var pipeline: MTLRenderPipelineState!
     private var ghostPipeline: MTLRenderPipelineState!    // Render Settings GHOST: additive, no depth
     private var postPipeline: MTLRenderPipelineState!     // composite: background/bloom/vignette/grain
+    private var gizmoPipeline: MTLRenderPipelineState!    // orbit-pivot cube marker
     private var brightPipeline: MTLComputePipelineState!  // bloom bright-pass
     private var bloomBlur: MPSImageGaussianBlur!
     private var emaPipeline: MTLComputePipelineState!
@@ -704,6 +711,15 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         post.depthAttachmentPixelFormat = .depth32Float
         postPipeline = try! device.makeRenderPipelineState(descriptor: post)
 
+        // Orbit-pivot gizmo (small cube at the orbit centre). Same mesh vertex layout as the pins.
+        let giz = MTLRenderPipelineDescriptor()
+        giz.vertexFunction = lib.makeFunction(name: "gizmo_vertex")
+        giz.fragmentFunction = lib.makeFunction(name: "gizmo_fragment")
+        giz.colorAttachments[0].pixelFormat = .bgra8Unorm
+        giz.depthAttachmentPixelFormat = .depth32Float
+        giz.vertexDescriptor = vd
+        gizmoPipeline = try! device.makeRenderPipelineState(descriptor: giz)
+
         emaPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_ema")!)
         fillPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_fill_holes")!)
         despecklePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_despeckle")!)
@@ -776,6 +792,24 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         enc.drawIndexedPrimitives(type: .triangle, indexCount: capMesh.indexCount,
                                   indexType: .uint16, indexBuffer: capMesh.indices,
                                   indexBufferOffset: 0, instanceCount: actual)
+
+        // Orbit-pivot gizmo: a small red cube at the camera's orbit centre (Z=0 plane) so you can see
+        // — and orbit around — where the Orbit Cube node points. Occluded properly by nearer pins.
+        if frame.showGizmo {
+            let s: Float = 0.09
+            var model = matrix_identity_float4x4
+            model.columns.0.x = s; model.columns.1.y = s; model.columns.2.z = s
+            model.columns.3 = SIMD4(frame.camera.centerX, frame.camera.centerY, 0, 1)
+            var g = GizmoUniformsSwift(mvp: u.viewProj * model)
+            enc.setRenderPipelineState(gizmoPipeline)
+            enc.setDepthStencilState(depthState)
+            enc.setCullMode(.none)
+            enc.setVertexBuffer(stemBox.vertices, offset: 0, index: 0)
+            enc.setVertexBytes(&g, length: MemoryLayout<GizmoUniformsSwift>.stride, index: 1)
+            enc.setFragmentBytes(&g, length: MemoryLayout<GizmoUniformsSwift>.stride, index: 1)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: stemBox.indexCount,
+                                      indexType: .uint16, indexBuffer: stemBox.indices, indexBufferOffset: 0)
+        }
         enc.endEncoding()
     }
 

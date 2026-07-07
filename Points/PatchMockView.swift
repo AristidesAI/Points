@@ -1258,6 +1258,42 @@ struct NodeCardView: View {
     }
 }
 
+// MARK: - Orbit Cube node controls (preset view-angle buttons)
+
+struct OrbitCubeControls: View {
+    let runtime: GraphRuntime
+    let nodeID: String
+    // Two rows of preset yaw angles (degrees) around the full circle — tap to SNAP the view to that
+    // angle and stop the auto-spin. Fine-tune with the SPIN / PITCH sliders below.
+    private let rows: [[Int]] = [[0, 45, 90, 135], [180, -135, -90, -45]]
+    private var current: Int { Int((runtime.activeGraph.node(nodeID)?.float("yaw", 0) ?? 0) * 360) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("VIEW ANGLE").font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 6) {
+                    ForEach(row, id: \.self) { deg in
+                        let on = current == deg
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            runtime.setParam(nodeID, "yaw", Float(deg) / 360)   // turns
+                            runtime.setParam(nodeID, "spin", 0)                 // snap → stop auto-orbit
+                        } label: {
+                            Text("\(deg)°").font(.system(size: 12, weight: .semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 9)
+                                .background(on ? Theme.text : Theme.panel)
+                                .foregroundStyle(on ? Color.black : Theme.text)
+                                .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+    }
+}
+
 // MARK: - Live Depth Model node controls (model + camera horizontal-scroll switchers)
 
 struct LiveDepthControls: View {
@@ -1401,8 +1437,12 @@ struct NodeSettingsBar: View {
                     if spec.id == "live-depth" {
                         LiveDepthControls(runtime: runtime, nodeID: node.id)
                     }
+                    if spec.id == "orbit-cube" {
+                        OrbitCubeControls(runtime: runtime, nodeID: node.id)
+                    }
                     // Camera's orbit/center are driven by the jog rows above — don't duplicate them as sliders.
-                    let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY"] : []
+                    let jogged: Set<String> = spec.id == "camera" ? ["orbitX", "orbitY", "centerX", "centerY"]
+                        : (spec.id == "orbit-cube" ? ["yaw"] : [])   // yaw is the preset buttons above
                     let floats = spec.params.filter { $0.range != nil && !jogged.contains($0.name) }
                     if floats.count > 4 {
                         // Param-heavy nodes (Noise…): compact grid, up to 3 sliders per row,

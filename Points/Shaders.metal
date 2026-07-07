@@ -483,6 +483,22 @@ struct VOut {
     float3 wpos;   // world-space position for the Light node (point/spot falloff)
 };
 
+// ---- Orbit-pivot gizmo: a small solid cube at the camera's orbit centre ----
+struct GizmoUniforms { float4x4 mvp; float4 color; };
+struct GizmoVOut { float4 pos [[position]]; float3 nrm; };
+
+vertex GizmoVOut gizmo_vertex(VIn vin [[stage_in]], constant GizmoUniforms &G [[buffer(1)]]) {
+    GizmoVOut o;
+    o.pos = G.mvp * float4(vin.pos, 1.0);
+    o.nrm = vin.nrm;
+    return o;
+}
+fragment float4 gizmo_fragment(GizmoVOut in [[stage_in]], constant GizmoUniforms &G [[buffer(1)]]) {
+    // simple top-lit shade so the cube reads as 3D
+    float l = 0.55 + 0.45 * clamp(dot(normalize(in.nrm), normalize(float3(0.4, 0.8, 0.5))), 0.0, 1.0);
+    return float4(G.color.rgb * l, G.color.a);
+}
+
 vertex VOut pin_vertex(VIn vin [[stage_in]],
                        uint iid [[instance_id]],
                        constant Uniforms &U [[buffer(1)]],
