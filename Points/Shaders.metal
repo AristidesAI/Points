@@ -147,6 +147,11 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                         uint gid [[thread_position_in_grid]]) {
     if (gid >= U.count) return;
     constexpr sampler smp(filter::linear, address::clamp_to_edge);
+    // DEPTH reads use NEAREST: linear filtering at a silhouette averages face depth with hole
+    // ZEROS → fabricated 0.1–0.3 m values that pass the z-validity check and render as giant
+    // near-camera spheres flashing at the hole boundary. TDLidar reads exact texels (per-pixel
+    // compute) — nearest matches it 1:1. Color/palette keep linear.
+    constexpr sampler dsmp(filter::nearest, address::clamp_to_edge);
 
     uint col = gid % U.cols;
     uint row = gid / U.cols;
@@ -186,12 +191,12 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
     // background. Runs in BOTH free & pinout, independent of any node.
     {
         float2 texel = float2(1.0 / float(depthTex.get_width()), 1.0 / float(depthTex.get_height()));
-        float zC = depthTex.sample(smp, duv).r;
+        float zC = depthTex.sample(dsmp, duv).r;
         if (zC > 0.05 && isfinite(zC)) {
-            float zL = depthTex.sample(smp, duv - float2(texel.x, 0.0)).r;
-            float zR = depthTex.sample(smp, duv + float2(texel.x, 0.0)).r;
-            float zU = depthTex.sample(smp, duv - float2(0.0, texel.y)).r;
-            float zD = depthTex.sample(smp, duv + float2(0.0, texel.y)).r;
+            float zL = depthTex.sample(dsmp, duv - float2(texel.x, 0.0)).r;
+            float zR = depthTex.sample(dsmp, duv + float2(texel.x, 0.0)).r;
+            float zU = depthTex.sample(dsmp, duv - float2(0.0, texel.y)).r;
+            float zD = depthTex.sample(dsmp, duv + float2(0.0, texel.y)).r;
             if (isfinite(zL) && isfinite(zR) && isfinite(zU) && isfinite(zD)) {
                 float lo = min(min(zL, zR), min(zU, zD));
                 float hi = max(max(zL, zR), max(zU, zD));
@@ -210,7 +215,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             case 0: i = P.instrCount; write = false; break;                    // halt
             case 1: r = ins.imm; break;                                       // const
             case 2: {                                                          // loadDepth(near,far,invert)
-                float raw = depthTex.sample(smp, duv).r;
+                float raw = depthTex.sample(dsmp, duv).r;
                 bool valid = raw > 0.05 && isfinite(raw);
                 // No upper gate: pins closer than NEAR keep pushing forward (t > 1) instead of
                 // plateauing at the wall — the "goes flat past a certain distance" cap is gone.
@@ -314,7 +319,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 // TDLidar front point-cloud fan, intrinsic-free: XY spreads with z/focus so the
                 // cloud sits on the pinout grid at the focus depth and fans into a frustum off it.
                 // imm = (separation, focusM, 0, 0). Culls live in the Grazing Cull FILTER node (op 45).
-                float rawZ = depthTex.sample(smp, duv).r;
+                float rawZ = depthTex.sample(dsmp, duv).r;
                 bool valid = rawZ > 0.05 && isfinite(rawZ);
                 if (!valid) { r = float4(0.0); keep = 0.0; break; }
                 // fan: sensor-space displacement scaled by z/focus, mapped back to screen axes
@@ -332,7 +337,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 // Because X/Y are TRUE metres, an object keeps its real size — so when it moves away
                 // (Z grows) the fixed perspective camera makes it recede + shrink, like TDLidar.
                 // imm.x = scale (metres → view units). camIntrin = fx_n,fy_n,cx_n,cy_n (normalized).
-                float z = depthTex.sample(smp, duv).r;
+                float z = depthTex.sample(dsmp, duv).r;
                 if (!(z > 0.02) || !isfinite(z)) { r = float4(0.0); keep = 0.0; break; }
                 float2 m = float2((duv.x - U.camIntrin.z) / max(U.camIntrin.x, 1e-4),
                                   (duv.y - U.camIntrin.w) / max(U.camIntrin.y, 1e-4)) * z;
@@ -345,7 +350,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
             }
             case 48: {                                                          // unprojectZ (METRIC mode)
                 // Metric depth → world Z, framed so nearer = forward. imm.x = scale, imm.y = zRef.
-                float z = depthTex.sample(smp, duv).r;
+                float z = depthTex.sample(dsmp, duv).r;
                 if (!(z > 0.02) || !isfinite(z)) { r = float4(0.0); break; }
                 r = float4((ins.imm.y - z) * ins.imm.x);         // (zRef − z)·scale; ×depthPush in the vertex
                 break;
@@ -356,7 +361,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 // imm = (grazing01, edgeThreshM, gateM, baselineTexels).
                 // ponytail: principal point ≈ frame centre; rays use span 1.2 (~63° TrueDepth hFOV).
                 r = A;
-                float rawZ = depthTex.sample(smp, duv).r;
+                float rawZ = depthTex.sample(dsmp, duv).r;
                 if (!(rawZ > 0.05) || !isfinite(rawZ)) break;
                 // BASELINE slider: per-pixel sensor noise over a 1-texel step (~1 mm lateral at
                 // 0.5 m) swings the normal wildly, so flat frontal areas culled random flickering
@@ -364,10 +369,10 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 // edge LINES still read a big spread, so they still cull.
                 float2 texel = max(ins.imm.w, 1.0) * float2(1.0 / float(depthTex.get_width()),
                                                             1.0 / float(depthTex.get_height()));
-                float zL = depthTex.sample(smp, duv - float2(texel.x, 0)).r;
-                float zR = depthTex.sample(smp, duv + float2(texel.x, 0)).r;
-                float zU = depthTex.sample(smp, duv - float2(0, texel.y)).r;
-                float zD = depthTex.sample(smp, duv + float2(0, texel.y)).r;
+                float zL = depthTex.sample(dsmp, duv - float2(texel.x, 0)).r;
+                float zR = depthTex.sample(dsmp, duv + float2(texel.x, 0)).r;
+                float zU = depthTex.sample(dsmp, duv - float2(0, texel.y)).r;
+                float zD = depthTex.sample(dsmp, duv + float2(0, texel.y)).r;
                 bool nbrOK = isfinite(zL) && isfinite(zR) && isfinite(zU) && isfinite(zD)
                              && zL > 0.05 && zR > 0.05 && zU > 0.05 && zD > 0.05;
                 if (!nbrOK) break;
