@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Points — Visual LiDAR Synthesizer</title>
+<style>
+:root {
+  --bg: #0E0E0E;
+  --panel: #181818;
+  --line: #2E2E2E;
+  --text: #F2F2F2;
+  --text2: #8A8A8A;
+  --accent: #FFFFFF;
+  --fs: 13px;
+  --fm: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  --ff: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
+  --src: #E06C60; --grd: #E0995F; --flt: #E0453A; --shp: #C3D05E;
+  --mov: #6FCE7D; --col: #D86FC0; --sig: #CFCFCF; --bod: #5FD0CD;
+  --tim: #9D86E8; --stg: #6F9FDD; --out: #3A86FF; --tls: #909090;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--ff);background:var(--bg);color:var(--text);font-size:var(--fs);line-height:1.55;overflow-x:hidden}
+#bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.5}
+::selection{background:var(--accent);color:var(--bg)}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--line)}
+
+#app{position:relative;z-index:1;display:flex;min-height:100vh}
+#sidebar{width:260px;min-width:260px;background:var(--bg);border-right:1px solid var(--line);position:fixed;top:0;left:0;bottom:0;overflow-y:auto;z-index:10;padding:24px 0}
+#sidebar .logo{font-family:var(--fm);font-size:16px;font-weight:700;letter-spacing:.04em;padding:0 20px 20px;border-bottom:1px solid var(--line);margin-bottom:12px;color:var(--accent);text-transform:uppercase}
+#sidebar .logo span{font-size:10px;display:block;color:var(--text2);font-weight:400;letter-spacing:.12em;margin-top:2px}
+
+.nav-section{margin-bottom:4px}
+.nav-cat{font-family:var(--fm);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.14em;padding:10px 20px 4px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.nav-cat .dot{width:6px;height:6px;display:inline-block;flex-shrink:0}
+.nav-links{display:none;padding:0 0 4px}
+.nav-section.open .nav-links{display:block}
+.nav-links a{display:block;padding:3px 20px 3px 34px;font-size:12px;color:var(--text2);text-decoration:none;font-family:var(--fm);transition:all .08s;border-left:2px solid transparent}
+.nav-links a:hover,.nav-links a.active{color:var(--accent);background:rgba(255,255,255,.04);border-left-color:var(--accent)}
+
+#content{margin-left:260px;padding:48px 56px 80px;max-width:820px;width:100%}
+#content section{display:none}
+#content section.active{display:block}
+
+h1{font-family:var(--fm);font-size:22px;font-weight:700;letter-spacing:-.01em;margin-bottom:8px;text-transform:uppercase}
+h2{font-family:var(--fm);font-size:14px;font-weight:600;letter-spacing:.02em;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line);text-transform:uppercase}
+h3{font-family:var(--fm);font-size:12px;font-weight:600;letter-spacing:.04em;margin:24px 0 8px;text-transform:uppercase}
+p{margin:8px 0;color:var(--text2)}
+a{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+a:hover{text-decoration:none}
+
+.tag{display:inline-block;font-family:var(--fm);font-size:9px;padding:1px 8px;border:1px solid var(--line);letter-spacing:.06em;text-transform:uppercase;margin-right:4px}
+
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
+th,td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--line)}
+th{font-family:var(--fm);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text2)}
+tr:hover td{background:rgba(255,255,255,.02)}
+
+.mermaid{background:transparent;margin:16px 0;position:relative}
+.mermaid svg{max-width:100%}
+.mermaid .node rect,.mermaid .node circle,.mermaid .node polygon{transition:stroke .15s;cursor:pointer}
+.mermaid .node:hover rect,.mermaid .node:hover circle,.mermaid .node:hover polygon{stroke:var(--accent)!important;stroke-width:2px!important}
+
+.tooltip{position:fixed;background:var(--panel);border:1px solid var(--line);padding:10px 14px;font-size:11px;font-family:var(--fm);max-width:280px;z-index:100;pointer-events:none;opacity:0;transition:opacity .1s;line-height:1.5}
+.tooltip.show{opacity:1}
+.tooltip .tt-title{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.tooltip .tt-desc{color:var(--text2);font-size:10px}
+
+.op-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:20px 0}
+.op-cell{background:var(--bg);padding:0}
+.op-cell .op-header{padding:10px 14px 6px;font-family:var(--fm);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px}
+.op-cell .op-header .dot{width:7px;height:7px;display:inline-block}
+.op-cell a{display:block;padding:4px 14px;font-size:11px;color:var(--text2);text-decoration:none;font-family:var(--fm)}
+.op-cell a:hover{color:var(--accent);background:rgba(255,255,255,.04)}
+
+.code{font-family:var(--fm);font-size:11px;background:var(--panel);border:1px solid var(--line);padding:12px 16px;margin:8px 0;overflow-x:auto;white-space:pre;color:var(--text2);line-height:1.6}
+
+@media(max-width:768px){
+  #sidebar{display:none}
+  #content{margin-left:0;padding:24px 16px}
+}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="app">
+<nav id="sidebar">
+<div class="logo">Points<span>Visual LiDAR Synthesizer</span></div>
+<div class="nav-section open" data-cat="home"><div class="nav-cat"><span class="dot" style="background:var(--accent)"></span> Home</div><div class="nav-links"><a href="#home">Overview</a><a href="#start">Getting Started</a><a href="#integrations">Integrations</a></div></div>
+<div class="nav-section" data-cat="source"><div class="nav-cat" onclick="t('source')"><span class="dot" style="background:var(--src)"></span> Source</div><div class="nav-links"><a href="#source-depth">Depth</a><a href="#source-video-color">Video Color</a><a href="#source-vision-model">Vision Model</a><a href="#source-confidence">Confidence</a><a href="#source-proximity">Proximity</a></div></div>
+<div class="nav-section" data-cat="grid"><div class="nav-cat" onclick="t('grid')"><span class="dot" style="background:var(--grd)"></span> Grid</div><div class="nav-links"><a href="#grid-pinout">Pinout</a><a href="#grid-domain">Domain</a><a href="#grid-jitter">Jitter</a><a href="#grid-region-ellipse">Ellipse Region</a><a href="#grid-region-rect">Rect Region</a><a href="#grid-uv-transform">UV Transform</a><a href="#grid-edge-policy">Edge Policy</a></div></div>
+<div class="nav-section" data-cat="filter"><div class="nav-cat" onclick="t('filter')"><span class="dot" style="background:var(--flt)"></span> Filter</div><div class="nav-links"><a href="#filter-ema-smooth">EMA Smooth</a><a href="#filter-fill-holes">Fill Holes</a><a href="#filter-grazing-cull">Grazing Cull</a><a href="#filter-accumulate">Accumulate</a><a href="#filter-smooth-surface">Smooth Surface</a></div></div>
+<div class="nav-section" data-cat="shape"><div class="nav-cat" onclick="t('shape')"><span class="dot" style="background:var(--shp)"></span> Shape</div><div class="nav-links"><a href="#shape-size">Size</a><a href="#shape-shape">Shape</a><a href="#shape-shape-morph">Shape Morph</a><a href="#shape-stretch">Stretch</a><a href="#shape-spin">Spin</a><a href="#shape-look-at">Look At</a><a href="#shape-material">Material</a><a href="#shape-hide">Hide</a></div></div>
+<div class="nav-section" data-cat="move"><div class="nav-cat" onclick="t('move')"><span class="dot" style="background:var(--mov)"></span> Move</div><div class="nav-links"><a href="#move-depth-drive">Depth Drive</a><a href="#move-lag">Lag</a><a href="#move-trail">Trail</a><a href="#move-ripple">Ripple</a><a href="#move-spring">Spring</a><a href="#move-scatter">Scatter</a><a href="#move-twist">Twist</a><a href="#move-shockwave">Shockwave</a><a href="#move-freeze">Freeze</a></div></div>
+<div class="nav-section" data-cat="color"><div class="nav-cat" onclick="t('color')"><span class="dot" style="background:var(--col)"></span> Color</div><div class="nav-links"><a href="#color-palette">Palette</a><a href="#color-duotone">Duotone</a><a href="#color-contrast">Contrast</a><a href="#color-gamma">Gamma</a><a href="#color-levels">Levels</a><a href="#color-depth-fog">Depth Fog</a></div></div>
+<div class="nav-section" data-cat="signal"><div class="nav-cat" onclick="t('signal')"><span class="dot" style="background:var(--sig)"></span> Signal</div><div class="nav-links"><a href="#signal-math">Math Ops</a><a href="#signal-noise">Noise</a><a href="#signal-trigger">Trigger Nodes</a></div></div>
+<div class="nav-section" data-cat="body"><div class="nav-cat" onclick="t('body')"><span class="dot" style="background:var(--bod)"></span> Body</div><div class="nav-links"><a href="#body-hand">Hand Position</a><a href="#body-pinch">Pinch</a><a href="#body-gestures">Gestures</a></div></div>
+<div class="nav-section" data-cat="time"><div class="nav-cat" onclick="t('time')"><span class="dot" style="background:var(--tim)"></span> Time</div><div class="nav-links"><a href="#time-lfo">LFO</a><a href="#time-clock">Clock</a></div></div>
+<div class="nav-section" data-cat="stage"><div class="nav-cat" onclick="t('stage')"><span class="dot" style="background:var(--stg)"></span> Stage</div><div class="nav-links"><a href="#stage-camera">Camera</a><a href="#stage-light">Light</a></div></div>
+<div class="nav-section" data-cat="output"><div class="nav-cat" onclick="t('output')"><span class="dot" style="background:var(--out)"></span> Output</div><div class="nav-links"><a href="#output-output">Output</a><a href="#output-ndi">NDI</a><a href="#output-record">Record</a></div></div>
+</nav>
+<main id="content">
+<section id="home" class="active">
+<h1>Points</h1>
+<p>A live point cloud instrument. Wire 110 GPU nodes together. Modulate with audio, MIDI, OSC, and gestures. Create real-time Metal-rendered visuals from LiDAR, TrueDepth, or RGB camera sources at 200,000 points, 60fps.</p>
+<div class="op-grid">
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--src)"></span>SOURCE</div><a onclick="nav('source-depth')">Depth</a><a onclick="nav('source-video-color')">Video Color</a><a onclick="nav('source-vision-model')">Vision Model</a><a onclick="nav('source-confidence')">Confidence</a><a onclick="nav('source-proximity')">Proximity</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--grd)"></span>GRID</div><a onclick="nav('grid-pinout')">Pinout</a><a onclick="nav('grid-domain')">Domain</a><a onclick="nav('grid-jitter')">Jitter</a><a onclick="nav('grid-region-ellipse')">Ellipse Region</a><a onclick="nav('grid-region-rect')">Rect Region</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--flt)"></span>FILTER</div><a onclick="nav('filter-ema-smooth')">EMA Smooth</a><a onclick="nav('filter-fill-holes')">Fill Holes</a><a onclick="nav('filter-grazing-cull')">Grazing Cull</a><a onclick="nav('filter-accumulate')">Accumulate</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--shp)"></span>SHAPE</div><a onclick="nav('shape-size')">Size</a><a onclick="nav('shape-shape')">Shape</a><a onclick="nav('shape-spin')">Spin</a><a onclick="nav('shape-look-at')">Look At</a><a onclick="nav('shape-material')">Material</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--mov)"></span>MOVE</div><a onclick="nav('move-depth-drive')">Depth Drive</a><a onclick="nav('move-ripple')">Ripple</a><a onclick="nav('move-spring')">Spring</a><a onclick="nav('move-shockwave')">Shockwave</a><a onclick="nav('move-freeze')">Freeze</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--col)"></span>COLOR</div><a onclick="nav('color-palette')">Palette</a><a onclick="nav('color-duotone')">Duotone</a><a onclick="nav('color-contrast')">Contrast</a><a onclick="nav('color-depth-fog')">Depth Fog</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--sig)"></span>SIGNAL</div><a onclick="nav('signal-math')">Math Ops</a><a onclick="nav('signal-noise')">Noise</a><a onclick="nav('signal-trigger')">Trigger Nodes</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--bod)"></span>BODY</div><a onclick="nav('body-hand')">Hand Position</a><a onclick="nav('body-pinch')">Pinch</a><a onclick="nav('body-gestures')">Gestures</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--tim)"></span>TIME</div><a onclick="nav('time-lfo')">LFO</a><a onclick="nav('time-clock')">Clock</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--stg)"></span>STAGE</div><a onclick="nav('stage-camera')">Camera</a><a onclick="nav('stage-light')">Light</a></div>
+<div class="op-cell"><div class="op-header"><span class="dot" style="background:var(--out)"></span>OUTPUT</div><a onclick="nav('output-output')">Output</a><a onclick="nav('output-ndi')">NDI</a><a onclick="nav('output-record')">Record</a></div>
+</div>
+
+<h2>How It Works</h2>
+<div class="mermaid">
+graph LR
+    A[Depth Source<br/>LiDAR / TrueDepth / RGB] --> B[Cleanup Pipeline<br/>EMA / Fill / Cull]
+    B --> C[FX Nodes<br/>Move / Color / Shape / Signal]
+    C --> D[Pinout<br/>GPU Point Cloud]
+    D --> E[Output<br/>Metal Render 60fps]
+    C --> F[External I/O<br/>NDI / Record]
+</div>
+<p style="color:var(--text2);margin-top:12px">Points never leave the GPU. The renderer fetches directly from a 24-byte interleaved buffer. No CPU readback. No frame drops at 200,000 points.</p>
+
+<h2>Camera Modes</h2>
+<table>
+<tr><th>Mode</th><th>Sensor</th><th>FPS</th><th>Description</th></tr>
+<tr><td>CLOUD</td><td>Back LiDAR</td><td>30</td><td>True metric 3D depth. Objects keep real size at any distance.</td></tr>
+<tr><td>FACE</td><td>Front TrueDepth</td><td>30</td><td>Face mesh + 52 blendshape modulation sources.</td></tr>
+<tr><td>LUMEN</td><td>Back RGB</td><td>60</td><td>Luma-as-depth at full 60fps. Grid-stable pins for per-pin history FX.</td></tr>
+</table>
+
+</section>
+
+<section id="start">
+<h1>Getting Started</h1>
+<h2>Interface</h2>
+<table>
+<tr><th>Zone</th><th>Location</th><th>Purpose</th></tr>
+<tr><td>Viewport</td><td>Top</td><td>Live point cloud. 200,000 points at 60fps via Metal.</td></tr>
+<tr><td>Nodeview</td><td>Bottom bar</td><td>Drag nodes from the palette. Wire them together.</td></tr>
+<tr><td>Cameraview</td><td>Bottom bar</td><td>Sliders, pads, and buttons for the selected node.</td></tr>
+</table>
+
+<h2>Navigating the Nodeview</h2>
+<p>1. Tap + to open the node palette. Nodes are organized by family.</p>
+<p>2. Tap a node to add it to the canvas.</p>
+<p>3. Drag from an output port (right side) to an input port (left side) to wire.</p>
+<p>4. Tap any node to select it; its parameters appear in the Cameraview.</p>
+
+<h2>Navigating the Cameraview</h2>
+<p><strong>Sliders</strong> adjust float parameters in real time. Changes apply instantly to the GPU.</p>
+<p><strong>Expose</strong> tap the expose icon on any slider to create an input port. Wire a signal in to drive it.</p>
+
+<h2>Node Structure</h2>
+<div class="code">+---------------------------+
+|  NODE NAME    [FAMILY]    |
+|  -----------------------  |
+|  [param sliders/toggles]  |
+|                           |
+|  o input1     output1 o   |
+|  o input2     output2 o   |
++---------------------------+</div>
+
+<h2>Port Types</h2>
+<table>
+<tr><th>Type</th><th>Scope</th><th>Description</th></tr>
+<tr><td>fieldFloat</td><td>Per-pin (GPU)</td><td>Float on every point</td></tr>
+<tr><td>fieldVec3</td><td>Per-pin (GPU)</td><td>Vec3 on every point</td></tr>
+<tr><td>fieldColor</td><td>Per-pin (GPU)</td><td>RGBA on every point</td></tr>
+<tr><td>signal</td><td>Per-frame (CPU)</td><td>Single float value</td></tr>
+<tr><td>trigger</td><td>Per-frame (CPU)</td><td>Event pulse</td></tr>
+</table>
+
+<h2>Your First Patch</h2>
+<div class="mermaid">
+graph LR
+    depth[Depth<br/>mode: metric] -->|depth| palette[Palette<br/>map: thermal]
+    palette -->|color| output[Output.color]
+    depth -->|position| pinout[Pinout]
+    depth -->|z| pinout
+    pinout -->|position| output[Output.position]
+</div>
+
+<h2>Adding Motion</h2>
+<div class="mermaid">
+graph LR
+    spin[Spin<br/>z: 0.25 turns/s] -->|rot| output[Output.rotation]
+    shape[Shape<br/>type: cube] -->|shape| output[Output.shape]
+</div>
+
+<h2>Adding Audio Reactivity</h2>
+<div class="mermaid">
+graph TD
+    volume[Audio Volume] --> remap[t-Remap<br/>outMin:0.2 outMax:3]
+    remap --> size[Size<br/>base exposed]
+    beat[Beat Detect] --> shockwave[Shockwave<br/>fire port]
+</div>
+</section>
+
+<section id="integrations">
+<h1>Integrations</h1>
+<h2>MIDI</h2>
+<p>Connect a MIDI controller via USB or Bluetooth. Points auto-detects devices.</p>
+<table>
+<tr><th>Node</th><th>Reads</th><th>Output</th></tr>
+<tr><td>MIDI CC</td><td>Control Change 0-127</td><td>signal 0-1</td></tr>
+<tr><td>MIDI Note</td><td>Note-on velocity</td><td>trigger + velocity</td></tr>
+<tr><td>MIDI Pitch Bend</td><td>Pitch wheel</td><td>signal -1 to +1</td></tr>
+</table>
+<div class="mermaid">
+graph LR
+    midi[MIDI CC 21] --> remap[t-Remap<br/>outMin:0.02 outMax:1]
+    remap --> noise[Noise<br/>period exposed]
+</div>
+
+<h2>OSC</h2>
+<p>Points listens on port 9000. Send to <code>/points/param nodeID param value</code>.</p>
+<table>
+<tr><th>Address</th><th>Effect</th></tr>
+<tr><td>/points/param nodeID param float</td><td>Set slider</td></tr>
+<tr><td>/points/shockwave x y</td><td>Fire shockwave</td></tr>
+<tr><td>/points/bpm float</td><td>Set BPM</td></tr>
+</table>
+
+<h2>NDI Output</h2>
+<p>Add an NDI node. Streams viewport with alpha channel to OBS, vMix, or TouchDesigner.</p>
+
+<h2>MP4 Recording</h2>
+<p>Add a Record node. H.264 MP4 saved to Photos library.</p>
+
+<h2>Audio Analysis</h2>
+<table>
+<tr><th>Node</th><th>Output</th></tr>
+<tr><td>Audio Volume</td><td>volume signal 0-1</td></tr>
+<tr><td>Audio FFT</td><td>low mid high bands</td></tr>
+<tr><td>Beat Detect</td><td>beat trigger</td></tr>
+</table>
+<div class="mermaid">
+graph TD
+    volume[Audio Volume] --> threshold[t-Threshold<br/>rise:0.6]
+    threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.3]
+    envelope --> depth[Depth<br/>gain exposed]
+</div>
+</section>
+
+<!-- ====== NODE SECTIONS ====== -->
+
+<section id="source-depth"><h1>Depth</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. The primary sensor. Reads depth camera and produces per-pin nearness, 3D position, and Z push.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>Description</th></tr><tr><td>near</td><td>0.05-5</td><td>0.1</td><td>Closest depth (metres)</td></tr><tr><td>far</td><td>0.2-8</td><td>2.5</td><td>Farthest depth (metres)</td></tr><tr><td>mode</td><td>free/metric</td><td>metric</td><td>Metric = real intrinsics. Free = intrinsic-free fan</td></tr><tr><td>separation</td><td>0-4</td><td>2.5</td><td>Metres to view scale</td></tr><tr><td>gain</td><td>0-3</td><td>2.5</td><td>Z zoom (FREE mode)</td></tr><tr><td>arms</td><td>bool</td><td>false</td><td>Pull points to Z-origin pins</td></tr><tr><td>edgeCull</td><td>0-0.3</td><td>0.06</td><td>Silhouette flying-pixel reject (metres)</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>depth</td><td>output</td><td>fieldFloat</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td></tr></table>
+<h2>Standard Use</h2><div class="mermaid">graph LR
+    depth[Depth<br/>mode:metric] -->|position| pinout[Pinout]
+    depth -->|z| pinout
+    depth -->|depth| palette[Palette<br/>map:thermal]
+    palette -->|color| output[Output.color]
+    pinout -->|position| output[Output.position]</div>
+<h2>Trigger Modulation</h2><div class="mermaid">graph TD
+    volume[Audio Volume] --> threshold[t-Threshold<br/>rise:0.6]
+    threshold --> envelope[t-Envelope<br/>attack:0.05 release:0.5]
+    envelope --> depth[Depth<br/>arms exposed]</div>
+<p>Audio above threshold snaps arms on for 0.5s. Rods pulse with the beat.</p></section>
+
+<section id="source-video-color"><h1>Video Color</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. Samples camera RGB at each pin UV.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>exposure</td><td>-2 to 2</td><td>0</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>color</td><td>output</td><td>fieldColor</td></tr></table>
+<h2>Standard Use</h2><div class="mermaid">graph LR
+    vc[Video Color] -->|color| duotone[Duotone<br/>shadow:navy light:gold]
+    duotone -->|color| output[Output.color]</div></section>
+
+<section id="source-vision-model"><h1>Vision Model</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. Import photo/video, bake depth on-device with MoGe-2. Same outputs as Depth.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>near</td><td>0.05-5</td><td>0.1</td></tr><tr><td>far</td><td>0.2-8</td><td>2.5</td></tr><tr><td>mode</td><td>free/metric</td><td>metric</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>depth</td><td>output</td><td>fieldFloat</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td></tr></table>
+<div class="mermaid">graph LR
+    vm[Vision Model<br/>pick a photo] -->|position| pinout[Pinout]
+    vm -->|z| pinout
+    vm -->|depth| palette[Palette]
+    palette -->|color| output[Output]</div></section>
+
+<section id="source-confidence"><h1>Confidence</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. Per-pin sensor confidence 0-1. Noisy edges score low.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>floor</td><td>0-1</td><td>0</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>confidence</td><td>output</td><td>fieldFloat</td></tr></table>
+<div class="mermaid">graph LR
+    conf[Confidence<br/>floor:0.3] -->|confidence| hide[Hide<br/>mode:fade]
+    hide -->|size| size[Size]</div></section>
+
+<section id="source-proximity"><h1>Proximity</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> CPU node. How close the nearest subject is.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>near</td><td>0.15-2</td><td>0.4</td></tr><tr><td>far</td><td>0.5-6</td><td>2.5</td></tr><tr><td>threshold</td><td>0-1</td><td>0.5</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>nearness</td><td>output</td><td>signal</td></tr><tr><td>entered</td><td>output</td><td>trigger</td></tr></table>
+<div class="mermaid">graph LR
+    prox[Proximity<br/>near:0.4 far:2.5] -->|nearness| size[Size<br/>base exposed]
+    prox -->|entered| sw[Shockwave<br/>fire port]</div></section>
+
+<section id="grid-pinout"><h1>Pinout</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> GPU node. Pin-screen display. XY snaps to fixed grid. Z push = pin-screen relief.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>morph</td><td>0-1</td><td>0</td></tr><tr><td>gain</td><td>0-2</td><td>1</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>position</td><td>input</td><td>fieldVec3</td></tr><tr><td>z</td><td>input</td><td>fieldFloat</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td></tr></table>
+<h2>Trigger</h2><div class="mermaid">graph TD
+    lfo[t-LFO<br/>rate:0.2] --> remap[t-Remap<br/>outMin:0 outMax:1]
+    remap --> pinout[Pinout<br/>morph exposed]</div></section>
+
+<section id="grid-domain"><h1>Domain</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> Render node. Pin lattice topology: rect, hex, radial, spiral, scatter, perspective.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>topologyA</td><td>rect/hex/radial/spiral/scatter/perspective</td><td>rect</td></tr><tr><td>topologyB</td><td>rect/hex/radial/spiral/scatter/perspective</td><td>radial</td></tr><tr><td>morphAmount</td><td>0-1</td><td>0</td></tr></table>
+<div class="mermaid">graph TD
+    fist[Gestures.fist] --> envelope[t-Envelope<br/>attack:0.1 release:0.8]
+    envelope --> domain[Domain<br/>morphAmount exposed]</div></section>
+
+<section id="grid-jitter"><h1>Jitter</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> GPU node. Nudges each pin by seeded random offset. Breaks regularity.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>amount</td><td>0-0.3</td><td>0.05</td></tr><tr><td>seed</td><td>0-9999</td><td>1</td></tr></table>
+<h2>Trigger</h2><div class="mermaid">graph TD
+    volume[Audio Volume] --> remap[t-Remap<br/>outMin:0 outMax:0.2]
+    remap --> jitter[Jitter<br/>amount exposed]</div></section>
+
+<section id="grid-region-ellipse"><h1>Ellipse Region</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> GPU node. Soft circular mask: 1 inside, 0 outside.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>radius</td><td>0.02-1</td><td>0.3</td></tr><tr><td>feather</td><td>0-0.5</td><td>0.12</td></tr><tr><td>invert</td><td>bool</td><td>false</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>center</td><td>input</td><td>vec2</td></tr><tr><td>mask</td><td>output</td><td>fieldFloat</td></tr></table>
+<div class="mermaid">graph LR
+    ellipse[Ellipse Region<br/>radius:0.4] -->|mask| hide[Hide<br/>mode:fade]
+    hide -->|size| size[Size]</div></section>
+
+<section id="grid-region-rect"><h1>Rect Region</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> GPU node. Soft rectangular mask.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>width</td><td>0.1-3</td><td>1.5</td></tr><tr><td>height</td><td>0.1-4</td><td>2</td></tr><tr><td>feather</td><td>0.01-1</td><td>0.2</td></tr><tr><td>invert</td><td>bool</td><td>false</td></tr></table></section>
+
+<section id="grid-uv-transform"><h1>UV Transform</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> Render node. Pans, zooms, rotates camera image under pins.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>offsetX/Y</td><td>-1 to 1</td><td>0</td></tr><tr><td>scale</td><td>0.25-4</td><td>1</td></tr><tr><td>rotate</td><td>-0.5 to 0.5</td><td>0</td></tr></table></section>
+
+<section id="grid-edge-policy"><h1>Edge Policy</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> Render node. Controls pins pushed past frame border.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>mode</td><td>none/fade/clamp</td><td>fade</td></tr><tr><td>margin</td><td>0-0.3</td><td>0.05</td></tr></table></section>
+
+<section id="filter-ema-smooth"><h1>EMA Smooth</h1><p><span class="tag" style="border-color:var(--flt);color:var(--flt)">FILTER</span> GPU node. Temporal smoothing with deadband hysteresis. Velocity-adaptive alpha.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>amount</td><td>0-1</td><td>0.3</td></tr><tr><td>deadband</td><td>0-0.05</td><td>0.008</td></tr><tr><td>adapt</td><td>0-10</td><td>5</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>depth</td><td>input</td><td>fieldFloat</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td></tr></table>
+<div class="mermaid">graph LR
+    depth[Depth] -->|depth| ema[EMA Smooth<br/>amount:0.3]
+    ema -->|out| palette[Palette]</div></section>
+
+<section id="filter-fill-holes"><h1>Fill Holes</h1><p><span class="tag" style="border-color:var(--flt);color:var(--flt)">FILTER</span> GPU node. Fills IR-shadow holes from valid neighbors. Foreground-only.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>radius</td><td>0-6</td><td>3</td></tr><tr><td>gap</td><td>0.02-0.3</td><td>0.08</td></tr></table></section>
+
+<section id="filter-grazing-cull"><h1>Grazing Cull</h1><p><span class="tag" style="border-color:var(--flt);color:var(--flt)">FILTER</span> GPU node. Rejects grazing-angle ToF returns and silhouette flying pixels.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>cull</td><td>0-1</td><td>0.25</td></tr><tr><td>edge</td><td>0-0.4</td><td>0.10</td></tr><tr><td>gate</td><td>0-0.05</td><td>0.006</td></tr><tr><td>baseline</td><td>1-4</td><td>2</td></tr></table></section>
+
+<section id="filter-accumulate"><h1>Accumulate</h1><p><span class="tag" style="border-color:var(--flt);color:var(--flt)">FILTER</span> GPU node. Blends frames into denser, calmer cloud.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>frames</td><td>1-30</td><td>8</td></tr></table></section>
+
+<section id="filter-smooth-surface"><h1>Smooth Surface</h1><p><span class="tag" style="border-color:var(--flt);color:var(--flt)">FILTER</span> GPU node. Bilateral smoothing. Flattens noise without bleeding edges.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>radius</td><td>0-4</td><td>1</td></tr><tr><td>sigma</td><td>0.01-0.2</td><td>0.05</td></tr></table></section>
+
+<section id="shape-size"><h1>Size</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Final pin size = base x input, clamped. Size 0 hides pin.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>base</td><td>0-4</td><td>1</td></tr><tr><td>min</td><td>0-2</td><td>0</td></tr><tr><td>max</td><td>0.1-6</td><td>3</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>size</td><td>input</td><td>fieldFloat</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td></tr></table>
+<div class="mermaid">graph LR
+    depth[Depth] -->|depth| remap[Remap<br/>outMin:0.2 outMax:3]
+    remap -->|out| size[Size<br/>base:1]
+    size -->|out| output[Output.size]</div>
+<h2>Trigger</h2><div class="mermaid">graph TD
+    beat[Beat Detect] --> envelope[t-Envelope<br/>attack:0.02 release:0.15]
+    envelope --> remap[t-Remap<br/>outMin:1 outMax:4]
+    remap --> size[Size<br/>base exposed]</div></section>
+
+<section id="shape-shape"><h1>Shape</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Pin cap geometry: sphere, cube, tube, slab, cone, ring, disc, spike, diamond.</p>
+<div class="mermaid">graph LR
+    shape[Shape<br/>type:cube] -->|shape| output[Output.shape]
+    spin[Spin<br/>z:0.5] -->|rot| output[Output.rotation]</div></section>
+
+<section id="shape-shape-morph"><h1>Shape Morph</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Morph sphere toward target shape by blend amount.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>target</td><td>cube/tube/slab/cone/ring/disc/spike/diamond</td><td>cube</td></tr><tr><td>blend</td><td>0-1</td><td>0</td></tr></table>
+<div class="mermaid">graph TD
+    volume[Audio Volume] --> remap[t-Remap<br/>outMin:0 outMax:1]
+    remap --> morph[Shape Morph<br/>blend exposed<br/>target:spike]</div></section>
+
+<section id="shape-stretch"><h1>Stretch</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Per-axis scale: x, y, z. Tubes, needles, slabs.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>x/y/z</td><td>0.1-4</td><td>1</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>scale</td><td>output</td><td>fieldVec3</td></tr></table></section>
+
+<section id="shape-spin"><h1>Spin</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Continuous rotation from clock. Turns/second per axis.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>x/y/z</td><td>-2 to 2</td><td>0/0/0.25</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>rot</td><td>output</td><td>fieldVec3</td></tr></table></section>
+
+<section id="shape-look-at"><h1>Look At</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> Render node. Orients pins to face target point. Needs non-sphere Shape.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>x/y/z</td><td>-2 to 2 / 0-4</td><td>0/0/2</td></tr><tr><td>amount</td><td>0-1</td><td>1</td></tr></table>
+<div class="mermaid">graph TD
+    hand[Hand Position] -->|x| remap[t-Remap<br/>outMin:-2 outMax:2]
+    remap --> look[Look At<br/>x exposed]
+    hand -->|y| remap2[t-Remap<br/>outMin:-2 outMax:2]
+    remap2 --> look</div></section>
+
+<section id="shape-material"><h1>Material</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> Render node. Shading: unlit, lit (with Light nodes), or matcap.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>shading</td><td>unlit/lit/matcap</td><td>lit</td></tr><tr><td>roughness</td><td>0-1</td><td>0.5</td></tr><tr><td>metallic</td><td>0-1</td><td>0</td></tr></table></section>
+
+<section id="shape-hide"><h1>Hide</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Shows/hides pins by mask. Wire into Size.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>mode</td><td>fade/cutoff</td><td>fade</td></tr><tr><td>threshold</td><td>0-1</td><td>0.5</td></tr><tr><td>invert</td><td>bool</td><td>false</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>mask</td><td>input</td><td>fieldFloat</td></tr><tr><td>size</td><td>output</td><td>fieldFloat</td></tr></table></section>
+
+<section id="move-depth-drive"><h1>Depth Drive</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Pulls pins off Z-wall toward camera. Primary depth to Z converter.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>gain</td><td>0-3</td><td>1.2</td></tr><tr><td>gamma</td><td>0.25-4</td><td>1</td></tr></table>
+<div class="mermaid">graph LR
+    depth[Depth] -->|depth| dd[Depth Drive<br/>gain:1.5 gamma:0.8]
+    dd -->|z| pinout[Pinout]</div></section>
+
+<section id="move-lag"><h1>Lag</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Exponential smoothing. One float state per pin.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>halfLife</td><td>0-5</td><td>0</td></tr></table></section>
+
+<section id="move-trail"><h1>Trail</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Peak-hold decay. Rises instantly, falls slowly.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>decay</td><td>0-10</td><td>1.5</td></tr></table></section>
+
+<section id="move-ripple"><h1>Ripple</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Analytic concentric rings. Pure math. Zero state.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>amp</td><td>0-1</td><td>0</td></tr><tr><td>wavelength</td><td>0.02-1</td><td>0.15</td></tr><tr><td>speed</td><td>-4 to 4</td><td>0.5</td></tr><tr><td>falloff</td><td>0-8</td><td>2</td></tr><tr><td>centerX/Y</td><td>0-1</td><td>0.5</td></tr></table>
+<div class="mermaid">graph TD
+    hand[Hand Position] -->|x| ripple[Ripple<br/>centerX exposed]
+    hand -->|y| ripple</div></section>
+
+<section id="move-spring"><h1>Spring</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Physical spring per pin. Position + velocity state.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>stiffness</td><td>0-40</td><td>0</td></tr><tr><td>damping</td><td>0-2</td><td>0.7</td></tr></table></section>
+
+<section id="move-scatter"><h1>Scatter</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Throws pins along seeded random direction. Amount 0 = home.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>amount</td><td>0-1</td><td>0</td></tr><tr><td>seed</td><td>0-9999</td><td>3</td></tr></table>
+<div class="mermaid">graph TD
+    pinch[Pinch] --> remap[t-Remap<br/>outMin:0 outMax:1]
+    remap --> scatter[Scatter<br/>amount exposed]</div></section>
+
+<section id="move-twist"><h1>Twist</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Whirlpools positions around view center.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>angle</td><td>-0.5 to 0.5</td><td>0</td></tr><tr><td>falloff</td><td>0-4</td><td>0.8</td></tr></table></section>
+
+<section id="move-shockwave"><h1>Shockwave</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Expanding rings fired by triggers. Up to 4 active waves.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>speed</td><td>0-4</td><td>1.2</td></tr><tr><td>width</td><td>0-0.6</td><td>0.12</td></tr><tr><td>damping</td><td>0-6</td><td>1.2</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>fire</td><td>input</td><td>trigger</td></tr><tr><td>pulse</td><td>output</td><td>fieldFloat</td></tr></table>
+<div class="mermaid">graph TD
+    beat[Beat Detect] --> sw[Shockwave<br/>fire port]
+    sw -->|pulse| dd[Depth Drive<br/>gain exposed]</div></section>
+
+<section id="move-freeze"><h1>Freeze</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Holds captured values while hold is up. Melts to live.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>hold</td><td>0-1</td><td>0</td></tr></table>
+<div class="mermaid">graph TD
+    fist[Gestures.fist] --> freeze[Freeze<br/>hold exposed]</div></section>
+
+<section id="color-palette"><h1>Palette</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Maps 0-1 value through color lookup table. Primary colorization.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>map</td><td>thermal/viridis/plasma/inferno/magma/cividis/turbo/coolwarm</td><td>thermal</td></tr><tr><td>shift</td><td>-1 to 1</td><td>0</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>t</td><td>input</td><td>fieldFloat</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td></tr></table>
+<div class="mermaid">graph TD
+    fft[Audio FFT<br/>low band] --> remap[t-Remap<br/>outMin:-0.5 outMax:0.5]
+    remap --> palette[Palette<br/>shift exposed]</div></section>
+
+<section id="color-duotone"><h1>Duotone</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Dark pins = shadow color. Bright = light color. Risograph look.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>shadowR/G/B</td><td>0-1</td><td>0.1/0.05/0.3</td></tr><tr><td>lightR/G/B</td><td>0-1</td><td>1/0.85/0.4</td></tr></table></section>
+
+<section id="color-contrast"><h1>Contrast</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Pushes colors from mid-grey. Pivots at 0.5.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>amount</td><td>0-3</td><td>1.4</td></tr></table></section>
+
+<section id="color-gamma"><h1>Color Gamma</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Per-channel power curve.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>gamma</td><td>0.2-4</td><td>1</td></tr></table></section>
+
+<section id="color-levels"><h1>Color Levels</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Gamma then gain then lift. Full tone control.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>gamma</td><td>0.2-4</td><td>1</td></tr><tr><td>gain</td><td>0-3</td><td>1</td></tr><tr><td>lift</td><td>-0.5 to 0.5</td><td>0</td></tr></table></section>
+
+<section id="color-depth-fog"><h1>Depth Fog</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Blends toward fog color with distance. Atmospheric depth.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>fogR/G/B</td><td>0-1</td><td>0.05/0.06/0.1</td></tr><tr><td>density</td><td>0-1</td><td>0.6</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>color</td><td>input</td><td>fieldColor</td></tr><tr><td>depth</td><td>input</td><td>fieldFloat</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td></tr></table>
+<div class="mermaid">graph LR
+    vc[Video Color] -->|color| fog[Depth Fog<br/>density:0.5]
+    depth[Depth] -->|depth| fog
+    fog -->|color| output[Output.color]</div></section>
+
+<section id="signal-math"><h1>Signal Math</h1><p><span class="tag" style="border-color:var(--sig);color:var(--sig)">SIGNAL</span> GPU field-rate math. All operating per-pin on every point simultaneously.</p>
+<table><tr><th>Node</th><th>ID</th><th>Operation</th></tr><tr><td>Add</td><td>add</td><td>a + b</td></tr><tr><td>Subtract</td><td>subtract</td><td>a - b</td></tr><tr><td>Multiply</td><td>multiply</td><td>a x b</td></tr><tr><td>Divide</td><td>divide</td><td>a / b</td></tr><tr><td>Min</td><td>min</td><td>min(a,b)</td></tr><tr><td>Max</td><td>max</td><td>max(a,b)</td></tr><tr><td>Mix</td><td>mix</td><td>lerp(a,b,t)</td></tr><tr><td>Clamp</td><td>clamp</td><td>clamp(in,min,max)</td></tr><tr><td>Remap</td><td>remap</td><td>linear remap ranges</td></tr><tr><td>Abs</td><td>abs</td><td>abs(in)</td></tr><tr><td>Sine</td><td>sine</td><td>sin(in x freq + phase)</td></tr><tr><td>Smoothstep</td><td>smoothstep</td><td>hermite between edges</td></tr><tr><td>Threshold</td><td>threshold</td><td>step(level, in)</td></tr><tr><td>Constant</td><td>constant</td><td>fixed value to all pins</td></tr><tr><td>Random</td><td>random</td><td>stable per-pin 0-1</td></tr></table>
+<div class="mermaid">graph LR
+    depth[Depth] -->|depth| remap[Remap<br/>inMin:0 inMax:1<br/>outMin:0.3 outMax:0.8]
+    remap -->|out| palette[Palette<br/>map:plasma]
+    palette -->|color| output[Output.color]</div></section>
+
+<section id="signal-noise"><h1>Noise</h1><p><span class="tag" style="border-color:var(--sig);color:var(--sig)">SIGNAL</span> GPU node. Animated 3D noise per pin. Multiple types with fractal layering.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>type</td><td>perlin/simplex/random/sparse/hermite/harmonic</td><td>perlin</td></tr><tr><td>period</td><td>0.02-4</td><td>0.5</td></tr><tr><td>harmonics</td><td>1-6</td><td>3</td></tr><tr><td>amplitude</td><td>0-4</td><td>1</td></tr><tr><td>moveRate</td><td>-4 to 4</td><td>0.3</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>z</td><td>input</td><td>fieldFloat</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td></tr></table>
+<div class="mermaid">graph LR
+    noise[Noise<br/>type:perlin period:0.3] -->|out| size[Size<br/>base exposed]
+    noise -->|color| output[Output.color]</div>
+<h2>Trigger</h2><div class="mermaid">graph TD
+    midi[MIDI CC 21] --> remap[t-Remap<br/>outMin:0.05 outMax:2]
+    remap --> noise[Noise<br/>period exposed]</div></section>
+
+<section id="signal-trigger"><h1>Trigger Nodes</h1><p><span class="tag" style="border-color:var(--sig);color:var(--sig)">SIGNAL</span> CPU control-rate. Process signals and generate events. Wire into exposed params.</p>
+<table><tr><th>Node</th><th>ID</th><th>Description</th></tr><tr><td>If / Then</td><td>t-if</td><td>COND > 0.5 pass A, else B</td></tr><tr><td>And</td><td>t-and</td><td>Both > 0.5 = 1</td></tr><tr><td>Or</td><td>t-or</td><td>Either > 0.5 = 1</td></tr><tr><td>Not</td><td>t-not</td><td>Invert: 1 - A</td></tr><tr><td>Xor</td><td>t-xor</td><td>Exactly one > 0.5</td></tr><tr><td>Threshold</td><td>t-threshold</td><td>Schmitt trigger. Rise/fall/cooldown</td></tr><tr><td>Envelope</td><td>t-envelope</td><td>Trigger to smooth 0-1. Attack/release</td></tr><tr><td>Curve</td><td>t-curve</td><td>Easing curves. quad/cubic/back/bounce/elastic</td></tr><tr><td>Spring</td><td>t-spring</td><td>Physical follow. Stiffness/damping</td></tr><tr><td>Remap</td><td>t-remap</td><td>Linear range mapping</td></tr></table>
+<div class="mermaid">graph TD
+    volume[Audio Volume] --> threshold[t-Threshold<br/>rise:0.6 fall:0.4]
+    threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.3]
+    envelope --> curve[t-Curve<br/>curve:elasticOut]
+    curve --> spring[t-Spring<br/>stiffness:80]
+    spring --> depth[Depth Drive<br/>gain exposed]</div></section>
+
+<section id="body-hand"><h1>Hand Position</h1><p><span class="tag" style="border-color:var(--bod);color:var(--bod)">BODY</span> CPU node. Vision hand tracking. Normalized x,y position 0-1.</p>
+<h2>Shared Vision Params</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>gain</td><td>0-4</td><td>1</td></tr><tr><td>inMin/Max</td><td>0-1</td><td>0/1</td></tr><tr><td>outMin/Max</td><td>0-1</td><td>0/1</td></tr><tr><td>smoothing</td><td>0-1</td><td>0</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>x/y</td><td>output</td><td>signal</td></tr></table>
+<div class="mermaid">graph TD
+    hand[Hand Position] -->|x| twist[Twist<br/>angle exposed]
+    hand -->|y| size[Size<br/>base exposed]</div></section>
+
+<section id="body-pinch"><h1>Pinch</h1><p><span class="tag" style="border-color:var(--bod);color:var(--bod)">BODY</span> CPU node. Hand pinch distance. 0 = fingertips touching.</p>
+<h2>Pinch Params</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>outMin/Max</td><td>0-10</td><td>0/10</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>distance</td><td>output</td><td>signal</td></tr></table>
+<div class="mermaid">graph LR
+    pinch[Pinch<br/>outMin:0 outMax:1] --> scatter[Scatter<br/>amount exposed]</div></section>
+
+<section id="body-gestures"><h1>Gestures</h1><p><span class="tag" style="border-color:var(--bod);color:var(--bod)">BODY</span> CPU node. Recognized hand gestures from Vision.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>hold</td><td>0-3</td><td>0.25</td></tr><tr><td>smoothing</td><td>0-1</td><td>0</td></tr></table>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>palm</td><td>output</td><td>trigger</td></tr><tr><td>fist</td><td>output</td><td>trigger</td></tr><tr><td>peace</td><td>output</td><td>trigger</td></tr><tr><td>point</td><td>output</td><td>trigger</td></tr></table>
+<div class="mermaid">graph TD
+    gestures[Gestures] -->|palm| sw[Shockwave<br/>fire port]
+    gestures -->|fist| freeze[Freeze<br/>hold exposed]</div></section>
+
+<section id="time-lfo"><h1>LFO</h1><p><span class="tag" style="border-color:var(--tim);color:var(--tim)">TIME</span> CPU node. Low-frequency oscillator. BPM sync. Multiple waveforms.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>type</td><td>sine/triangle/saw/square/random</td><td>sine</td></tr><tr><td>rate</td><td>0.01-20</td><td>1</td></tr><tr><td>sync</td><td>free/bpm</td><td>free</td></tr></table>
+<div class="mermaid">graph LR
+    lfo[t-LFO<br/>type:sine rate:0.5] --> palette[Palette<br/>shift exposed]</div></section>
+
+<section id="time-clock"><h1>Clock</h1><p><span class="tag" style="border-color:var(--tim);color:var(--tim)">TIME</span> CPU node. Global clock. BPM, beat/bar triggers, phase signal.</p>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>beat</td><td>output</td><td>trigger</td></tr><tr><td>bar</td><td>output</td><td>trigger</td></tr><tr><td>phase</td><td>output</td><td>signal</td></tr></table>
+<div class="mermaid">graph TD
+    clock[Clock<br/>bpm:120] -->|beat| sw[Shockwave<br/>fire port]
+    clock -->|bar| palette[Palette<br/>shift exposed]</div></section>
+
+<section id="stage-camera"><h1>Camera</h1><p><span class="tag" style="border-color:var(--stg);color:var(--stg)">STAGE</span> Render node. Viewport camera: FOV, zoom, parallax, orbit, dolly.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>fov</td><td>10-120</td><td>55</td></tr><tr><td>zoom</td><td>0.1-4</td><td>1</td></tr><tr><td>parallax</td><td>0-1</td><td>0.5</td></tr><tr><td>orbitX/Y</td><td>-pi to pi</td><td>0</td></tr><tr><td>dolly</td><td>-1 to 1</td><td>0</td></tr></table></section>
+
+<section id="stage-light"><h1>Light</h1><p><span class="tag" style="border-color:var(--stg);color:var(--stg)">STAGE</span> Render node. Point/directional/spot. Up to 4 active. Requires lit Material.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>type</td><td>point/directional/spot</td><td>point</td></tr><tr><td>intensity</td><td>0-5</td><td>1</td></tr><tr><td>falloff</td><td>0-10</td><td>2</td></tr><tr><td>x/y/z</td><td>-3 to 3</td><td>0/0/3</td></tr></table></section>
+
+<section id="output-output"><h1>Output</h1><p><span class="tag" style="border-color:var(--out);color:var(--out)">OUTPUT</span> Render node. Final sink. Always present. Everything routes through it.</p>
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>position</td><td>input</td><td>fieldVec3</td></tr><tr><td>color</td><td>input</td><td>fieldColor</td></tr><tr><td>size</td><td>input</td><td>fieldFloat</td></tr><tr><td>shape</td><td>input</td><td>fieldFloat</td></tr><tr><td>rotation</td><td>input</td><td>fieldVec3</td></tr><tr><td>stretch</td><td>input</td><td>fieldVec3</td></tr></table></section>
+
+<section id="output-ndi"><h1>NDI</h1><p><span class="tag" style="border-color:var(--out);color:var(--out)">OUTPUT</span> Render node. Streams viewport as NDI source with alpha channel.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Default</th></tr><tr><td>streamName</td><td>Points</td></tr><tr><td>fps</td><td>30</td></tr><tr><td>alphaKey</td><td>true</td></tr></table></section>
+
+<section id="output-record"><h1>Record</h1><p><span class="tag" style="border-color:var(--out);color:var(--out)">OUTPUT</span> Render node. Records viewport to H.264 MP4 saved to Photos.</p>
+<h2>Parameters</h2><table><tr><th>Param</th><th>Default</th></tr><tr><td>fps</td><td>30</td></tr><tr><td>quality</td><td>high</td></tr></table></section>
+
+</main>
+</div>
+
+<div class="tooltip" id="tt"></div>
+<script src="assets/boids.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+// Navigation
+function nav(id){window.location.hash=id}
+function t(cat){var s=document.querySelector('.nav-section[data-cat="'+cat+'"]');if(s)s.classList.toggle('open')}
+
+function showSection(id){
+  document.querySelectorAll('#content section').forEach(function(s){s.classList.remove('active')});
+  var sec=document.getElementById(id);
+  if(sec)sec.classList.add('active');
+  document.querySelectorAll('#sidebar a').forEach(function(a){a.classList.remove('active')});
+  var link=document.querySelector('#sidebar a[href="#'+id+'"]');
+  if(link)link.classList.add('active');
+}
+
+window.addEventListener('hashchange',function(){
+  var h=window.location.hash.slice(1)||'home';
+  if(h.includes('-'))showSection(h);else showSection('home');
+});
+
+// Expand nav section for current hash
+function expandForHash(){
+  var h=window.location.hash.slice(1)||'home';
+  if(h==='home'||h==='start'||h==='integrations'){showSection(h);return}
+  var parts=h.split('-');
+  var cat=parts[0];
+  var s=document.querySelector('.nav-section[data-cat="'+cat+'"]');
+  if(s)s.classList.add('open');
+  showSection(h);
+}
+
+// Mermaid init with click and hover handlers
+mermaid.initialize({startOnLoad:false,theme:'dark',securityLevel:'loose',themeVariables:{primaryColor:'#181818',primaryBorderColor:'#2E2E2E',primaryTextColor:'#F2F2F2',lineColor:'#3A3A3A',fontSize:'12px',fontFamily:'SF Mono,Menlo,Consolas,monospace'}});
+
+var nodeData={
+  'Depth':'Source node. Reads LiDAR/TrueDepth/RGB depth. Produces per-pin nearness and 3D position.',
+  'Pinout':'Grid node. Snap-locks XY to home grid. Only Z push remains. The standard display node.',
+  'Palette':'Color node. Maps 0-1 values through a color lookup table. thermal, viridis, plasma...',
+  'Output':'Final render sink. Always present. Wire position, color, size, shape, rotation, stretch into it.',
+  'Spin':'Shape node. Continuous rotation from clock. Turns/second per axis. Wire to Output.rotation.',
+  'Shape':'Shape node. Pin cap geometry: sphere, cube, tube, slab, cone, ring, disc, spike, diamond.',
+  'Depth Drive':'Move node. Pulls pins off the Z-wall. gain controls push strength, gamma shapes curve.',
+  'Size':'Shape node. Final size = base x input. Clamped to min/max. Size 0 hides pin.',
+  'EMA Smooth':'Filter node. Temporal smoothing with deadband hysteresis and velocity-adaptive alpha.',
+  'Fill Holes':'Filter node. Fills IR-shadow holes from valid neighbors, foreground-only.',
+  'Grazing Cull':'Filter node. Rejects grazing-angle ToF returns and silhouette flying pixels.',
+  'Accumulate':'Filter node. Blends frames into a denser, calmer cloud via temporal averaging.',
+  'Smooth Surface':'Filter node. Bilateral smoothing. Flattens noise without bleeding edges.',
+  'Shockwave':'Move node. Expanding rings fired by triggers. Up to 4 active waves. Speed/width/damping.',
+  'Ripple':'Move node. Analytic rings from center. amplitude, wavelength, speed, falloff control.',
+  'Lag':'Move node. Exponential smoothing over time. halfLife controls speed. State per pin.',
+  'Trail':'Move node. Peak-hold with decay. Rises instantly, falls slowly. Glow afterimages.',
+  'Spring':'Move node. Physical spring simulation per pin. stiffness + damping. Wobbles on target.',
+  'Scatter':'Move node. Throws pins along seeded random directions. Amount 0 = exact home.',
+  'Twist':'Move node. Whirlpools positions around center. Angle + radial falloff.',
+  'Freeze':'Move node. Holds captured values while hold is up. Melts back to live on release.',
+  'Duotone':'Color node. Two-tone remap. Dark pins = shadow color, bright = light color. Risograph.',
+  'Contrast':'Color node. Pushes colors from mid-grey. 1 = unchanged, >1 = crunchier.',
+  'Color Gamma':'Color node. Per-channel power curve. <1 lifts shadows, >1 deepens.',
+  'Color Levels':'Color node. Full tone: gamma then gain then lift. Photo processing.',
+  'Depth Fog':'Color node. Atmospheric blending toward fog color with distance.',
+  't-Remap':'CPU control node. Scales input range to output range. Wire MIDI/audio into exposed params.',
+  't-Threshold':'CPU control node. Schmitt trigger. Fires when signal crosses rise. Re-arms below fall.',
+  't-Envelope':'CPU control node. Trigger to smooth 0-1. attack rise, release fall.',
+  'Beat Detect':'Audio analysis. Pulses trigger on detected transients from microphone.',
+  'Audio Volume':'Audio analysis. RMS volume 0-1 from microphone.',
+  'MIDI CC':'MIDI input. Reads Control Change 0-127. Outputs signal 0-1.',
+  'Noise':'Signal node. Animated 3D noise per pin. Perlin/simplex/random. Fractal layering. Color output.',
+  'Domain':'Grid node. Pin lattice topology: rect, hex, radial, spiral, scatter, perspective.',
+  'Jitter':'Grid node. Nudges pins by seeded random offset. Breaks machine-perfect regularity.',
+  'Look At':'Shape node. Orients pins to face target point. Iron-filings tracking effect.',
+  'Material':'Shape node. Shading: unlit/lit/matcap. roughness + metallic controls.',
+  'Hide':'Shape node. Visibility mask. Wire a region mask to fade pins outside it.',
+  'Hand Position':'Body node. Vision hand tracking. x,y signals 0-1. Wire to position-based params.',
+  'Pinch':'Body node. Hand pinch distance. 0=touching. Wire to scatter/size params.',
+  'Gestures':'Body node. Recognized gestures: palm, fist, peace, point. Each fires a trigger.',
+  'LFO':'Time node. Low-frequency oscillator. Waveforms + BPM sync. Wire to any exposed param.',
+  'Clock':'Time node. Global clock. beat/bar triggers + phase signal. BPM-sync all time nodes.',
+  'Camera':'Stage node. FOV, zoom, parallax, orbit, dolly. Controls the viewport camera.',
+  'Light':'Stage node. Point/directional/spot. Up to 4 active. Position, intensity, falloff.',
+  'NDI':'Output node. Streams viewport as NDI source with alpha channel for OBS/vMix.',
+  'Record':'Output node. Records viewport to H.264 MP4 in Photos library.'
+};
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+async function renderMermaid(){
+  var diagrams=document.querySelectorAll('.mermaid');
+  for(var i=0;i<diagrams.length;i++){
+    var d=diagrams[i];
+    if(d.querySelector('svg')) continue;
+    try{
+      var id='mermaid-'+i;
+      var code=d.textContent.trim();
+      d.innerHTML='';
+      d.id=id;
+      var result=await mermaid.render(id+'-svg',code);
+      d.innerHTML=result.svg;
+    }catch(e){console.error('Mermaid error:',e)}
+  }
+
+  // Add hover tooltips and click handlers
+  var tt=document.getElementById('tt');
+  document.querySelectorAll('.mermaid svg g.node').forEach(function(g){
+    var texts=g.querySelectorAll('tspan,text');
+    var label='';
+    texts.forEach(function(t){label+=t.textContent.trim()});
+
+    var clean=label.replace(/<br\/?>/g,' ').replace(/[^a-zA-Z0-9 .\-/#()]/g,'').trim();
+    var parts=clean.split(/[ ]+/);
+    var name=parts[0];
+    if(name&&nodeData[name]){
+      g.style.cursor='pointer';
+      g.addEventListener('mouseenter',function(e){
+        tt.innerHTML='<div class="tt-title">'+esc(name)+'</div><div class="tt-desc">'+esc(nodeData[name])+'</div><div class="tt-desc" style="margin-top:4px;color:var(--accent)">Click for full documentation</div>';
+        tt.classList.add('show');
+      });
+      g.addEventListener('mousemove',function(e){tt.style.left=(e.clientX+16)+'px';tt.style.top=(e.clientY-12)+'px'});
+      g.addEventListener('mouseleave',function(){tt.classList.remove('show')});
+      g.addEventListener('click',function(){
+        var cats={Depth:'source',Pinout:'grid',Palette:'color','Video Color':'source',Spin:'shape',Shape:'shape','Depth Drive':'move',Size:'shape','EMA Smooth':'filter','Fill Holes':'filter','Grazing Cull':'filter',Accumulate:'filter','Smooth Surface':'filter',Shockwave:'move',Ripple:'move',Lag:'move',Trail:'move',Spring:'move',Scatter:'move',Twist:'move',Freeze:'move',Duotone:'color',Contrast:'color','Color Gamma':'color','Color Levels':'color','Depth Fog':'color',Noise:'signal',Domain:'grid',Jitter:'grid','Look At':'shape',Material:'shape',Hide:'shape','Hand Position':'body',Pinch:'body',Gestures:'body',LFO:'time',Clock:'time',Camera:'stage',Light:'stage',NDI:'output',Record:'output',Output:'output',Palette:'color','t-Remap':'signal','t-Threshold':'signal','t-Envelope':'signal','Beat Detect':'signal','Audio Volume':'signal','MIDI CC':'signal'};
+        var cat=cats[name]||'';
+        var id=name.toLowerCase().replace(/[^a-z0-9]/g,'-').replace(/-+/g,'-');
+        if(cat)id=cat+'-'+id;
+        window.location.hash=id;
+      });
+    }
+  });
+}
+
+// Init
+expandForHash();
+setTimeout(renderMermaid,300);
+</script>
+</body>
+</html>
