@@ -429,6 +429,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
                     var fp = FillParamsSwift(w: UInt32(wrapped.width), h: UInt32(wrapped.height),
                                              radius: Int32(frame.fillRadius.rounded()),
                                              gapThresh: frame.fillGap)
+                    enc.setBytes(&fp, length: MemoryLayout<FillParamsSwift>.stride, index: 0)
                     let tg = MTLSize(width: 16, height: 16, depth: 1)
                     enc.dispatchThreads(MTLSize(width: wrapped.width, height: wrapped.height, depth: 1),
                                         threadsPerThreadgroup: tg)
