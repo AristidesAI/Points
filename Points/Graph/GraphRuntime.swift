@@ -1129,10 +1129,16 @@ final class GraphRuntime {
         // First camera in the graph wins — palette-added Cameras work, not just the default "cam".
         var cam = CameraFrame()
         if let c = graph.node("cam") ?? graph.nodes.first(where: { $0.specID == "camera" }) {
-            cam.fov = c.float("fov", 55); cam.zoom = c.float("zoom", 1)
-            cam.parallax = c.float("parallax", 0.5); cam.depthPush = c.float("depthPush", 1)
-            cam.centerX = c.float("centerX", 0); cam.centerY = c.float("centerY", 0)
-            cam.orbitX = c.float("orbitX", 0); cam.orbitY = c.float("orbitY", 0)
+            // Each camera param can be DRIVEN by a control node wired into its exposed ◇ (e.g. Orbit
+            // Cube → orbitX/orbitY for an auto-turntable); else the static slider value.
+            func p(_ name: String, _ fb: Float) -> Float {
+                if let w = graph.wireInto(c.id, name) { return (controlValues["\(w.fromNode).\(w.fromPort)"] ?? .zero).x }
+                return c.float(name, fb)
+            }
+            cam.fov = p("fov", 55); cam.zoom = p("zoom", 1)
+            cam.parallax = p("parallax", 0.5); cam.depthPush = p("depthPush", 1)
+            cam.centerX = p("centerX", 0); cam.centerY = p("centerY", 0)
+            cam.orbitX = p("orbitX", 0); cam.orbitY = p("orbitY", 0)
         }
         // FILTER nodes configure capture/EMA by presence (their wires pass depth through).
         let ema = graph.nodes.first { $0.specID == "ema-smooth" }

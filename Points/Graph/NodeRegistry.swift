@@ -704,7 +704,21 @@ final class NodeRegistry: @unchecked Sendable {
                      .float("centerX", -1...1, 0), .float("centerY", -1...1, 0),
                      .float("orbitX", -0.9...0.9, 0), .float("orbitY", -0.9...0.9, 0)],
             execution: .render,
-            description: "The camera, always orbiting the middle of the cloud so the 3D pins warp around that centre. FOV flat↔wide, ZOOM frames the cloud, PARALLAX dials perspective warp, DEPTH PUSH exaggerates how far pins travel, CENTRE nudges the pivot, ORBIT steps the view angle (joystick). Read straight by the renderer — not part of the per-pin chain."))
+            description: "The camera, always orbiting the middle of the cloud so the 3D pins warp around that centre. FOV flat↔wide, ZOOM frames the cloud, PARALLAX dials perspective warp, DEPTH PUSH exaggerates how far pins travel, CENTRE nudges the pivot, ORBIT steps the view angle (joystick). Read straight by the renderer — not part of the per-pin chain. Every param can also be DRIVEN by wiring a control node into its exposed ◇."))
+
+        register(NodeSpec(
+            id: "orbit-cube", name: "Orbit Cube", family: .stage,
+            outputs: [PortSpec("orbitX", .signal), PortSpec("orbitY", .signal)],
+            params: [.float("spin", -1...1, 0.1),      // turns / second (auto-turntable)
+                     .float("yaw", -1...1, 0),          // manual yaw offset (turns)
+                     .float("pitch", -1...1, 0.15)],    // tilt up/down (−1…1 → ±~86°)
+            execution: .control,
+            description: "Turntable driver for the Camera. Expose the Camera's orbitX / orbitY ◇ and wire ORBIT X → orbitX, ORBIT Y → orbitY; the view then auto-orbits. SPIN = turns per second, YAW = a fixed angle offset, PITCH = tilt. Feed SPIN/YAW from an LFO or audio for reactive moves.",
+            controlEval: { node, _, ctx in
+                let yaw = (ctx.time * node.float("spin", 0.1) + node.float("yaw", 0)) * 2 * .pi
+                let pitch = node.float("pitch", 0.15) * 1.5
+                return [[yaw, yaw, yaw, yaw], [pitch, pitch, pitch, pitch]]
+            }))
 
         register(NodeSpec(
             id: "output", name: "Output", family: .stage,
