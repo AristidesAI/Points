@@ -75,6 +75,96 @@ struct GizmoUniformsSwift {
     var color: SIMD4<Float> = [1, 0.28, 0.28, 1]
 }
 
+/// Compiled-once GPU state shared by every PinRenderer instance. Pipeline-state creation is the
+/// expensive part (the pin_program kernel alone costs seconds when the OS shader cache is cold),
+/// PSOs are immutable, and a NEW PROJECT creates a fresh renderer — recompiling all of this per
+/// instance froze the camera view black for ~9 s on the main thread, surfacing at the first
+/// compute dispatch (Metal defers part of the backend compile to first use).
+private nonisolated struct GPUPipelines: @unchecked Sendable {
+    let device: MTLDevice
+    let pipeline: MTLRenderPipelineState
+    let ghostPipeline: MTLRenderPipelineState
+    let postPipeline: MTLRenderPipelineState
+    let gizmoPipeline: MTLRenderPipelineState
+    let emaPipeline: MTLComputePipelineState
+    let fillPipeline: MTLComputePipelineState
+    let despecklePipeline: MTLComputePipelineState
+    let bilateralPipeline: MTLComputePipelineState
+    let accumulatePipeline: MTLComputePipelineState
+    let jbuPipeline: MTLComputePipelineState
+    let brightPipeline: MTLComputePipelineState
+    let vmPipeline: MTLComputePipelineState
+    let depthState: MTLDepthStencilState
+    let depthStateGhost: MTLDepthStencilState
+
+    static let shared: GPUPipelines = {
+        guard let device = MTLCreateSystemDefaultDevice() else { fatalError("Metal unavailable") }
+        let lib = device.makeDefaultLibrary()!
+        let desc = MTLRenderPipelineDescriptor()
+        desc.vertexFunction = lib.makeFunction(name: "pin_vertex")
+        desc.fragmentFunction = lib.makeFunction(name: "pin_fragment")
+        desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        desc.depthAttachmentPixelFormat = .depth32Float
+        let vd = MTLVertexDescriptor()
+        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0; vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float3; vd.attributes[1].offset = 16; vd.attributes[1].bufferIndex = 0
+        vd.layouts[0].stride = 32
+        desc.vertexDescriptor = vd
+        let pipeline = try! device.makeRenderPipelineState(descriptor: desc)
+
+        // GHOST (Render Settings): additive accumulation, no depth occlusion.
+        desc.colorAttachments[0].isBlendingEnabled = true
+        desc.colorAttachments[0].rgbBlendOperation = .add
+        desc.colorAttachments[0].alphaBlendOperation = .add
+        desc.colorAttachments[0].sourceRGBBlendFactor = .one
+        desc.colorAttachments[0].destinationRGBBlendFactor = .one
+        desc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        desc.colorAttachments[0].destinationAlphaBlendFactor = .one
+        let ghost = try! device.makeRenderPipelineState(descriptor: desc)
+
+        // Post composite (fullscreen triangle) — background / bloom / vignette / grain.
+        let post = MTLRenderPipelineDescriptor()
+        post.vertexFunction = lib.makeFunction(name: "post_vertex")
+        post.fragmentFunction = lib.makeFunction(name: "post_composite")
+        post.colorAttachments[0].pixelFormat = .bgra8Unorm
+        post.depthAttachmentPixelFormat = .depth32Float
+        let postPipe = try! device.makeRenderPipelineState(descriptor: post)
+
+        // Orbit-pivot gizmo (small cube at the orbit centre). Same mesh vertex layout as the pins.
+        let giz = MTLRenderPipelineDescriptor()
+        giz.vertexFunction = lib.makeFunction(name: "gizmo_vertex")
+        giz.fragmentFunction = lib.makeFunction(name: "gizmo_fragment")
+        giz.colorAttachments[0].pixelFormat = .bgra8Unorm
+        giz.depthAttachmentPixelFormat = .depth32Float
+        giz.vertexDescriptor = vd
+        let gizmo = try! device.makeRenderPipelineState(descriptor: giz)
+
+        func compute(_ name: String) -> MTLComputePipelineState {
+            try! device.makeComputePipelineState(function: lib.makeFunction(name: name)!)
+        }
+        let ds = MTLDepthStencilDescriptor()
+        ds.depthCompareFunction = .less
+        ds.isDepthWriteEnabled = true
+        let depthState = device.makeDepthStencilState(descriptor: ds)!
+        ds.depthCompareFunction = .always
+        ds.isDepthWriteEnabled = false
+        let depthGhost = device.makeDepthStencilState(descriptor: ds)!
+
+        return GPUPipelines(device: device,
+                            pipeline: pipeline, ghostPipeline: ghost,
+                            postPipeline: postPipe, gizmoPipeline: gizmo,
+                            emaPipeline: compute("depth_ema"),
+                            fillPipeline: compute("depth_fill_holes"),
+                            despecklePipeline: compute("depth_despeckle"),
+                            bilateralPipeline: compute("depth_bilateral"),
+                            accumulatePipeline: compute("depth_accumulate"),
+                            jbuPipeline: compute("depth_jbu"),
+                            brightPipeline: compute("bloom_brightpass"),
+                            vmPipeline: compute("pin_program"),
+                            depthState: depthState, depthStateGhost: depthGhost)
+    }()
+}
+
 /// Instanced pin-wall renderer. Fixed camera, Z=0 wall, depth pulls pins toward the camera.
 /// ponytail: single-file MVP renderer — domain warps / node engine / shape morphs come later.
 nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
@@ -175,12 +265,18 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var _colorEnabled = false   // color OFF by default — manual enable in settings
 
     override init() {
-        guard let dev = MTLCreateSystemDefaultDevice(), let q = dev.makeCommandQueue() else {
-            fatalError("Metal unavailable")
-        }
-        device = dev; queue = q
+        let gpu = GPUPipelines.shared          // compiled once per process — new projects reuse it
+        guard let q = gpu.device.makeCommandQueue() else { fatalError("Metal unavailable") }
+        device = gpu.device; queue = q
         super.init()
-        buildPipelines()
+        pipeline = gpu.pipeline; ghostPipeline = gpu.ghostPipeline
+        postPipeline = gpu.postPipeline; gizmoPipeline = gpu.gizmoPipeline
+        emaPipeline = gpu.emaPipeline; fillPipeline = gpu.fillPipeline
+        despecklePipeline = gpu.despecklePipeline; bilateralPipeline = gpu.bilateralPipeline
+        accumulatePipeline = gpu.accumulatePipeline; jbuPipeline = gpu.jbuPipeline
+        brightPipeline = gpu.brightPipeline; vmPipeline = gpu.vmPipeline
+        depthState = gpu.depthState; depthStateGhost = gpu.depthStateGhost
+        bloomBlur = MPSImageGaussianBlur(device: device, sigma: 6)
         buildMeshes()
         buildFallbacks()
         CVMetalTextureCacheCreate(nil, nil, device, nil, &textureCache)
@@ -690,66 +786,6 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let center = SIMD3<Float>(c.centerX, c.centerY, 0)
         let eye = center + dir * dEff
         return (proj * lookAt(eye: eye, center: center, up: [0, 1, 0]), eye)
-    }
-
-    private func buildPipelines() {
-        let lib = device.makeDefaultLibrary()!
-        let desc = MTLRenderPipelineDescriptor()
-        desc.vertexFunction = lib.makeFunction(name: "pin_vertex")
-        desc.fragmentFunction = lib.makeFunction(name: "pin_fragment")
-        desc.colorAttachments[0].pixelFormat = .bgra8Unorm
-        desc.depthAttachmentPixelFormat = .depth32Float
-        let vd = MTLVertexDescriptor()
-        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0; vd.attributes[0].bufferIndex = 0
-        vd.attributes[1].format = .float3; vd.attributes[1].offset = 16; vd.attributes[1].bufferIndex = 0
-        vd.layouts[0].stride = 32
-        desc.vertexDescriptor = vd
-        pipeline = try! device.makeRenderPipelineState(descriptor: desc)
-
-        // GHOST (Render Settings): additive accumulation, no depth occlusion.
-        desc.colorAttachments[0].isBlendingEnabled = true
-        desc.colorAttachments[0].rgbBlendOperation = .add
-        desc.colorAttachments[0].alphaBlendOperation = .add
-        desc.colorAttachments[0].sourceRGBBlendFactor = .one
-        desc.colorAttachments[0].destinationRGBBlendFactor = .one
-        desc.colorAttachments[0].sourceAlphaBlendFactor = .one
-        desc.colorAttachments[0].destinationAlphaBlendFactor = .one
-        ghostPipeline = try! device.makeRenderPipelineState(descriptor: desc)
-
-        // Post composite (fullscreen triangle) — background / bloom / vignette / grain.
-        let post = MTLRenderPipelineDescriptor()
-        post.vertexFunction = lib.makeFunction(name: "post_vertex")
-        post.fragmentFunction = lib.makeFunction(name: "post_composite")
-        post.colorAttachments[0].pixelFormat = .bgra8Unorm
-        post.depthAttachmentPixelFormat = .depth32Float
-        postPipeline = try! device.makeRenderPipelineState(descriptor: post)
-
-        // Orbit-pivot gizmo (small cube at the orbit centre). Same mesh vertex layout as the pins.
-        let giz = MTLRenderPipelineDescriptor()
-        giz.vertexFunction = lib.makeFunction(name: "gizmo_vertex")
-        giz.fragmentFunction = lib.makeFunction(name: "gizmo_fragment")
-        giz.colorAttachments[0].pixelFormat = .bgra8Unorm
-        giz.depthAttachmentPixelFormat = .depth32Float
-        giz.vertexDescriptor = vd
-        gizmoPipeline = try! device.makeRenderPipelineState(descriptor: giz)
-
-        emaPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_ema")!)
-        fillPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_fill_holes")!)
-        despecklePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_despeckle")!)
-        bilateralPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_bilateral")!)
-        accumulatePipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_accumulate")!)
-        jbuPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "depth_jbu")!)
-        brightPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "bloom_brightpass")!)
-        vmPipeline = try! device.makeComputePipelineState(function: lib.makeFunction(name: "pin_program")!)
-        bloomBlur = MPSImageGaussianBlur(device: device, sigma: 6)
-
-        let ds = MTLDepthStencilDescriptor()
-        ds.depthCompareFunction = .less
-        ds.isDepthWriteEnabled = true
-        depthState = device.makeDepthStencilState(descriptor: ds)
-        ds.depthCompareFunction = .always
-        ds.isDepthWriteEnabled = false
-        depthStateGhost = device.makeDepthStencilState(descriptor: ds)
     }
 
     // MARK: - Scene → post shared encoders (view, NDI and Record all use the same path)
