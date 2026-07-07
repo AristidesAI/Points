@@ -765,3 +765,36 @@ All items done. Build green.
 wire position/z → Output → still-image cloud with NO live-frame jitter over it; (2) X → points vanish;
 (3) menu ⟳ → everything in the table above restored; (4) DEPTHPUSH slider tops out at 2; (5) install
 size noticeably smaller.
+
+---
+
+### Round — polish notes:
+TD grid = default node-creation view · menu reset should reset parameters not the whole app · Vision
+Model image flashes black on every parameter/orbit step · model output is always square — accept any
+aspect (crop-UI page as backup) · aftereffect points trailing at the bottom/edges (IMG_8942).
+
+### Round — polish feedback (commit `298e80e`, grazing-cull fix `4bf1d7a`)
+
+- **TouchDesigner OP-grid is now the default** node-creation view (list still a toggle away).
+- **Menu ⟳ = parameter reset only** — default graph file + renderer state (30k pins, colour off,
+  selection d1). App preferences, imported media and the camera facing are untouched.
+- **Black flash fixed — root cause:** `DepthPlayer.start()` re-ran on EVERY graph change (slider
+  drags recompile per tick) and each run stopped the loop + reset the depth filter → one draw with no
+  depth = black, every step. The player is now idempotent per media (a store generation counter);
+  only a new bake or the X restarts the loop.
+- **Any aspect ratio — no crop page needed.** The CoreML input shape is fixed (square, baked into the
+  converted model — a true dynamic input needs a re-convert), so instead: non-square media is
+  **letterboxed** onto a centred black square for inference and the depth is **cropped back** to the
+  content region. The stored map keeps the source aspect, and the player sets nominal intrinsics from
+  that aspect (~60° hFOV) so METRIC mode renders it unsquashed. 16:9, 9:16, 4:3 — all fine.
+- **Aftereffect strands (IMG_8942) — root cause:** the temporal EMA persisted hole pixels FOREVER, so
+  a moving silhouette's IR shadow left strands of stale hand-depth behind it. TDLidar's EMA is a
+  bit-exact bypass at stabilize 0 (holes stay holes) — Points now matches: holes persist **only while
+  an EMA Smooth node is active**, raw mode drops them to nothing. (Same round: the Grazing Cull's
+  jittering dots in solid areas — 2-texel normal baseline + a real-change noise gate, `4bf1d7a`,
+  restore tag `pre-grazing-cull-fix`.)
+
+⚠ **Verify:** palette opens on the OP-grid; ⟳ resets sliders but keeps your prefs/media; image
+playback rock-steady while dragging any slider/orbit; a 16:9 video renders wide, not squashed
+(METRIC mode); wave a hand fast on TrueDepth — no trailing strands, and solid areas stay solid with
+Grazing Cull active.
