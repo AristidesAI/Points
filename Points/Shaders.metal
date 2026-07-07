@@ -734,25 +734,7 @@ kernel void depth_fill_holes(texture2d<float, access::read> inD [[texture(0)]],
                              uint2 gid [[thread_position_in_grid]]) {
     if (gid.x >= P.w || gid.y >= P.h) return;
     float dC = inD.read(gid).r;
-    if (dC > 0.05 && isfinite(dC)) {
-        // Isolated-spike reject: a lone mixed-pixel return at the silhouette (the IR-shadow side)
-        // reads metres NEARER than everything around it for a single frame — a giant sphere
-        // flashing right in front of the camera. A valid pixel passes through unless it has
-        // valid neighbours and NONE of them agrees with it within gapThresh.
-        int agree = 0, validN = 0;
-        const int2 offs[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
-        for (int i = 0; i < 4; ++i) {
-            int2 q = int2(gid) + offs[i];
-            if (q.x < 0 || q.y < 0 || q.x >= int(P.w) || q.y >= int(P.h)) continue;
-            float d = inD.read(uint2(q)).r;
-            if (d > 0.05 && isfinite(d)) {
-                validN += 1;
-                if (fabs(d - dC) < P.gapThresh) agree += 1;
-            }
-        }
-        outD.write(float4((validN >= 2 && agree == 0) ? 0.0 : dC), gid);
-        return;
-    }
+    if (dC > 0.05 && isfinite(dC)) { outD.write(float4(dC), gid); return; }   // already valid
     int R = P.radius;
     float dMin = 1e9;
     for (int dy = -R; dy <= R; ++dy) {

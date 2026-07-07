@@ -190,8 +190,9 @@ final class NodeRegistry: @unchecked Sendable {
                     .float("adapt", 0...10, 5)],
                    "TDLidar temporal EMA: deadband hysteresis hold (zero static jitter) + velocity-adaptive alpha (motion never lags). AMOUNT 0 = raw sensor, 1 = statue. DEADBAND = the hold threshold in metres (scaled by AMOUNT; higher = stiller statics). ADAPT = how hard motion snaps the filter awake (0 = dreamy lag). Without this node depth is raw.")
         passFilter("fill-holes", "Fill Holes",
-                   [.float("radius", 0...6, 3), .float("gap", 0.02...0.3, 0.08)],
-                   "IR-shadow hole fill (always on at RADIUS 3 even without this node — add it to tune). Each invalid pixel fills from valid neighbours within RADIUS px, foreground-only within GAP metres so the shadow closes onto the face, never a face/background blend. RADIUS 0 = fill off (raw holes).")
+                   [.float("radius", 0...6, 3), .float("gap", 0.02...0.3, 0.08),
+                    .float("despike", 0...8, 4)],
+                   "IR-shadow hole fill (always on at RADIUS 3 even without this node — add it to tune). Each invalid pixel fills from valid neighbours within RADIUS px, foreground-only within GAP metres so the shadow closes onto the face, never a face/background blend. RADIUS 0 = fill off (raw holes). DESPIKE runs BEFORE the fill: a point needs that many agreeing 5×5 neighbours or it's dropped — kills the flashing mixed-pixel clusters off the silhouette (0 = off).")
         passFilter("accumulate", "Accumulate",
                    [.float("frames", 1...30, 8)],
                    "Blends ~FRAMES frames of depth into a denser, calmer cloud (temporal average; holes keep the accumulated depth). Higher = smoother but laggier on motion. Runs while the node exists — the wire passes depth through.")
