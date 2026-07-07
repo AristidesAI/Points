@@ -658,3 +658,32 @@ preset (SEPARATION = metres→view scale, FOCUS = reference depth, DEPTHPUSH 1 =
   Also generalized: ANY camera param can now be driven by a control node via its ◇ (feed SPIN from an LFO
   or audio for reactive moves). ⚠ No visual pivot-cube gizmo yet (that's the render-pass half of TDLiDAR's
   version) — say if you want the on-screen cube too.
+
+### Round — Orbit Cube as a movable 3D handle + camera orbit wiring / hold / smoothing (commit `3bccc7c`)
+
+- **Orbit Cube is now a movable handle, not stuck.** Its settings have a **joystick** (L/R = yaw, U/D =
+  pitch) + **DOLLY** buttons (forward/back = the Z axis, closer/further). The red gizmo now sits at the
+  cube's position and **moves as you drive it**, so you see where you set it. `scope` recenters it.
+- **One clean output.** The two confusing ORBIT X / ORBIT Y outputs are gone — the cube now has **one
+  `ORBIT` output** carrying yaw/pitch/dolly. Wire that **single wire → the Camera's new `ORBIT` ◇**
+  (an always-present input diamond on the Camera). No more exposing two ports and wiring twice.
+- **Camera orbit is unbound → full 360** both ways (jog limit lifted from 0.9 to ~16 turns; pitch still
+  capped ~86° so it never flips over the pole).
+- **Hold to keep moving.** The Camera's ORBIT/POSITION jog chevrons (and the cube's DOLLY buttons) now
+  **repeat while held** (~16×/s after a short press) instead of one-step-per-tap. Tap still = one step.
+- **SMOOTH toggle** (wind icon) sits next to the ORBIT jog row in the Camera node. On = jog / joystick /
+  wired-orbit motion **eases** instead of hard move-then-stop. Off = the old snappy behaviour.
+- Preset angle buttons kept — they now snap the cube's yaw (and stop SPIN). SPIN slider still auto-turns.
+
+⚠ **On device:**
+- Add an **Orbit Cube** node → open it: the joystick should slide the **red cube** around (L/R, U/D) and
+  the DOLLY buttons push it in/out. Does the cube track your input?
+- Wire the cube's **ORBIT → Camera's ORBIT ◇** (one wire). Now moving the joystick / tapping a preset
+  should **orbit the view**; DOLLY should zoom the whole cloud in/out.
+- Camera node: **hold** an orbit chevron → view keeps rotating (no repeated tapping). Tap **SMOOTH** →
+  the same moves should glide instead of snapping.
+- Orbit should now go **all the way around** (past the old ~90° stop).
+- Heads-up on the gizmo: it's a *position readout of the handle*, not the orbit pivot — the cloud still
+  orbits the frame centre. If you'd rather the cube sit AT the pivot, say so (one-line change).
+- Sign check: is **up = look up** on the joystick, and does **preset 90°** turn the way you expect? Either
+  is a one-line flip if inverted.
