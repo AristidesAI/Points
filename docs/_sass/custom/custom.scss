@@ -1,0 +1,189 @@
+// Points custom styles — dark theme with point-cloud aesthetic
+
+// Typography
+$body-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+$mono-font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+
+// Dark theme
+$body-background-color: #0a0a14;
+$sidebar-color: #0d0d20;
+$border-color: #1a1a3e;
+$body-text-color: #c8c8e0;
+$body-heading-color: #e0e0ff;
+$nav-child-link-color: #8888bb;
+$search-background-color: #12122a;
+$search-result-preview-color: #8888bb;
+$link-color: #6ea8fe;
+$btn-primary-color: #5b8def;
+$code-background-color: #14142a;
+$feedback-color: #1a1a2e;
+
+// Sidebar
+$nav-width: 272px;
+$nav-width-md: 248px;
+
+// Code
+$code-background-color: #12122a;
+
+// Tables
+$table-background-color: #0d0d20;
+$table-border-color: #1a1a3e;
+$table-stripe-color: rgba(255, 255, 255, 0.02);
+
+// Mermaid diagrams
+.mermaid {
+  background: #0d0d20;
+  border: 1px solid #1a1a3e;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+
+  svg {
+    max-width: 100%;
+  }
+}
+
+// Note/tip/warning callouts
+.callout {
+  border-left: 4px solid #5b8def;
+  background: rgba(91, 141, 239, 0.08);
+  padding: 12px 16px;
+  margin: 16px 0;
+  border-radius: 0 6px 6px 0;
+}
+
+.callout-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+// Grid layout for home page
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.grid-3 > div {
+  background: #0d0d20;
+  border: 1px solid #1a1a3e;
+  border-radius: 8px;
+  padding: 16px;
+  transition: border-color 0.2s;
+
+  &:hover {
+    border-color: #5b8def;
+  }
+
+  h3 {
+    margin-top: 0;
+    font-size: 1rem;
+  }
+
+  p {
+    font-size: 0.85rem;
+    margin-bottom: 0;
+    line-height: 1.6;
+  }
+
+  a {
+    white-space: nowrap;
+  }
+}
+
+// Buttons
+.btn {
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-weight: 500;
+}
+
+.btn-green {
+  background: #1a6b3c;
+  color: #fff;
+
+  &:hover {
+    background: #218a4d;
+  }
+}
+
+// Table of contents
+.text-delta {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #6666aa;
+}
+
+// Nav
+.site-nav {
+  padding-top: 0;
+}
+
+.nav-list .nav-list-item .nav-list-link {
+  font-size: 0.85rem;
+}
+
+// Search
+.search-input {
+  border-radius: 6px;
+  border: 1px solid #1a1a3e;
+  background: #12122a;
+  color: #c8c8e0;
+
+  &:focus {
+    border-color: #5b8def;
+    box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.2);
+  }
+}
+
+// Scrollbar
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a4e;
+  border-radius: 3px;
+
+  &:hover {
+    background: #3a3a6e;
+  }
+}
+
+// Code blocks
+pre {
+  border: 1px solid #1a1a3e;
+  border-radius: 6px;
+  background: #0d0d20 !important;
+}
+
+code {
+  font-size: 0.85em;
+}
+
+// Footer
+.site-footer {
+  border-top: 1px solid #1a1a3e;
+  padding: 16px 0;
+  color: #555588;
+  font-size: 0.8rem;
+}
+
+// Back to top
+.back-to-top {
+  background: #1a1a3e;
+  color: #8888bb;
+  border-radius: 6px;
+
+  &:hover {
+    background: #5b8def;
+    color: #fff;
+  }
+}

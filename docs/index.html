@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Points — Visual LiDAR Synthesizer</title>
+  <style>
+    :root {
+      --bg: #0a0a14;
+      --panel: #0d0d20;
+      --border: #1a1a3e;
+      --text: #c8c8e0;
+      --text-dim: #8888bb;
+      --heading: #e0e0ff;
+      --accent: #6ea8fe;
+      --accent2: #5b8def;
+      --green: #1a6b3c;
+      --code-bg: #12122a;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    #bg-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 0;
+      opacity: 0.35;
+      pointer-events: none;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 80px 0 48px;
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 800;
+      color: var(--heading);
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .hero .tagline {
+      font-size: 1.15rem;
+      color: var(--text-dim);
+      max-width: 600px;
+      margin: 0 auto 32px;
+      line-height: 1.5;
+    }
+    .hero .btns {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: var(--accent2);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #4a7de0; transform: translateY(-1px); }
+    .btn-secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--accent2); background: rgba(91,141,239,0.1); }
+    .btn-green {
+      background: var(--green);
+      color: #fff;
+    }
+    .btn-green:hover { background: #218a4d; }
+
+    /* Sections */
+    section { padding: 48px 0; }
+    h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin-bottom: 16px;
+    }
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--heading);
+      margin-bottom: 8px;
+    }
+
+    /* Pipeline diagram */
+    .pipeline {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 32px 24px;
+      margin: 32px 0;
+      text-align: center;
+    }
+    .pipeline-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 0.9rem;
+    }
+    .pipe-step {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 14px;
+      white-space: nowrap;
+    }
+    .pipe-arrow { color: var(--accent); font-weight: bold; font-size: 1.2rem; }
+
+    /* Mode cards */
+    .modes {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .mode-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      transition: border-color 0.2s;
+    }
+    .mode-card:hover { border-color: var(--accent2); }
+    .mode-card .emoji { font-size: 1.5rem; margin-bottom: 8px; }
+    .mode-card .fps { color: var(--accent); font-size: 0.85rem; font-weight: 600; }
+
+    /* Family grid */
+    .families {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin: 24px 0;
+    }
+    .family-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      transition: border-color 0.2s;
+    }
+    .family-card:hover { border-color: var(--accent2); }
+    .family-card h3 { font-size: 0.95rem; margin-bottom: 6px; }
+    .family-card p { font-size: 0.82rem; color: var(--text-dim); line-height: 1.5; }
+    .family-card a { color: var(--accent); text-decoration: none; }
+    .family-card a:hover { text-decoration: underline; }
+
+    /* Example diagram */
+    .example {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin: 24px 0;
+    }
+    .example h3 { margin-top: 0; }
+
+    /* Mermaid container */
+    .mermaid {
+      background: transparent;
+      display: flex;
+      justify-content: center;
+      margin: 16px 0;
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border);
+      margin-top: 60px;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+
+    /* Code blocks */
+    code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.85em;
+      color: #a0c0ff;
+    }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 0.9rem;
+    }
+    th, td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      font-weight: 600;
+      color: var(--heading);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    tr:hover { background: rgba(255,255,255,0.02); }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .hero { padding: 48px 0 32px; }
+      .container { padding: 0 16px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <div class="container">
+    <!-- Hero -->
+    <header class="hero">
+      <h1>Points</h1>
+      <p class="tagline">
+        A live point cloud instrument with 110+ GPU nodes. Wire them together, modulate with audio, MIDI, OSC, and gestures — create real-time Metal-rendered visuals from LiDAR, TrueDepth, or RGB camera sources.
+      </p>
+      <div class="btns">
+        <a href="getting-started.md" class="btn btn-primary">Get Started</a>
+        <a href="nodes/" class="btn btn-secondary">Node Reference</a>
+        <a href="integrations.md" class="btn btn-green">Integrations</a>
+      </div>
+    </header>
+
+    <!-- Pipeline -->
+    <section>
+      <div class="pipeline">
+        <h3 style="margin-top:0;margin-bottom:16px;">How Points Works</h3>
+        <div class="pipeline-flow">
+          <span class="pipe-step">🎥 Depth Source</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-step">🧹 Cleanup</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-step">🎨 FX Pipeline</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-step">📌 Pinout GPU</span>
+          <span class="pipe-arrow">→</span>
+          <span class="pipe-step">🖥 Render 60fps</span>
+        </div>
+        <p style="margin-top:16px;font-size:0.85rem;color:var(--text-dim);">
+          Points never leave the GPU. The renderer fetches directly from the unprojector's interleaved 24-byte buffer — no CPU readback, no frame drops at 200,000 points.
+        </p>
+      </div>
+    </section>
+
+    <!-- Modes -->
+    <section>
+      <h2>Three Camera Modes</h2>
+      <div class="modes">
+        <div class="mode-card">
+          <div class="emoji">☁️</div>
+          <h3>CLOUD</h3>
+          <p>Back LiDAR · <span class="fps">30 fps</span></p>
+          <p style="font-size:0.85rem;color:var(--text-dim);">True 3D metric depth — objects keep real size, 1:1 with reality.</p>
+        </div>
+        <div class="mode-card">
+          <div class="emoji">😶</div>
+          <h3>FACE</h3>
+          <p>Front TrueDepth · <span class="fps">30 fps</span></p>
+          <p style="font-size:0.85rem;color:var(--text-dim);">Face mesh + 52 blendshapes as modulation sources for the cloud.</p>
+        </div>
+        <div class="mode-card">
+          <div class="emoji">💡</div>
+          <h3>LUMEN</h3>
+          <p>Back RGB · <span class="fps">60 fps</span></p>
+          <p style="font-size:0.85rem;color:var(--text-dim);">Luma-as-depth from BGRA at full 60fps. Grid-stable pins unlock per-pin history FX.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Node Families -->
+    <section>
+      <h2>Node Families</h2>
+      <div class="families">
+        <div class="family-card">
+          <h3>🎥 Source</h3>
+          <p>Depth · Video Color · Vision Model · Proximity · Confidence</p>
+        </div>
+        <div class="family-card">
+          <h3>📐 Grid</h3>
+          <p>Grid Info · Pinout · Domain · Jitter · Regions · UV Transform</p>
+        </div>
+        <div class="family-card">
+          <h3>🧹 Filter</h3>
+          <p>EMA Smooth · Fill Holes · Grazing Cull · Accumulate · Despeckle</p>
+        </div>
+        <div class="family-card">
+          <h3>🔷 Shape</h3>
+          <p>Size · Shape · Stretch · Spin · Look At · Stem · Material · Hide</p>
+        </div>
+        <div class="family-card">
+          <h3>➡️ Move</h3>
+          <p>Depth Drive · Lag · Trail · Ripple · Spring · Shockwave · Freeze</p>
+        </div>
+        <div class="family-card">
+          <h3>🎨 Color</h3>
+          <p>Palette · Duotone · Contrast · Gamma · Levels · Screen · Fog</p>
+        </div>
+        <div class="family-card">
+          <h3>〰️ Signal</h3>
+          <p>Math · Noise · Sine · Remap · Constant · Random (GPU + CPU)</p>
+        </div>
+        <div class="family-card">
+          <h3>🧠 Trigger</h3>
+          <p>If/Then · Envelope · Curve · Spring · Threshold · Logic Gates</p>
+        </div>
+        <div class="family-card">
+          <h3>🤖 Body</h3>
+          <p>Hand Position · Pinch · Gestures · Head Pose · Face Blendshapes</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Example -->
+    <section>
+      <h2>Quick Example: Depth → Palette → Output</h2>
+      <div class="example">
+        <h3>Minimal Patch</h3>
+        <div class="mermaid">
+graph LR
+    depth[Depth<br/>mode: metric] -->|depth| palette[Palette<br/>map: thermal]
+    palette -->|color| out[Output]
+    depth -->|position| pinout[Pinout]
+    depth -->|z| pinout
+    pinout -->|position| out
+    pinout -->|z| out
+        </div>
+        <p style="font-size:0.85rem;color:var(--text-dim);margin-top:12px;">
+          Wire Depth → Pinout → Output for the point cloud. Add Palette between Depth and Output for color. Done — you have a thermal-colored LiDAR cloud.
+        </p>
+      </div>
+    </section>
+
+    <!-- Integrations preview -->
+    <section>
+      <h2>External Integrations</h2>
+      <table>
+        <tr><th>Integration</th><th>Direction</th><th>Description</th></tr>
+        <tr><td>MIDI</td><td>Input</td><td>Control Change, Note, Pitch Bend, Clock sync</td></tr>
+        <tr><td>OSC</td><td>Input</td><td>Open Sound Control from TouchDesigner, Max/MSP, Processing</td></tr>
+        <tr><td>NDI</td><td>Output</td><td>Network Device Interface — alpha-keyed video stream for OBS/vMix</td></tr>
+        <tr><td>Audio Analysis</td><td>Input</td><td>FFT bands, beat detection, onset triggers from mic</td></tr>
+        <tr><td>Vision Body</td><td>Input</td><td>Hand position, pinch, gestures, head pose, face blendshapes</td></tr>
+        <tr><td>MP4 Recording</td><td>Output</td><td>H.264 recording to Photos library</td></tr>
+      </table>
+      <p style="margin-top:16px;">
+        <a href="integrations.md" class="btn btn-secondary" style="font-size:0.85rem;">Full Integration Guide →</a>
+      </p>
+    </section>
+
+    <!-- Getting Started -->
+    <section>
+      <h2>Getting Started</h2>
+      <div class="modes">
+        <div class="mode-card">
+          <h3>1. Add a Depth Node</h3>
+          <p style="font-size:0.85rem;color:var(--text-dim);">This reads your device's LiDAR, TrueDepth, or RGB camera and turns it into per-point data.</p>
+        </div>
+        <div class="mode-card">
+          <h3>2. Wire to Pinout</h3>
+          <p style="font-size:0.85rem;color:var(--text-dim);">Pinout snaps every point to its grid home and pushes Z by the depth value — the classic pin-screen toy.</p>
+        </div>
+        <div class="mode-card">
+          <h3>3. Connect to Output</h3>
+          <p style="font-size:0.85rem;color:var(--text-dim);">Output is the final render sink. Everything routes through it to appear on screen.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>Points — Visual LiDAR Synthesizer · <a href="nodes/">Full Node Reference</a> · <a href="integrations.md">Integrations</a></p>
+      <p style="margin-top:8px;">Built with Metal on iOS 26.5+ · 110+ GPU nodes · 200,000 point cloud at 60fps</p>
+    </footer>
+  </div>
+
+  <!-- Mermaid -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+  </script>
+
+  <!-- Interactive Point Cloud Background -->
+  <script>
+  (function() {
+    const canvas = document.getElementById('bg-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let pts = [];
+    const N = 200;
+    let mx = 0.5, my = 0.5, tmx = 0.5, tmy = 0.5, t = 0;
+
+    function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+
+    for (let i = 0; i < N; i++) {
+      pts.push({ x: Math.random(), y: Math.random(), z: Math.random(), vx: 0, vy: 0,
+        bx: Math.random(), by: Math.random(), bz: Math.random(),
+        s: 0.5 + Math.random() * 1.5, h: 200 + Math.random() * 40, a: 0.3 + Math.random() * 0.5 });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      mx += (tmx - mx) * 0.05; my += (tmy - my) * 0.05; t += 0.016;
+      const w = canvas.width, h = canvas.height;
+      for (const p of pts) {
+        const ox = Math.sin(t * 0.3 + p.bz * 6.28) * 0.02;
+        const oy = Math.cos(t * 0.4 + p.bz * 6.28) * 0.02;
+        p.vx += ((mx - 0.5) * 0.3 + ox - (p.x - p.bx)) * 0.003;
+        p.vy += ((my - 0.5) * 0.3 + oy - (p.y - p.by)) * 0.003;
+        p.vx *= 0.95; p.vy *= 0.95;
+        p.x += p.vx; p.y += p.vy;
+        const d = 0.5 + p.z * 0.5;
+        const px = p.x * w + (mx - 0.5) * 40 * d;
+        const py = p.y * h + (my - 0.5) * 40 * d;
+        if (px < -50 || px > w + 50 || py < -50 || py > h + 50) continue;
+        const sz = p.s * d * 1.8, al = p.a * d * 0.6;
+        const g = ctx.createRadialGradient(px, py, 0, px, py, sz * 3);
+        g.addColorStop(0, `hsla(${p.h},70%,60%,${al})`);
+        g.addColorStop(0.3, `hsla(${p.h},60%,50%,${al * 0.6})`);
+        g.addColorStop(1, 'transparent');
+        ctx.beginPath(); ctx.arc(px, py, sz * 3, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, sz * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${p.h},30%,80%,${al * 1.2})`; ctx.fill();
+      }
+      requestAnimationFrame(draw);
+    }
+
+    document.addEventListener('mousemove', e => { tmx = e.clientX / innerWidth; tmy = e.clientY / innerHeight; });
+    document.addEventListener('touchmove', e => { tmx = e.touches[0].clientX / innerWidth; tmy = e.touches[0].clientY / innerHeight; }, { passive: true });
+    window.addEventListener('resize', resize);
+    resize(); draw();
+  })();
+  </script>
+</body>
+</html>
