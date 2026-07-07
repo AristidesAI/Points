@@ -92,7 +92,9 @@ final class NodeRegistry: @unchecked Sendable {
             inputs: [PortSpec("depth", .fieldFloat)],
             outputs: [PortSpec("position", .fieldVec3), PortSpec("z", .fieldFloat)],
             params: [.float("separation", 0...3, 1), .float("volume", 0...2, 0),
-                     .float("wobble", 0...0.5, 0), .float("gain", 0...3, 1.2),
+                     // gain 2.5 matches the lateral fan scale (sep·2·extX/focus with the ~63° TrueDepth
+                     // span) so FREE's Z recession is uniform with XY → true perspective shrink (TDLidar).
+                     .float("wobble", 0...0.5, 0), .float("gain", 0...3, 2.5),
                      .option("mode", ["free", "pinout", "metric"], "free"),
                      .bool("arms", false),
                      .float("focus", 0.3...3, 1.0),
@@ -132,7 +134,7 @@ final class NodeRegistry: @unchecked Sendable {
                     b.addPatchKey("\(node.id).separation", lane: 0)
                     b.addPatchKey("\(node.id).focus", lane: 1)
                     b.emitPatched(PinInstruction(.unprojectZ, dst: fz, a: d,
-                                                 imm: [node.float("gain", 1.2), focus, 0, 0]),
+                                                 imm: [node.float("gain", 2.5), focus, 0, 0]),
                                   key: "\(node.id).z", lanes: [0, 1])
                     b.addPatchKey("\(node.id).gain", lane: 0)
                     b.addPatchKey("\(node.id).focus", lane: 1)
@@ -699,7 +701,7 @@ final class NodeRegistry: @unchecked Sendable {
     private func registerStage() {
         register(NodeSpec(
             id: "camera", name: "Camera", family: .stage,
-            params: [.float("fov", 15...110, 55), .float("zoom", 0.5...2, 1),
+            params: [.float("fov", 15...110, 60), .float("zoom", 0.5...2, 1),
                      .float("parallax", 0...1, 0.5), .float("depthPush", 0...3, 1),
                      .float("centerX", -1...1, 0), .float("centerY", -1...1, 0),
                      .float("orbitX", -0.9...0.9, 0), .float("orbitY", -0.9...0.9, 0)],

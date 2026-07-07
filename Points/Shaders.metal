@@ -462,7 +462,10 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
         }
     }
 
-    outBuf[gid].posSize = float4(baseXY + posOff.xy, max(posOff.z, 0.0), sizeMul * keep);
+    // No Z clamp: metric/free clouds extend BOTH ways off the wall (points farther than FOCUS
+    // go behind it) — clamping pancaked everything beyond ~1 m flat, killing TDLidar perspective.
+    // Pinout's pinFieldZ is already ≥ 0, so the pinned-grid look is unchanged.
+    outBuf[gid].posSize = float4(baseXY + posOff.xy, posOff.z, sizeMul * keep);
     outBuf[gid].color = color;
     outBuf[gid].rot = float4(rotAcc, clamp(shapeMorph, 0.0, 1.0));
     outBuf[gid].scl = float4(stretchAcc, shapeTarget);   // scl.w carries the shape morph TARGET index
