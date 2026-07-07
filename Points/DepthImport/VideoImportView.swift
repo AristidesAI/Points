@@ -2,33 +2,22 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
-// The video-processing screen (reached from the corner-menu import button). Pick a clip → choose
-// Indoor/Outdoor + quality → bake. While baking, the clockwise screen-edge loop fills and the
-// system shows the same progress in the Dynamic Island (BGContinuedProcessingTask) so it keeps
-// going when the app is minimised. GROUNDWORK: the bake is simulated (StubDepthModel) — see
-// DepthBakeManager / Plans/04-Depth-Import-Pipeline.md.
+// The media-processing screen (reached from the Vision Model node's image/video button). The
+// gallery opens immediately; picking a photo/video starts the MoGe-2 bake at once behind the
+// clockwise screen-edge loop, and finishing returns straight to the app (no setup or result
+// pages). The Dynamic Island shows progress if the app is minimised.
 
 struct VideoImportView: View {
-    var onBaked: ((Bool) -> Void)? = nil        // (isVideo) — add the source node / mark the live node
-    var preselectModel: String? = nil           // preselect this model (opened from a live-depth node)
+    var onBaked: ((Bool) -> Void)? = nil        // (isVideo) — mark the node's media flag
     @Environment(\.dismiss) private var dismiss
     @State private var bake = DepthBakeManager()
     @State private var picked: (url: URL, isVideo: Bool)?
-    @State private var options = BakeOptions()
-    @State private var modelName = LiveModel.pickerNames.first ?? "Metric Video DA S"
-    @State private var showPicker = false
+    @State private var showPicker = true        // straight into the gallery — no setup screen
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            Group {
-                switch bake.stage {
-                case .baking, .preparing: bakeScreen
-                case .done, .cancelled, .failed: resultScreen
-                default: setupScreen
-                }
-            }
-            .padding(24)
+            if bake.isRunning { bakeScreen.padding(24) }
             if bake.isRunning { ScreenEdgeProgress(progress: bake.progress) }   // the clockwise edge loop
         }
         .foregroundStyle(Theme.text)
@@ -36,68 +25,23 @@ struct VideoImportView: View {
         // traces the whole display edge (incl. above the clock/Island), then restore on completion.
         .statusBarHidden(bake.isRunning)
         .persistentSystemOverlays(bake.isRunning ? .hidden : .automatic)
-        .onAppear { if let p = preselectModel { modelName = p } }
-        .sheet(isPresented: $showPicker) {
-            MediaPicker { url, isVideo in picked = (url, isVideo) }.ignoresSafeArea()
+        // Pick → processing starts IMMEDIATELY (MoGe-2); cancelling the picker returns to the app.
+        .sheet(isPresented: $showPicker,
+               onDismiss: { if picked == nil { dismiss() } }) {
+            MediaPicker { url, isVideo in
+                picked = (url, isVideo)
+                bake.start(url: url, isVideo: isVideo, options: BakeOptions(), model: LiveModel.all[0])
+            }.ignoresSafeArea()
         }
-    }
-
-    // MARK: setup
-
-    private var setupScreen: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header("Import depth", "One-time on-device bake with your chosen model. Photo or video.")
-            Button { showPicker = true } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "photo.badge.plus")
-                    Text(picked == nil ? "Choose a photo or video…" : picked!.url.lastPathComponent).lineLimit(1)
-                    Spacer()
-                    if picked != nil { Image(systemName: "checkmark").foregroundStyle(Color(hex: 0x4DD0FF)) }
-                }
-                .font(.system(size: 13, weight: .medium))
-                .padding(14).background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-
-            modelPicker
-            if let p = picked {
-                Text(p.isVideo ? "Video → baked per frame (sampled ~6 fps), then loops on the canvas."
-                               : "Photo → a single bake.")
-                    .font(.system(size: 10)).foregroundStyle(Theme.text2)
-            }
-            Spacer()
-            Button {
-                if let p = picked {
-                    bake.start(url: p.url, isVideo: p.isVideo, options: options, model: LiveModel.named(modelName))
-                }
-            } label: {
-                Text("Start processing").font(.system(size: 14, weight: .semibold))
-                    .frame(maxWidth: .infinity).padding(14)
-                    .background(picked == nil ? Theme.panel : Color(hex: 0x2E7BFF))
-                    .foregroundStyle(picked == nil ? Theme.text2 : .white)
-                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-            }
-            .buttonStyle(.plain).disabled(picked == nil)
-            closeButton
-        }
-    }
-
-    /// Horizontal-scroll model picker — pick which depth model bakes the import.
-    private var modelPicker: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("MODEL").font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(LiveModel.pickerNames, id: \.self) { name in
-                        Text(name).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                            .padding(.horizontal, 10).padding(.vertical, 8)
-                            .background(modelName == name ? Theme.text : Theme.panel)
-                            .foregroundStyle(modelName == name ? Color.black : Theme.text)
-                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-                            .contentShape(Rectangle())
-                            .onTapGesture { modelName = name }
-                    }
-                }
+        // Done/cancelled/failed → straight back to the app, no result page. The media is loaded;
+        // wire the Vision Model node's outputs to see it.
+        .onChange(of: bake.stage) { _, st in
+            switch st {
+            case .done:
+                if let p = picked { onBaked?(p.isVideo) }
+                dismiss()
+            case .cancelled, .failed: dismiss()
+            default: break
             }
         }
     }
@@ -132,29 +76,6 @@ struct VideoImportView: View {
         }
     }
 
-    private var resultScreen: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: bake.stage == .done ? "checkmark.circle" : "xmark.circle")
-                .font(.system(size: 54)).foregroundStyle(bake.stage == .done ? Color(hex: 0x4DD0FF) : Theme.text2)
-            Text(resultText).font(.system(size: 15, weight: .semibold))
-            Text("Playback + the Source-node transport land with the real model bake.")
-                .font(.system(size: 10)).foregroundStyle(Theme.text2).multilineTextAlignment(.center)
-            Spacer()
-            Button {
-                if bake.stage == .done, let p = picked { onBaked?(p.isVideo) }
-                dismiss()
-            } label: {
-                Text(bake.stage == .done ? "Use in project" : "Done").font(.system(size: 14, weight: .semibold))
-                    .frame(maxWidth: .infinity).padding(14)
-                    .background(bake.stage == .done ? Color(hex: 0x2E7BFF) : Theme.panel)
-                    .foregroundStyle(bake.stage == .done ? .white : Theme.text)
-                    .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
     /// Live depth map coming out of the model — the proof it's working.
     private var depthPreview: some View {
         ZStack {
@@ -171,15 +92,6 @@ struct VideoImportView: View {
         .overlay(alignment: .topLeading) {
             Text("DEPTH").font(.system(size: 8, weight: .bold)).tracking(1.2).foregroundStyle(.white)
                 .padding(4).background(Color.black.opacity(0.6)).padding(6)
-        }
-    }
-
-    private var resultText: String {
-        switch bake.stage {
-        case .done: return "Baked \(bake.totalFrames) frames"
-        case .cancelled: return "Cancelled"
-        case .failed(let m): return "Failed — \(m)"
-        default: return ""
         }
     }
 
@@ -205,32 +117,6 @@ struct VideoImportView: View {
         s >= 60 ? String(format: "%d:%02d", Int(s) / 60, Int(s) % 60) : String(format: "%.0fs", s)
     }
 
-    /// Two-box tap-select row in the app's flat style.
-    private func picker<T: RawRepresentable & Hashable>(_ title: String, _ all: [T], _ sel: T,
-                                                         _ set: @escaping (T) -> Void) -> some View
-    where T.RawValue == String {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
-            HStack(spacing: 6) {
-                ForEach(all, id: \.self) { opt in
-                    Text(opt.rawValue).font(.system(size: 12, weight: .medium))
-                        .frame(maxWidth: .infinity).padding(.vertical, 9)
-                        .background(sel == opt ? Theme.text : Theme.panel)
-                        .foregroundStyle(sel == opt ? Color.black : Theme.text)
-                        .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-                        .onTapGesture { set(opt) }
-                }
-            }
-        }
-    }
-
-    private var closeButton: some View {
-        Button { dismiss() } label: {
-            Text("Close").font(.system(size: 12)).foregroundStyle(Theme.text2)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 // MARK: - PHPicker (photo or video → a stable temp URL + which kind)

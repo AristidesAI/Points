@@ -3,39 +3,23 @@ import CoreML
 import CoreImage
 import CoreVideo
 
-// Generic CoreML depth inference shared by the LIVE engine (camera → point cloud) and the BAKE
-// pipeline (imported media → stored depth → loop). Introspects the model's image input + depth
-// output; handles MLMultiArray or image outputs; returns a stable DISPLAY-metre field the pin
-// stage can render (robust-percentile normalised + temporally smoothed — see `metres`). One model
-// catalog + one warm cache for both paths.
+// CoreML depth inference for the BAKE pipeline (imported media → stored depth → loop).
+// Introspects the model's image input + depth output; returns RAW metres (per-pixel EMA) —
+// the same contract as the TrueDepth/LiDAR feed.
 
 struct LiveModel: Sendable, Equatable {
     var name: String        // display
     var resource: String    // compiled .mlmodelc bundle resource
-    var inverse: Bool       // model emits inverse/disparity depth (near = large) → flip
-    var metric: Bool = false // METRIC models output true metres (kept for reference; still normalised)
-    // NO per-model orientation bits: every model gets the same upright 3:4 input and is
-    // layout-preserving, so grid orient is always 0. The old per-model 180° flips (DA v2 S /
-    // MoGe-2 = 6) were mis-calibration — they CAUSED the upside-down clouds, and free/metric
-    // un-flipped XY while pinout didn't, which is why modes looked rotated differently.
-    // Dropped the two slow scene-specific metric models (DA2 Metric Indoor/Outdoor) and DA v3
-    // (removed per testing). Kept the fast general ones + MoGe-2 (per testing — wanted back).
+    // MoGe-2 is the ONLY model — imports (photo/video) bake through it once, then loop.
+    // The live-camera model path and the other models were removed (install size + focus:
+    // TrueDepth / LiDAR are the app's live sensors).
     static let all: [LiveModel] = [
-        LiveModel(name: "Metric Video DA S",   resource: "MetricVideoDA_S",           inverse: false, metric: true),
-        LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",    inverse: true),
-        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",      inverse: false, metric: true),
+        LiveModel(name: "MoGe-2", resource: "MoGe2_ViTB_Normal_504"),
     ]
     static func named(_ n: String) -> LiveModel { all.first { $0.name == n } ?? all[0] }
-    /// The models offered in the import page + live node pickers (display names).
-    static let pickerNames: [String] = all.map(\.name)
 }
 
 nonisolated final class DepthModelRunner: @unchecked Sendable {
-    // Display range the pin stage expects (Depth node defaults). Every model is normalised into this
-    // so a 0–80 m metric model and a 0–1 disparity model both render on the same stage; the node's
-    // near/far then fine-tune. (Was: metric passthrough → 0–80 m dumped into a 2.5 m stage = "zoomed in".)
-    private static let nearM: Float = 0.25, farM: Float = 2.5
-
     // MARK: warm cache (shared across every runner — live + bake). Loading a ViT is ~1–9 s the first
     // time; keep the last few resident so switching models is instant and never re-freezes.
     private struct Loaded { let model: MLModel; let inputName: String; let inputW: Int; let inputH: Int; let outputName: String }
@@ -71,32 +55,22 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         return l
     }
 
-    /// Free every resident model (called when the last Live Depth node is deleted).
-    static func purgeCache() { cacheLock.lock(); cache.removeAll(); order.removeAll(); cacheLock.unlock() }
-
     private let lock = NSLock()
     private var model: MLModel?
     private var inputName = "image", outputName = "depth"
     private var inputW = 518, inputH = 518
-    private var inverse = false
-    private var metric = false
     private var loadedResource = ""
-    private var smLo = Float.nan, smHi = Float.nan     // temporally-smoothed depth range (stops breathing)
-    private var prevOut: [Float] = []                  // previous frame's display metres (per-pixel EMA)
-
-    var isLoaded: Bool { lock.withLock { model != nil } }
-    /// True when a `load(m)` for this model would actually have to build/adopt (drives the loading UI).
-    func needsLoad(_ m: LiveModel) -> Bool { lock.withLock { !(loadedResource == m.resource && model != nil) } }
+    private var prevOut: [Float] = []                  // previous frame's metres (per-pixel EMA)
 
     /// Adopt the chosen model (from the warm cache, building it on first use). SLOW on a cache miss —
-    /// call off the main thread (LiveDepthEngine.load does; the bake runs it on a detached task).
+    /// call off the main thread (the bake runs it on a detached task).
     @discardableResult func load(_ m: LiveModel) -> Bool {
         if lock.withLock({ loadedResource == m.resource && model != nil }) { return true }
         guard let l = Self.loaded(m) else { return false }
         lock.lock()
         model = l.model; inputName = l.inputName; inputW = l.inputW; inputH = l.inputH; outputName = l.outputName
-        inverse = m.inverse; metric = m.metric; loadedResource = m.resource
-        smLo = .nan; smHi = .nan; prevOut = []         // new model → forget the old range + EMA history
+        loadedResource = m.resource
+        prevOut = []                                   // new model → forget the EMA history
         lock.unlock()
         return true
     }
@@ -107,7 +81,6 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         lock.lock()
         guard let model else { lock.unlock(); return nil }
         let inName = inputName, outName = outputName, iw = inputW, ih = inputH
-        let inv = inverse, met = metric
         lock.unlock()
         guard let feat = try? MLFeatureValue(cgImage: cg, pixelsWide: iw, pixelsHigh: ih,
                                              pixelFormatType: kCVPixelFormatType_32ARGB, options: nil),
@@ -119,92 +92,40 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         // to metres. Both nil for every other model.
         let mask = out.featureValue(for: "mask")?.multiArrayValue
         let mScale = out.featureValue(for: "metric_scale")?.multiArrayValue
-        return metres(dv, inverse: inv, metric: met, mask: mask, metricScale: mScale)
+        return metres(dv, mask: mask, metricScale: mScale)
     }
 
     // MARK: depth feature → metres
 
-    private func metres(_ v: MLFeatureValue, inverse: Bool, metric: Bool,
-                        mask: MLMultiArray?, metricScale: MLMultiArray?) -> ([Float], Int, Int)? {
+    private func metres(_ v: MLFeatureValue, mask: MLMultiArray?, metricScale: MLMultiArray?) -> ([Float], Int, Int)? {
         var raw: [Float] = []; var w = 0, h = 0
         if let a = v.multiArrayValue { (raw, w, h) = arrayFloats(a) }
         else if let px = v.imageBufferValue, let f = imageFloats(px) { (raw, w, h) = f }
         else { return nil }
         guard w > 0, h > 0, raw.count >= w * h else { return nil }
-        // Valid-pixel mask (MoGe-2): zero out invalid pixels BEFORE any range/EMA work.
+        // MoGe-2: zero out invalid pixels (its depth is arbitrary garbage where mask == 0) and lift
+        // to metres via metric_scale. RAW metres + a per-pixel EMA (TDLidar plan §2d) — the same
+        // contract as the TrueDepth/LiDAR feed; no display normalisation.
         if let mask {
             let (mf, mw, mh) = arrayFloats(mask)
             if mw == w, mh == h {
                 for i in 0..<(w * h) where mf[i] < 0.5 { raw[i] = 0 }
             }
         }
-        if metric {
-            // METRIC models (TDLidar plan §2d): feed RAW metres — the same contract as the
-            // TrueDepth/LiDAR feed — with a per-pixel EMA on the metres to stop the cloud
-            // breathing. NO percentile normalisation (that destroyed absolute scale and was
-            // the core of the garbled metric output).
-            let s: Float = metricScale.flatMap { $0.count >= 1 ? $0[0].floatValue : nil } ?? 1
-            lock.lock(); let prev = prevOut; lock.unlock()
-            let usePrev = prev.count == w * h
-            let a: Float = 0.55
-            var out = [Float](repeating: 0, count: w * h)
-            for i in 0..<(w * h) {
-                let x = raw[i] * s
-                guard x.isFinite, x > 0.02 else { out[i] = 0; continue }   // hole → 0 → culled
-                var m = x
-                if usePrev, prev[i] > 0 { m = a * m + (1 - a) * prev[i] }
-                out[i] = m
-            }
-            lock.lock(); prevOut = out; lock.unlock()
-            return (out, w, h)
-        }
-        // Robust range (2nd–98th percentile of valid pixels) rejects sky/hole outliers that used to
-        // blow out raw min/max → the scene compresses to ~flat and folds ("wraps around itself").
-        guard let (loP, hiP) = robustRange(raw, count: w * h) else { return nil }
-        // EMA the range across frames so it doesn't breathe frame-to-frame.
-        lock.lock()
-        smLo = smLo.isFinite ? smLo + (loP - smLo) * 0.15 : loP
-        smHi = smHi.isFinite ? smHi + (hiP - smHi) * 0.15 : hiP
-        let lo = smLo, hi = smHi
-        lock.unlock()
-        // Span floor at 5% of the far bound: a near-flat scene (tele lens on a wall/object) has a
-        // tiny percentile span, and dividing by it blew sensor noise up to the full display band —
-        // the "hydraulic press garble" on tele. Flat scenes now render flat instead.
-        let span = max(hi - lo, max(hi * 0.05, 1e-4))
-        let n = Self.nearM, f = Self.farM
-        // Map + temporal EMA in ONE pass. Monocular depth is noisy frame-to-frame and the renderer's
-        // EMA is off by default, so the raw jitter rendered as the "breathing/cloth" vortex; new frame
-        // weighted 0.55, rest history. The two-pass version (map, then a second EMA loop) added a whole
-        // extra per-pixel pass per frame → pushed the ViT frame budget over → dropped frames = SLOWER.
-        // ponytail: 0.55 is the smooth-vs-lag knob; raise toward 1 for snappier + noisier.
-        lock.lock(); let prev = prevOut; lock.unlock()   // COW snapshot — no copy, O(1)
+        let scale: Float = metricScale.flatMap { $0.count >= 1 ? $0[0].floatValue : nil } ?? 1
+        lock.lock(); let prev = prevOut; lock.unlock()
         let usePrev = prev.count == w * h
         let a: Float = 0.55
         var out = [Float](repeating: 0, count: w * h)
         for i in 0..<(w * h) {
-            let x = raw[i]
-            guard x.isFinite, x > 0.02 else { out[i] = 0; continue }   // hole → 0 → culled by the shader
-            var t = min(max((x - lo) / span, 0), 1)
-            if inverse { t = 1 - t }
-            var m = n + (f - n) * t
+            let x = raw[i] * scale
+            guard x.isFinite, x > 0.02 else { out[i] = 0; continue }   // hole → 0 → culled
+            var m = x
             if usePrev, prev[i] > 0 { m = a * m + (1 - a) * prev[i] }
             out[i] = m
         }
         lock.lock(); prevOut = out; lock.unlock()
         return (out, w, h)
-    }
-
-    /// Subsampled 2nd/98th percentile of finite, non-hole values. Coarse subsample (every 32nd px) so
-    /// the per-frame sort stays cheap — a fuller sample measurably dropped the model fps.
-    private func robustRange(_ raw: [Float], count: Int) -> (Float, Float)? {
-        var s: [Float] = []; s.reserveCapacity(count / 32 + 1)
-        var i = 0
-        while i < count { let x = raw[i]; if x.isFinite && x > 0.02 { s.append(x) }; i += 32 }
-        guard s.count > 32 else { return nil }
-        s.sort()
-        let lo = s[Int(Double(s.count) * 0.02)]
-        let hi = s[Int(Double(s.count) * 0.98)]
-        return hi > lo ? (lo, hi) : nil
     }
 
     private func arrayFloats(_ a: MLMultiArray) -> ([Float], Int, Int) {

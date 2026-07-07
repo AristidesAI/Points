@@ -225,6 +225,11 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var _nearestDepth: Float = 0
 
     func resetFilter() { lock.lock(); pendingReset = true; lock.unlock() }
+    /// Blank the cloud: drop the pending frame and invalidate the filtered depth so the next draw
+    /// binds the zero fallback texture — every pin reads a hole → no points. Used when a wired
+    /// Vision Model node has no media (X pressed / nothing imported yet).
+    func clearDepth() { lock.lock(); pendingDepth = nil; pendingColor = nil; pendingClear = true; lock.unlock() }
+    private var pendingClear = false
     func setPinCount(_ n: Int) { lock.lock(); _pinCount = max(64, min(n, Self.maxPins)); lock.unlock() }
     func setOrient(_ o: UInt32) { lock.lock(); _orient = o & 7; lock.unlock() }
     /// Normalized camera intrinsics (fx/W, fy/H, cx/W, cy/H) for the Depth node's METRIC unprojection.
@@ -257,9 +262,11 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         let colorBuf = pendingColor
         let lumaOnly = pendingLumaOnly
         let reset = pendingReset
+        let clearNow = pendingClear
         pendingDepth = nil
         pendingColor = nil
         pendingReset = false
+        pendingClear = false
         let count = _pinCount, orientNow = _orient, pinScaleNow = _pinScale, stemsNow = _stemsOn
         let camIntrinNow = _camIntrin
         let colorOn = _colorEnabled
@@ -322,6 +329,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             }
         }
         if reset { filteredValid = filteredValid && depthBuf != nil }
+        if clearNow, depthBuf == nil { filteredValid = false; accValid = false }   // blank until a new frame arrives
 
         // 2. Wrap color (bound for loadColor ops; the program decides whether it's used)
         if let cb = colorBuf {

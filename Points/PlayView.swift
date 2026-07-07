@@ -429,10 +429,9 @@ struct CornerMenu: View {
                      tint: ndiOn ? Theme.ndiActive : nil) { open = false; onNDI() }
                 cube("gearshape", active: false) { onSheet(.settings) }
                 cube("square.grid.2x2", active: false) { onBrowser() }
-                cube("photo.badge.plus", active: false) { onSheet(.importMedia) }
-                // Very end: recovery — restart the capture engine if the live feed ever stalls.
+                // Very end: UNIVERSAL RESET — every parameter back to its fresh-install default
+                // (default graph file, cleared media, camera + renderer state, app defaults).
                 cube("arrow.clockwise.circle", active: false) {
-                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                     onReset()
                 }
             }

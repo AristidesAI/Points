@@ -130,22 +130,20 @@ final class GraphRuntime {
     // Still Image / Video Source node exists in the graph.
     /// Live Depth node "video/image" button → ContentView presents the import for that node id.
     @ObservationIgnored var requestMedia: ((String) -> Void)?
-    private static let importedMediaIDs: Set<String> = ["still-image", "clip-transport"]
-    var usesImportedMedia: Bool { graph.nodes.contains { Self.importedMediaIDs.contains($0.specID) } }
-    /// True when a Still Image / Video Source node is IN the graph — presence switches the render
-    /// to the imported clip (the cloud outputs live on the Depth node now, so there is no display
-    /// node to wire into; delete the source node to return to the live camera).
-    var importedSourceWired: Bool { usesImportedMedia }
-    /// Any Live Depth Model node in the graph — presence triggers model preload so adding it never
-    /// freezes on a cold model build.
-    var firstLiveDepthNode: GraphNode? { graph.nodes.first { $0.specID == "live-depth" } }
-    /// The active Live Depth Model node (to read its model/lens choice), or nil. WIRE-driven: the
-    /// node takes over the camera only once ANY of its outputs is wired into the patch — a parked,
-    /// unwired node does nothing (it only preloads its model via `firstLiveDepthNode`).
-    var liveDepthNode: GraphNode? {
+    /// The Vision Model node that owns the depth feed, or nil. WIRE-driven: it takes over only
+    /// once ANY of its outputs is wired into the patch — a parked, unwired node does nothing.
+    var visionModelNode: GraphNode? {
         graph.nodes.first { n in
-            n.specID == "live-depth" && graph.wires.contains { $0.fromNode == n.id }
+            n.specID == "vision-model" && graph.wires.contains { $0.fromNode == n.id }
         }
+    }
+
+    /// Factory reset: the graph back to the fresh-install default file. Callers also clear imported
+    /// media, renderer state and app defaults (ContentView.factoryReset).
+    func resetToDefault() {
+        stopNDIStreaming()
+        graph = Self.defaultGraph()
+        recompile()
     }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,

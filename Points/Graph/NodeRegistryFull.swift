@@ -108,35 +108,16 @@ extension NodeRegistry {
             controlEval: { _, _, _ in [] }))
 
         registerSpec(NodeSpec(
-            id: "clip-transport", name: "Video Source", family: .source,
-            outputs: [PortSpec("depth", .fieldFloat)],
-            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false), .bool("loop", true)],
-            execution: .interpreterOp,
-            description: "An imported video's baked depth, per pin, playing on loop, remapped near→far — its presence takes over the depth feed — no wiring needed. Import a video to fill it.",
-            emit: { b, _, node in
-                let r = b.reg()
-                b.emitPatched(PinInstruction(.loadDepth, dst: r,
-                                             imm: [node.float("near", 0.1), node.float("far", 2.5), node.float("invert"), 0]),
-                              key: "\(node.id).range", lanes: [0, 1, 2])
-                b.addPatchKey("\(node.id).near", lane: 0)
-                b.addPatchKey("\(node.id).far", lane: 1)
-                b.addPatchKey("\(node.id).invert", lane: 2)
-                return [r]
-            }))
-
-        registerSpec(NodeSpec(
-            id: "live-depth", name: "Live Depth Model", family: .source,
+            id: "vision-model", name: "Vision Model", family: .source,
             outputs: [PortSpec("depth", .fieldFloat), PortSpec("position", .fieldVec3),
                       PortSpec("z", .fieldFloat)],
-            params: [.option("model", ["Metric Video DA S", "Depth Anything V2 S", "MoGe-2"], "Metric Video DA S"),
-                     .option("lens", ["Wide", "Ultra-wide", "Tele", "Front"], "Wide"),
-                     .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
+            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
                      .option("mode", ["free", "metric"], "metric"),
                      .float("separation", 0...4, 2.5), .float("focus", 0.3...3, 1.0),
                      .float("gain", 0...3, 2.5),
-                     .bool("media", false)],   // set by the node's video/image button — loops baked media instead of live camera
+                     .bool("media", false)],   // set by the node's image/video button; X clears it
             execution: .interpreterOp,
-            description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS. POSITION + Z are the same free/metric cloud outputs as the Depth node — wire them (or depth) into the patch to take over the feed; an unwired node does nothing.",
+            description: "Imported photo or video → point cloud. Tap its image/video button, pick from the gallery, and MoGe-2 bakes the depth once on-device (a video then loops). POSITION + Z are the same free/metric cloud outputs as the Depth node — nothing shows until you wire them (or depth) into the patch. The X discards the media → no points until you pick again.",
             emit: { b, _, node in
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.loadDepth, dst: r,
@@ -147,23 +128,6 @@ extension NodeRegistry {
                 b.addPatchKey("\(node.id).invert", lane: 2)
                 let (xy, z) = b.emitCloud(node, depthReg: r)
                 return [r, xy, z]
-            }))
-
-        registerSpec(NodeSpec(
-            id: "still-image", name: "Still Image", family: .source,
-            outputs: [PortSpec("depth", .fieldFloat)],
-            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
-            execution: .interpreterOp,
-            description: "An imported photo's baked depth, per pin, remapped near→far to 1→0 — its presence takes over the depth feed — no wiring needed. Import a photo to fill it.",
-            emit: { b, _, node in
-                let r = b.reg()
-                b.emitPatched(PinInstruction(.loadDepth, dst: r,
-                                             imm: [node.float("near", 0.1), node.float("far", 2.5), node.float("invert"), 0]),
-                              key: "\(node.id).range", lanes: [0, 1, 2])
-                b.addPatchKey("\(node.id).near", lane: 0)
-                b.addPatchKey("\(node.id).far", lane: 1)
-                b.addPatchKey("\(node.id).invert", lane: 2)
-                return [r]
             }))
 
         registerSpec(NodeSpec(

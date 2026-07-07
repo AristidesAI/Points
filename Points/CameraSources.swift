@@ -188,6 +188,15 @@ nonisolated final class LiDARCamera: NSObject, ARSessionDelegate {
     }
 }
 
+/// Cross-queue flag: capture callbacks (capture queue) must drop frames the moment imported media
+/// owns the feed, or in-flight / auto-recovered live frames stamp sideways clouds over the playback.
+private nonisolated final class MediaGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v = false
+    var isOn: Bool { lock.lock(); defer { lock.unlock() }; return v }
+    func set(_ on: Bool) { lock.lock(); v = on; lock.unlock() }
+}
+
 /// Owns which camera runs. One camera owner at a time; switches are sequenced stop → delay → start.
 @Observable
 final class SourceManager {
@@ -212,15 +221,19 @@ final class SourceManager {
     private let back = LiDARCamera()
     private var started = false
 
+    private let mediaGate = MediaGate()
+
     init(renderer: PinRenderer) {
         self.renderer = renderer
-        let r = renderer, v = vision
+        let r = renderer, v = vision, gate = mediaGate
         front.onFrame = { depth, color, luma, intr in
+            guard !gate.isOn else { return }   // media owns the feed — drop live frames (jitter fix)
             r.setIntrinsics(intr)                            // METRIC-mode unprojection
             r.ingest(depth: depth, color: color, lumaOnly: luma)
             if let c = color { v.process(c, front: true) }
         }
         back.onFrame = { depth, color, luma, intr in
+            guard !gate.isOn else { return }
             r.setIntrinsics(intr)
             r.ingest(depth: depth, color: color, lumaOnly: luma)
             if let c = color { v.process(c, front: false) }
@@ -260,6 +273,7 @@ final class SourceManager {
     func setMediaMode(_ on: Bool) {
         let transition = (mediaMode != on)
         mediaMode = on
+        mediaGate.set(on)
         if on {
             if transition { front.stop(); back.stop() }
         } else if started {
@@ -295,7 +309,19 @@ final class SourceManager {
         }
     }
 
-    /// Menu recovery button: restart the live capture engine + clear the depth/EMA scratch so a
+    /// Factory reset: back to the fresh-install camera state (front TrueDepth, colour off), then
+    /// restart the capture engine.
+    func resetToDefaults() {
+        colorEnabled = false
+        renderer.setColorEnabled(false)
+        mediaMode = false
+        mediaGate.set(false)
+        if facing != .front { facing = .front; back.stop() }
+        renderer.setOrient(Self.frontOrient)
+        restart()
+    }
+
+    /// Menu recovery: restart the live capture engine + clear the depth/EMA scratch so a
     /// stalled or frozen feed comes back fresh. The graph, nodes and settings are untouched.
     func restart() {
         started = true

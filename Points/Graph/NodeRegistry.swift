@@ -664,7 +664,7 @@ final class NodeRegistry: @unchecked Sendable {
             id: "camera", name: "Camera", family: .stage,
             inputs: [PortSpec("orbit", .signal)],   // ◇ — wire an Orbit Cube here to drive the view angle
             params: [.float("fov", 15...110, 60), .float("zoom", 0.5...2, 1),
-                     .float("parallax", 0...1, 0.5), .float("depthPush", 0...3, 1),
+                     .float("parallax", 0...1, 0.5), .float("depthPush", 0...2, 1),
                      .float("centerX", -1...1, 0), .float("centerY", -1...1, 0),
                      .float("orbitX", -100...100, 0), .float("orbitY", -1.5...1.5, 0),
                      .float("smooth", 0...1, 0)],   // 0 = hard move-then-stop, >0 = eased motion

@@ -7,7 +7,7 @@ import AVFoundation
 /// node's settings — the bar grows with the node's parameter count.
 /// Swipe left/right on the viewport fades the node editor in/out.
 enum AppSheet: String, Identifiable {
-    case importMedia, settings, record, ndi
+    case settings, record, ndi
     var id: String { rawValue }
 }
 
@@ -43,15 +43,7 @@ struct ContentView: View {
     @State private var vpH: CGFloat = 0      // live viewer height (grid centres inside it)
     @State private var sheet: AppSheet?
     @State private var player: DepthPlayer?      // loops imported baked depth into the renderer
-    @State private var rgbCam: RGBCameraSource?  // live RGB feed for the Live Depth Model node
-    @State private var liveEngine: LiveDepthEngine?
-    @State private var importForLiveNode: String?   // live-depth node id when its media button opened import
-    @State private var liveDepthLoading = false      // model warming up → show the loading overlay
-    @State private var hadLiveDepthNode = false      // track presence so delete can free the models
-    @State private var liveCamOn = false             // RGB session live → lens changes reconfigure in place
-    @State private var cameraSwitching = false       // lens switch in flight → overlay until the new feed's first frame
-    @State private var liveLens: RGBCameraSource.Lens?   // lens the live session is (being) started on
-    @State private var switchToken = 0               // stale-timeout guard for the switching overlay
+    @State private var importForNode: String?       // vision-model node id whose button opened the import
     @State private var importCover = false           // the bake screen — a FULL-screen cover (not a sheet)
                                                      // so the edge-loop progress can wrap the very top.
     @State private var palette: PaletteContext?
@@ -129,11 +121,11 @@ struct ContentView: View {
                                 .onTapGesture { menuOpen = false }
                         }
                         CornerMenu(sources: sources, runtime: runtime,
-                                   onSheet: { s in if s == .importMedia { importForLiveNode = nil; importCover = true } else { sheet = s } },
+                                   onSheet: { s in sheet = s },
                                    onBrowser: onBrowser,
                                    onNDI: { let id = runtime.ensureNDIOut(); selection = [id] },
                                    onRecord: { let id = runtime.ensureRecord(); selection = [id] },
-                                   onReset: { sources.restart() },
+                                   onReset: { factoryReset() },
                                    open: $menuOpen)
                             .padding(.top, 10)
                             .padding(.leading, 10)
@@ -230,17 +222,8 @@ struct ContentView: View {
         }
         .background(Theme.bg)   // paints the home-indicator gap — bar keeps the normal bottom space
         .preferredColorScheme(.dark)
-        .overlay {
-            if liveDepthLoading {
-                LiveDepthLoadingOverlay()
-            } else if cameraSwitching {
-                LiveDepthLoadingOverlay(title: "Switching camera…",
-                                        subtitle: "Restarting the capture session on the new lens.")
-            }
-        }
         .sheet(item: $sheet) { which in
             switch which {
-            case .importMedia: EmptyView()   // presented as a full-screen cover below, not a sheet
             case .settings: SettingsPlaceholderView()
             case .record: RecordPlaceholderView()
             case .ndi: NDIPlaceholderView()
@@ -248,13 +231,10 @@ struct ContentView: View {
         }
         // The bake screen is FULL screen (not a card) so its clockwise edge-loop progress can trace
         // the very top of the display, above where the status bar sits (hidden while baking).
-        .fullScreenCover(isPresented: $importCover, onDismiss: { importForLiveNode = nil }) {
-            VideoImportView(
-                onBaked: { isVideo in
-                    if let ln = importForLiveNode { runtime.setBool(ln, "media", true) }   // node loops its baked media
-                    else { addImportedNode(isVideo) }
-                },
-                preselectModel: importForLiveNode.flatMap { runtime.activeGraph.node($0)?.option("model", "Metric Video DA S") })
+        .fullScreenCover(isPresented: $importCover, onDismiss: { importForNode = nil }) {
+            VideoImportView(onBaked: { _ in
+                if let n = importForNode { runtime.setBool(n, "media", true) }   // node loops its baked media
+            })
         }
         // Full screen, square corners — the palette IS a screen, not a card.
         .fullScreenCover(item: $palette,
@@ -277,56 +257,18 @@ struct ContentView: View {
             if runtime.hasRecordNode, !askedPhotos { askedPhotos = true; recorder.requestAuthorization() }
             // Vision runs only while a body/hand node is in the graph.
             sources?.vision.setRunning(runtime.usesBodyNodes)
-            // Depth source is chosen by node PRESENCE (priority order):
-            //  • Live Depth Model node → run the RGB camera through the chosen CoreML model
-            //  • Still Image / Video Source → play the baked clip
-            //  • Depth (or nothing) → live TrueDepth / LiDAR
-            // Live Depth lifecycle: preload the model as soon as the NODE EXISTS (async, warm cache)
-            // so adding it never freezes on a cold ViT build; free every model
-            // when the last node is deleted. `load` re-runs here whenever the model option changes.
-            if let node = runtime.firstLiveDepthNode {
-                let model = LiveModel.named(node.option("model", "Metric Video DA S"))
-                if liveEngine?.needsLoad(model) == true {
-                    liveDepthLoading = true
-                    liveEngine?.load(model) { _ in liveDepthLoading = false }
-                }
-                hadLiveDepthNode = true
-            } else if hadLiveDepthNode {
-                hadLiveDepthNode = false; liveDepthLoading = false
-                DepthModelRunner.purgeCache()                        // last node gone → free the models
-            }
-            if let ln = runtime.liveDepthNode {
-                sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR (shares the camera)
-                if ln.bool("media") && !ImportedDepthStore.shared.isEmpty {
-                    liveCamOn = false; rgbCam?.stop(); player?.start()   // loop the baked media through this node's model
-                    endCameraSwitch()
+            // Depth source: a WIRED Vision Model node owns the feed (plays its baked media, or
+            // blanks while empty — X pressed / nothing imported); otherwise live TrueDepth/LiDAR.
+            if let vm = runtime.visionModelNode {
+                sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR
+                if vm.bool("media") && !ImportedDepthStore.shared.isEmpty {
+                    player?.start()
                 } else {
                     player?.stop()
-                    renderer.setOrient(0)                            // live-model feed is upright 3:4 — no remap
-                    let lens = RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide
-                    if liveCamOn {
-                        if lens != liveLens { beginCameraSwitch(to: lens) }   // overlay until the new feed's first frame
-                        rgbCam?.start(lens: lens)                    // already live → just switch the lens
-                    } else {
-                        liveCamOn = true
-                        beginCameraSwitch(to: lens)
-                        // Handoff: TrueDepth/LiDAR and the RGB session can't share the physical camera —
-                        // let the depth session release before RGB grabs it, or RGB comes up on a
-                        // contested camera (garble / wrong lens). ~0.45 s matches the sibling app.
-                        // Re-read the lens at fire time (not the captured one) so switching within the
-                        // window wins; bail if the node was unwired meanwhile.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            guard liveCamOn, let n = runtime.liveDepthNode, !n.bool("media") else { return }
-                            rgbCam?.start(lens: RGBCameraSource.Lens(rawValue: n.option("lens", "Wide")) ?? .wide)
-                        }
-                    }
+                    renderer.clearDepth()                            // no media → no points
                 }
-            } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
-                liveCamOn = false; rgbCam?.stop(); endCameraSwitch()
-                sources?.setMediaMode(true); player?.start()
             } else {
-                liveCamOn = false; rgbCam?.stop(); player?.stop(); sources?.setMediaMode(false)
-                endCameraSwitch()
+                player?.stop(); sources?.setMediaMode(false)
             }
             // NDI streams only while the NDI node's START is active (asks Local Network on first send).
             if runtime.ndiStreaming {
@@ -353,14 +295,7 @@ struct ContentView: View {
                 sources = s
                 s.start()
                 player = DepthPlayer(renderer: renderer)
-                let eng = LiveDepthEngine(renderer: renderer)
-                liveEngine = eng
-                let cam = RGBCameraSource()
-                cam.onFrame = { pb, intr, front in eng.process(pb, intrinsics: intr, front: front) }   // RGB frame + intrinsics → model → cloud
-                // First frame after a start/lens-switch = the new feed is genuinely live → drop the overlay.
-                cam.onFirstFrame = { Task { @MainActor in cameraSwitching = false; switchToken += 1 } }
-                rgbCam = cam
-                runtime.requestMedia = { nodeID in importForLiveNode = nodeID; importCover = true }
+                runtime.requestMedia = { nodeID in importForNode = nodeID; importCover = true }
                 let rt = runtime
                 renderer.programProvider = { rt.frameProgram() }
                 let ae = audio
@@ -428,32 +363,27 @@ struct ContentView: View {
 
     /// After a bake: drop a Still Image / Video Source node — its presence switches the feed.
     /// input, so the imported baked depth renders as the point cloud (and the DepthPlayer starts).
-    /// Show the "switching camera" overlay until the new lens delivers its first frame
-    /// (`rgbCam.onFirstFrame` clears it). 4 s timeout so a dead switch never wedges the UI.
-    private func beginCameraSwitch(to lens: RGBCameraSource.Lens) {
-        liveLens = lens
-        cameraSwitching = true
-        switchToken += 1
-        let token = switchToken
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-            if switchToken == token { cameraSwitching = false }
+    /// Universal reset (menu ⟳): every parameter back to its fresh-install default — the default
+    /// graph file, cleared imported media, renderer state, colour/pin-count, and app defaults.
+    private func factoryReset() {
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        recorder.finishIfRecording()
+        ndi.stop()
+        player?.stop()
+        ImportedDepthStore.shared.clear()
+        runtime.resetToDefault()
+        runtime.setColorMode(.none)
+        renderer.setPinCount(30_000)
+        renderer.setPinScale(1)
+        renderer.setColorEnabled(false)
+        renderer.setOrient(sources?.facing == .back ? SourceManager.backOrient : SourceManager.frontOrient)
+        renderer.resetFilter()
+        selection = ["d1"]
+        // First-launch app defaults (user aids etc.). @AppStorage falls back to its defaults.
+        if let bid = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bid)
         }
-    }
-
-    private func endCameraSwitch() {
-        liveLens = nil
-        cameraSwitching = false
-        switchToken += 1   // invalidate any pending timeout
-    }
-
-    private func addImportedNode(_ isVideo: Bool) {
-        let specID = isVideo ? "clip-transport" : "still-image"
-        // Presence-based source switch: the node existing takes over the depth feed — no wire
-        // needed (the cloud outputs live on the Depth node). Drop it left of the Depth node.
-        let d = runtime.activeGraph.nodes.first { $0.specID == "depth" }
-        let at = d.map { $0.position + [-Float(NodeMetrics.width) - 40, 0] } ?? .zero
-        guard let nid = runtime.addNode(specID, at: at) else { return }
-        selection = [nid]
+        sources?.resetToDefaults()
     }
 
     private func addNode(_ spec: NodeSpec) {
@@ -542,27 +472,6 @@ private struct EdgeSwitchHandle: View {
                 withAnimation(.easeOut(duration: 0.4)) { anim = false }
             }
         }
-    }
-}
-
-/// Shown while a Live Depth model is warming up (a cold ViT is ~1–9 s) or a camera switch is in
-/// flight. Blocks the "wraps around itself" garbage / stale-lens frames that would otherwise flash.
-private struct LiveDepthLoadingOverlay: View {
-    var title = "Loading depth model…"
-    var subtitle = "First load compiles for the Neural Engine — a few seconds."
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.72).ignoresSafeArea()
-            VStack(spacing: 14) {
-                ProgressView().controlSize(.large).tint(.white)
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
-            }
-        }
-        .transition(.opacity)
-        .allowsHitTesting(true)   // swallow taps while loading
     }
 }
 

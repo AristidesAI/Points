@@ -25,6 +25,8 @@ import CoreVideo
         self.orient = orient
     }
     func append(_ metres: [Float]) { if frames.count < 600 { frames.append(metres) } }   // ~600MB ceiling at 504²
+    /// Vision Model node's X button / factory reset — discard the media entirely.
+    func clear() { frames.removeAll(); width = 0; height = 0; isVideo = false }
 }
 
 /// Loops the store's frames into the renderer at ≤30 fps. Video advances + wraps; a photo repeats

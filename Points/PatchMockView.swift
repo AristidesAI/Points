@@ -1325,67 +1325,41 @@ struct OrbitCubeControls: View {
 
 // MARK: - Live Depth Model node controls (model + camera horizontal-scroll switchers)
 
-struct LiveDepthControls: View {
+struct VisionModelControls: View {
     let runtime: GraphRuntime
     let nodeID: String
     private var node: GraphNode? { runtime.activeGraph.node(nodeID) }
-
-    private var hasMedia: Bool { node?.bool("media") ?? false }
+    private var hasMedia: Bool { (node?.bool("media") ?? false) && !ImportedDepthStore.shared.isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            switcher("MODEL", LiveModel.pickerNames, node?.option("model", "") ?? "") {
-                runtime.setOption(nodeID, "model", $0)
-            }
-            if hasMedia {
-                // Baked media loops through the model; X discards it → back to the live camera.
-                HStack(spacing: 8) {
-                    Image(systemName: "film").font(.system(size: 11))
-                    Text("Video / image (looping)").font(.system(size: 11, weight: .medium))
-                    Spacer()
-                    Button { runtime.setBool(nodeID, "media", false) } label: {
-                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                            .frame(width: 30, height: 26).background(Theme.panel)
-                            .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-                    }.buttonStyle(.plain)
-                }
-                .foregroundStyle(Theme.text).padding(.vertical, 2)
-            } else {
-                switcher("CAMERA", RGBCameraSource.availableLenses().map(\.rawValue), node?.option("lens", "") ?? "") {
-                    runtime.setOption(nodeID, "lens", $0)
-                }
+            HStack(spacing: 8) {
+                // Pick a photo/video → it bakes immediately (MoGe-2) behind the edge-loop screen,
+                // then returns here; wire the node's outputs to see it.
                 Button { runtime.requestMedia?(nodeID) } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "photo.badge.plus").font(.system(size: 11))
-                        Text("Load video / image — bake once, then loop").font(.system(size: 11, weight: .medium))
+                        Image(systemName: hasMedia ? "film" : "photo.badge.plus").font(.system(size: 11))
+                        Text(hasMedia ? "Video / image (looping)" : "Load video / image")
+                            .font(.system(size: 11, weight: .medium))
                         Spacer()
                     }
                     .foregroundStyle(Theme.text).padding(10)
                     .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
                 }.buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12).padding(.vertical, 4)
-    }
-
-    private func switcher(_ title: String, _ opts: [String], _ sel: String,
-                          _ set: @escaping (String) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 9, weight: .bold)).tracking(1.2).foregroundStyle(Theme.text2)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(opts, id: \.self) { o in
-                        Text(o).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                            .padding(.horizontal, 10).padding(.vertical, 8)
-                            .background(sel == o ? Theme.text : Theme.panel)
-                            .foregroundStyle(sel == o ? Color.black : Theme.text)
+                if hasMedia {
+                    // X discards the media → the node outputs nothing until a new pick.
+                    Button {
+                        ImportedDepthStore.shared.clear()
+                        runtime.setBool(nodeID, "media", false)
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                            .frame(width: 34, height: 38).background(Theme.panel)
                             .overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
-                            .contentShape(Rectangle())
-                            .onTapGesture { UIImpactFeedbackGenerator(style: .light).impactOccurred(); set(o) }
-                    }
+                    }.buttonStyle(.plain).foregroundStyle(Theme.text)
                 }
             }
         }
+        .padding(.horizontal, 12).padding(.vertical, 4)
     }
 }
 
@@ -1463,8 +1437,8 @@ struct NodeSettingsBar: View {
                             .background(Theme.panel).overlay(Rectangle().stroke(Theme.line, lineWidth: 1))
                             .padding(.horizontal, 12).padding(.vertical, 4)
                     }
-                    if spec.id == "live-depth" {
-                        LiveDepthControls(runtime: runtime, nodeID: node.id)
+                    if spec.id == "vision-model" {
+                        VisionModelControls(runtime: runtime, nodeID: node.id)
                     }
                     if spec.id == "orbit-cube" {
                         OrbitCubeControls(runtime: runtime, nodeID: node.id)
@@ -1498,8 +1472,7 @@ struct NodeSettingsBar: View {
                     }
                     // NDI + Record share the standard renderer so they look identical; their
                     // arm param (STOP/START) shows as one coloured button, not a 2-way switcher.
-                    ForEach(spec.params.filter { $0.options != nil
-                        && !(spec.id == "live-depth" && ($0.name == "model" || $0.name == "lens")) }, id: \.name) { p in
+                    ForEach(spec.params.filter { $0.options != nil }, id: \.name) { p in
                         if let tint = ArmToggleButton.tint(specID: spec.id, param: p.name) {
                             ArmToggleButton(runtime: runtime, nodeID: node.id, param: p, tint: tint)
                         } else if spec.id == "ndi-out" && p.name == "name" {
