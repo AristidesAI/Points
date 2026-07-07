@@ -798,3 +798,26 @@ aspect (crop-UI page as backup) · aftereffect points trailing at the bottom/edg
 playback rock-steady while dragging any slider/orbit; a 16:9 video renders wide, not squashed
 (METRIC mode); wave a hand fast on TrueDepth — no trailing strands, and solid areas stay solid with
 Grazing Cull active.
+
+### Round — hidden parameters exposed (commit `01e8a19`)
+
+Swept every hardcoded tuning constant that had no editable parameter; each is now a slider on its
+node. Defaults = the old hardcoded values, so nothing changes until you touch them:
+
+| Node | New slider | Was hardcoded | Range (default) |
+|---|---|---|---|
+| Grazing Cull | GATE — noise floor before the grazing test may cull | 6 mm + 2×/m | 0–0.05 (0.006) |
+| Grazing Cull | BASELINE — normal sampling radius (texels) | 2 | 1–4 (2) |
+| Depth | EDGECULL — built-in silhouette flying-pixel reject; 0 = off | 6 cm | 0–0.3 (0.06) |
+| EMA Smooth | DEADBAND — hysteresis hold (m, × AMOUNT) | 0.008 | 0–0.05 (0.008) |
+| EMA Smooth | ADAPT — motion → alpha boost | 5 | 0–10 (5) |
+| Fill Holes | RADIUS — fill reach in px; 0 = raw holes | 3 (always-on) | 0–6 (3) |
+| Fill Holes | GAP — foreground-only fill band (m) | 0.08 | 0.02–0.3 (0.08) |
+| Despeckle Voxel | SUPPORT — required neighbours (5×5) | 4 | 1–8 (4) |
+| Smooth Surface | SIGMA — bilateral range sigma (m) | 0.05 | 0.01–0.2 (0.05) |
+| Detail Upsample | EDGE — JBU luma sigma | 0.08 | 0.02–0.3 (0.08) |
+| Bloom | RADIUS — glow spread (blur sigma px) | 6 | 1–12 (6) |
+
+Fill Holes matters even without the node (radius 3 is the app-wide default; add the node to tune or
+zero it). Grazing Cull's GATE/BASELINE are the two knobs behind the jitter fix — GATE up = solid
+areas ever stiller; BASELINE up = calmer, softer edge lines.
