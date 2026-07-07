@@ -638,3 +638,23 @@ preset (SEPARATION = metres→view scale, FOCUS = reference depth, DEPTHPUSH 1 =
   here — if the face is mirrored or sideways in metric mode, tell me and it's a one-line sign fix.
 - If it's close, I'll (a) make metric the default, (b) drop the far-clamp so deep scenes keep ordering,
   (c) calibrate the RGB-model intrinsics per lens. 
+### Round — free-zoom, live intrinsics, slowdown, camera controls, Orbit Cube (commits `8949565`, `f531b55`, `fdd08ad`)
+
+- **Free mode now zooms with distance.** Replaced its weak nearness push with a strong focus-referenced Z
+  recession (kept the fan XY), so the face SHRINKS as you move away — close to metric while keeping the
+  free look. GAIN = zoom strength, FOCUS = the wall depth. ⚠ needs DEPTHPUSH ≥ 1.
+- **Live Depth node → real intrinsics.** Enabled `cameraIntrinsicMatrixDelivery` on the RGB connection +
+  read the per-frame matrix (normalized, rotated for portrait) → METRIC mode on the live node uses the
+  real fx/fy/cx/cy now, not a nominal FOV.
+- **Slowdown found + fixed.** My normalization added a SECOND per-pixel pass (the EMA loop) on top of the
+  map loop → each frame went over the ViT budget → dropped frames = slower. Merged into one pass; lock is
+  now O(1). Should be back to the old speed (the models themselves are the floor).
+- **MoGe-2** was already restored (Metric Video DA S · DA V3 S · DA V2 S · MoGe-2).
+- **Camera pad no longer swipes pages.** While you hold/drag the joystick or jog, the deck's page-swipe is
+  suppressed — dragging the knob out of its box stays a camera move. **Orbit/Move are unbounded** now
+  (full turntable both ways, pitch capped at ~86° to avoid flipping; move ±5, orbit many turns).
+- **Orbit Cube = a node** (your pick). New **Orbit Cube** node: outputs ORBIT X / ORBIT Y; expose the
+  Camera's orbitX/orbitY ◇ and wire them → the view auto-orbits (SPIN turns/sec, YAW offset, PITCH tilt).
+  Also generalized: ANY camera param can now be driven by a control node via its ◇ (feed SPIN from an LFO
+  or audio for reactive moves). ⚠ No visual pivot-cube gizmo yet (that's the render-pass half of TDLiDAR's
+  version) — say if you want the on-screen cube too.
