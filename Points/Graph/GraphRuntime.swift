@@ -57,8 +57,6 @@ struct ProgramFrame {
     var smoothSigma: Float = 0.05                 // Smooth Surface SIGMA — range sigma (m)
     var jbuEdge: Float = 0.08                     // Detail Upsample EDGE — luma sigma
     var bloomSigma: Float = 6                     // Bloom RADIUS — gaussian sigma (px)
-    var despikeSupport: Float = 4                 // Fill Holes DESPIKE — always-on pre-fill despeckle
-                                                  // (required 5×5 neighbours; 0 = off)
 
     func light(_ i: Int) -> (SIMD4<Float>, SIMD4<Float>) {
         i < lights.count ? lights[i] : (.zero, .zero)
@@ -1275,8 +1273,7 @@ final class GraphRuntime {
                             despeckleSupport: despeckleNode?.float("support", 4) ?? 4,
                             smoothSigma: smoothNode?.float("sigma", 0.05) ?? 0.05,
                             jbuEdge: jbuNode?.float("edge", 0.08) ?? 0.08,
-                            bloomSigma: graph.nodes.first(where: { $0.specID == "bloom" })?.float("radius", 6) ?? 6,
-                            despikeSupport: fillNode?.float("despike", 4) ?? 4)
+                            bloomSigma: graph.nodes.first(where: { $0.specID == "bloom" })?.float("radius", 6) ?? 6)
     }
 
     /// Face/Body Region mask centre for patch lane c0/c1 this frame, in view UV space.

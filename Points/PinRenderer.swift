@@ -241,7 +241,6 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     private var accParity = 0
     private var accValid = false
     private var fillTex: MTLTexture?          // hole-filled depth scratch (r32Float)
-    private var despikeTex: MTLTexture?       // despiked raw depth (pre-fill) scratch (r32Float)
     private var emaParity = 0
     private var filteredValid = false
     private var colorTexRef: CVMetalTexture?   // keep wrapper alive through GPU work
@@ -421,31 +420,11 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
             // 0. Hole-fill the IR depth shadow (front camera) so it closes without Apple's filter,
             //    THEN feed the EMA. This kills the black band + the persist "trail".
             var emaInput = wrapped
-            // 0a. DESPIKE (always-on, pre-fill): the raw IR-shadow edge carries CORRELATED
-            //     clusters of mixed-pixels agreeing on a bogus intermediate depth for one frame
-            //     — they flashed as near-camera spheres, and the hole fill anchored on them and
-            //     grew them into blobs. TDLidar's despeckle, run on the RAW frame so the fill
-            //     below never even sees the spikes. Fill Holes node's DESPIKE slider tunes it.
-            if frame.despikeSupport >= 0.5 {
-                ensureFillTex(w: wrapped.width, h: wrapped.height)
-                if let dt = despikeTex, let enc = cmd.makeComputeCommandEncoder() {
-                    enc.setComputePipelineState(despecklePipeline)
-                    enc.setTexture(wrapped, index: 0)
-                    enc.setTexture(dt, index: 1)
-                    var p = CleanParamsSwift(w: UInt32(wrapped.width), h: UInt32(wrapped.height),
-                                             gap: frame.fillGap, radius: frame.despikeSupport)
-                    enc.setBytes(&p, length: MemoryLayout<CleanParamsSwift>.stride, index: 0)
-                    enc.dispatchThreads(MTLSize(width: wrapped.width, height: wrapped.height, depth: 1),
-                                        threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
-                    enc.endEncoding()
-                    emaInput = dt
-                }
-            }
             if frame.fillRadius >= 0.5 {
                 ensureFillTex(w: wrapped.width, h: wrapped.height)
                 if let ft = fillTex, let enc = cmd.makeComputeCommandEncoder() {
                     enc.setComputePipelineState(fillPipeline)
-                    enc.setTexture(emaInput, index: 0)   // despiked raw (or raw when despike off)
+                    enc.setTexture(wrapped, index: 0)
                     enc.setTexture(ft, index: 1)
                     var fp = FillParamsSwift(w: UInt32(wrapped.width), h: UInt32(wrapped.height),
                                              radius: Int32(frame.fillRadius.rounded()),
@@ -1001,12 +980,11 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     }
 
     private func ensureFillTex(w: Int, h: Int) {
-        if let t = fillTex, t.width == w, t.height == h, despikeTex != nil { return }
+        if let t = fillTex, t.width == w, t.height == h { return }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: w, height: h, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
         d.storageMode = .private
         fillTex = device.makeTexture(descriptor: d)
-        despikeTex = device.makeTexture(descriptor: d)
     }
 
     private func ensureEmaTextures(w: Int, h: Int) {
