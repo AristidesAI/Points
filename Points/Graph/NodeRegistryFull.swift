@@ -112,7 +112,7 @@ extension NodeRegistry {
             outputs: [PortSpec("depth", .fieldFloat)],
             params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false), .bool("loop", true)],
             execution: .interpreterOp,
-            description: "An imported video's baked depth, per pin, playing on loop, remapped near→far — wire depth → Point Display like the Depth node. Import a video to fill it.",
+            description: "An imported video's baked depth, per pin, playing on loop, remapped near→far — its presence takes over the depth feed — no wiring needed. Import a video to fill it.",
             emit: { b, _, node in
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.loadDepth, dst: r,
@@ -132,7 +132,7 @@ extension NodeRegistry {
                      .float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
                      .bool("media", false)],   // set by the node's video/image button — loops baked media instead of live camera
             execution: .interpreterOp,
-            description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS; wire depth → Point Display like the Depth node.",
+            description: "Runs a monocular depth MODEL live on the camera → point cloud, for phones with no back LiDAR (or to try MoGe-2 / Depth Anything on the back lenses). Pick MODEL + LENS; its presence takes over the depth feed — no wiring needed.",
             emit: { b, _, node in
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.loadDepth, dst: r,
@@ -149,7 +149,7 @@ extension NodeRegistry {
             outputs: [PortSpec("depth", .fieldFloat)],
             params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
             execution: .interpreterOp,
-            description: "An imported photo's baked depth, per pin, remapped near→far to 1→0 — wire depth → Point Display exactly like the Depth node. Import a photo to fill it.",
+            description: "An imported photo's baked depth, per pin, remapped near→far to 1→0 — its presence takes over the depth feed — no wiring needed. Import a photo to fill it.",
             emit: { b, _, node in
                 let r = b.reg()
                 b.emitPatched(PinInstruction(.loadDepth, dst: r,
@@ -402,7 +402,7 @@ extension NodeRegistry {
             params: [.option("profile", ["square", "round", "blade"], "square"),
                      .float("thickness", 0...1, 0.3), .float("taper", 0...1, 0.2)],
             execution: .render,
-            description: "Styles the arms from the Z-wall to each cap (turn ARMS on in Point Display to see them): PROFILE square/round/blade, THICKNESS scales their width, TAPER narrows them toward the cap. Just add the node."))
+            description: "Styles the arms from the Z-wall to each cap (turn ARMS on in the Depth node to see them): PROFILE square/round/blade, THICKNESS scales their width, TAPER narrows them toward the cap. Just add the node."))
         registerSpec(NodeSpec(
             id: "material", name: "Material", family: .shape,
             params: [.option("shading", ["unlit", "lit", "matcap"], "lit"),

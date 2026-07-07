@@ -34,12 +34,17 @@ final class NodeRegistry: @unchecked Sendable {
     private func registerSources() {
         register(NodeSpec(
             id: "depth", name: "Depth", family: .source,
-            inputs: [], outputs: [PortSpec("depth", .fieldFloat)],
+            inputs: [],
+            outputs: [PortSpec("depth", .fieldFloat), PortSpec("position", .fieldVec3),
+                      PortSpec("z", .fieldFloat)],
             // near 0.1: TrueDepth reads down to ~10 cm — a higher floor plateaus close
             // surfaces into a flat cap (the "goes flat when close" bug)
-            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false)],
+            params: [.float("near", 0.05...5, 0.1), .float("far", 0.2...8, 2.5), .bool("invert", false),
+                     .option("mode", ["free", "metric"], "metric"),
+                     .float("separation", 0...4, 2.5), .float("focus", 0.3...3, 1.0),
+                     .float("gain", 0...3, 2.5), .bool("arms", false)],
             execution: .interpreterOp,
-            description: "Raw sensor depth per pin, remapped near→far to 1→0 nearness.",
+            description: "The sensor AND the cloud (the old Point Display lives here now). POSITION + Z = the TDLidar point cloud: METRIC unprojects with the real camera intrinsics — objects keep true size and shrink as they move away, 1:1 with reality. SEPARATION = metres→view scale, FOCUS = the depth that sits at the wall. FREE = the intrinsic-free fan (GAIN = Z zoom strength). ARMS pull every point back to its Z-origin pin. DEPTH = plain nearness (near→far → 1→0) for palettes/modulation. Cleanup (EMA, fill holes, despeckle…) works by node presence.",
             emit: { b, _, node in
                 let r = b.reg()
                 // Kernel computes nearness with imm = (near, far, invert, 0); holes → 0.
@@ -50,7 +55,35 @@ final class NodeRegistry: @unchecked Sendable {
                 b.addPatchKey("\(node.id).near", lane: 0)   // §13 — per-param keys so nested triggers can drive each
                 b.addPatchKey("\(node.id).far", lane: 1)
                 b.addPatchKey("\(node.id).invert", lane: 2)
-                return [r]
+                let xy = b.reg(), z = b.reg()
+                let focus = node.float("focus", 1)
+                if node.option("mode", "metric") == "free" {
+                    // FREE: the TDLidar fan, intrinsic-free — XY spreads with z/focus, Z recedes
+                    // from FOCUS with GAIN (2.5 ≈ uniform with the lateral scale at sep 1).
+                    b.emitPatched(PinInstruction(.freeXY, dst: xy, a: r,
+                                                 imm: [node.float("separation", 1), focus, 0, 0]),
+                                  key: "\(node.id).xy", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).separation", lane: 0)
+                    b.addPatchKey("\(node.id).focus", lane: 1)
+                    b.emitPatched(PinInstruction(.unprojectZ, dst: z, a: r,
+                                                 imm: [node.float("gain", 2.5), focus, 0, 0]),
+                                  key: "\(node.id).z", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).gain", lane: 0)
+                    b.addPatchKey("\(node.id).focus", lane: 1)
+                } else {
+                    // METRIC: real camera-intrinsics unprojection to metric XYZ (TDLidar 1:1).
+                    // SEPARATION scales BOTH XY and Z — uniform geometry → true perspective.
+                    // Needs DEPTHPUSH = 1 (any other value stretches Z only).
+                    let scale = node.float("separation", 2.5)
+                    b.emitPatched(PinInstruction(.unprojectXY, dst: xy, a: r, imm: [scale, 0, 0, 0]),
+                                  key: "\(node.id).xy", lanes: [0])
+                    b.addPatchKey("\(node.id).separation", lane: 0)
+                    b.emitPatched(PinInstruction(.unprojectZ, dst: z, a: r, imm: [scale, focus, 0, 0]),
+                                  key: "\(node.id).z", lanes: [0, 1])
+                    b.addPatchKey("\(node.id).separation", lane: 0)
+                    b.addPatchKey("\(node.id).focus", lane: 1)
+                }
+                return [r, xy, z]
             }))
 
         register(NodeSpec(
@@ -88,60 +121,6 @@ final class NodeRegistry: @unchecked Sendable {
             }))
 
         register(NodeSpec(
-            id: "point-display", name: "Point Display", family: .grid,
-            inputs: [PortSpec("depth", .fieldFloat)],
-            outputs: [PortSpec("position", .fieldVec3), PortSpec("z", .fieldFloat)],
-            params: [.float("separation", 0...4, 2.5), .float("volume", 0...2, 0),
-                     .float("wobble", 0...0.5, 0), .float("gain", 0...3, 1.2),
-                     .option("mode", ["free", "pinout"], "free"),
-                     .bool("arms", false),
-                     .float("focus", 0.3...3, 1.0),
-                     .float("gamma", 0.25...4, 1), .float("zFlatten", 0...1, 1),
-                     .bool("edgeLock", true)],
-            execution: .interpreterOp,
-            description: "How the pins hold together. FREE = the TDLidar point cloud: real camera-intrinsics unprojection to metric XYZ, so objects keep true size and shrink as they move away. SEPARATION = metres→view scale, FOCUS = the depth that sits at the wall. PINOUT = pin-art toy: XY locked to the fixed grid (EDGE LOCK pins the outer ring), depth pushes each pin out — GAIN/GAMMA/Z-FLATTEN shape the push, ARMS draw the rods. Cleanup (grazing cull, EMA, hole fill…) lives in red FILTER nodes between Depth and here.",
-            emit: { b, inputs, node in
-                let d = b.materialize(inputs[0], default: .zero)
-                let mode = node.option("mode", "free")
-                // FREE (and legacy "metric" saves): real camera-intrinsics unprojection to metric
-                // XYZ — the TDLidar cloud. The old intrinsic-free fan (freeXY) + decoupled Z gain
-                // approximated this with a slightly different lateral scale and an independent
-                // Z knob; the two "TDLidar copies" are now ONE path so the look can't diverge.
-                // SEPARATION scales BOTH XY and Z (uniform → true perspective); FOCUS = reference
-                // depth at the wall. Needs DEPTHPUSH = 1 (any other value stretches Z only).
-                if mode != "pinout" {
-                    let scale = node.float("separation", 2.5), zRef = node.float("focus", 1)
-                    let mxy = b.reg(), mz = b.reg()
-                    b.emitPatched(PinInstruction(.unprojectXY, dst: mxy, a: d, imm: [scale, 0, 0, 0]),
-                                  key: "\(node.id).xy", lanes: [0])
-                    b.addPatchKey("\(node.id).separation", lane: 0)
-                    b.emitPatched(PinInstruction(.unprojectZ, dst: mz, a: d, imm: [scale, zRef, 0, 0]),
-                                  key: "\(node.id).z", lanes: [0, 1])
-                    b.addPatchKey("\(node.id).separation", lane: 0)
-                    b.addPatchKey("\(node.id).focus", lane: 1)
-                    return [mxy, mz]
-                }
-                let edge: Float = (node.float("edgeLock") > 0.5) ? 1 : 0
-                let xy = b.reg()
-                b.emitPatched(PinInstruction(.pinFieldXY, dst: xy, a: d,
-                                             imm: [node.float("separation", 1), node.float("volume", 0),
-                                                   node.float("wobble", 0), edge]),
-                              key: "\(node.id).xy", lanes: [0, 1, 2])
-                b.addPatchKey("\(node.id).separation", lane: 0)   // §13 per-param keys (pinout mode)
-                b.addPatchKey("\(node.id).volume", lane: 1)
-                b.addPatchKey("\(node.id).wobble", lane: 2)
-                let z = b.reg()
-                b.emitPatched(PinInstruction(.pinFieldZ, dst: z, a: d,
-                                             imm: [node.float("gain", 1.2), node.float("gamma", 1),
-                                                   node.float("zFlatten", 1), edge]),
-                              key: "\(node.id).z", lanes: [0, 1, 2])
-                b.addPatchKey("\(node.id).gain", lane: 0)   // §13 per-param keys
-                b.addPatchKey("\(node.id).gamma", lane: 1)
-                b.addPatchKey("\(node.id).zFlatten", lane: 2)
-                return [xy, z]
-            }))
-
-        register(NodeSpec(
             id: "region-ellipse", name: "Ellipse Region", family: .grid,
             inputs: [PortSpec("center", .vec2, default: [0.5, 0.5, 0, 0])],
             outputs: [PortSpec("mask", .fieldFloat)],
@@ -165,7 +144,7 @@ final class NodeRegistry: @unchecked Sendable {
     }
 
     // MARK: FILTER — depth cleanup (TDLidar's cleanup settings, each its own red node).
-    // Insert between Depth and Point Display. Grazing Cull is a real GPU pass; Apple
+    // Grazing Cull is a real GPU pass; Apple
     // Depth Filter / EMA / Fill Holes configure the capture + temporal filter by presence
     // (the depth field passes through their wire untouched).
 

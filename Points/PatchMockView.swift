@@ -1960,7 +1960,7 @@ struct CompactParamSlider: View {
     }
 }
 
-/// Flat segmented control for option params (e.g. Point Display FREE ↔ PINOUT).
+/// Flat segmented control for option params (e.g. Depth FREE ↔ METRIC).
 // MARK: - Noise node live preview (CPU value-noise mirror of the GPU field)
 
 private func nHash13(_ x: Int, _ y: Int, _ z: Int) -> Float {

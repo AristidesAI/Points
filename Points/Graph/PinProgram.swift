@@ -41,14 +41,12 @@ enum PinOp: UInt32 {
     case twistOp = 38      // dst = xy offset rotating baseXY around imm.xy by a.x turns, falloff imm.z
     case shockwave = 39    // dst = pulse from active waves (VMParams.waveT/C), imm=(speed,width,damping)
     case rectMask = 40     // dst = normalized box distance to rect imm=(cx,cy,hw,hh); 1 at edge
-    // Point Display (a = depth nearness 0..1):
-    case pinFieldXY = 41   // dst = XY spread/volume/wobble offset; imm=(separation, volume, wobble, edgeLock)
-    case pinFieldZ = 42    // dst = Z push; imm=(gain, gamma, zFlatten, edgeLock)
+    // (41/42 were the removed pinout-mode pinField ops — numbers stay retired)
     case hueShift = 43     // dst = a with hue rotated by imm.x turns (YIQ approx)
     case freeXY = 44       // dst = TDLidar free-cloud XY offset; imm=(separation, focusM, 0, 0); holes hide via keep flag
     case grazeCull = 45    // dst = a (passthrough); imm=(grazing01, edgeThreshM, 0, 0); culls via kernel keep flag
     case noise3 = 46       // dst = 3D noise [-1,1]; a.x optional z-drive; imm=(freq, seed, packed[ty+axis*10+aspect*100], timeMove)
-    // Point Display METRIC mode — real camera-intrinsics unprojection (U.camIntrin = fx_n,fy_n,cx_n,cy_n):
+    // Depth node cloud — real camera-intrinsics unprojection (U.camIntrin = fx_n,fy_n,cx_n,cy_n):
     case unprojectXY = 47  // dst = metric XY offset = (u-cx)/fx·z, (v-cy)/fy·z (metres × imm.x scale); holes hide via keep
     case unprojectZ = 48   // dst = metric Z = (imm.y zRef − z)·imm.x scale → farther recedes (true perspective size)
     case writeRot = 55     // rotAcc += a.xyz (euler turns) — Rotation/Spin → Output.rotation

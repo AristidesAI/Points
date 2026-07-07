@@ -30,7 +30,7 @@ struct ProgramFrame {
     var camera = CameraFrame()
     var depthStabilize: Float = 0     // EMA Smooth node amount (no node = raw depth)
     var holePersist = false           // Fill Holes node present + on
-    var stems = false                 // Point Display "arms" — pull points back to their Z pins
+    var stems = false                 // Depth node "arms" — pull points back to their Z pins
     var background: SIMD4<Float> = [0, 0, 0, 0]   // Background node: rgb + gradient amount
     var lights: [(SIMD4<Float>, SIMD4<Float>)] = []   // Light nodes (≤4): (pos+type, intensity/falloff/enabled)
     var post: SIMD4<Float> = .zero                // bloomThreshold, bloomIntensity, grain, vignette
@@ -132,38 +132,17 @@ final class GraphRuntime {
     @ObservationIgnored var requestMedia: ((String) -> Void)?
     private static let importedMediaIDs: Set<String> = ["still-image", "clip-transport"]
     var usesImportedMedia: Bool { graph.nodes.contains { Self.importedMediaIDs.contains($0.specID) } }
-    /// True when a Still Image / Video Source node FEEDS Point Display — that connection (not
-    /// mere presence) switches the render to the imported clip; wiring Depth back returns to live.
-    var importedSourceWired: Bool {
-        guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }) else { return false }
-        return upstreamNode(from: pd.id, where: { Self.importedMediaIDs.contains($0.specID) }) != nil
-    }
-    /// Any Live Depth Model node in the graph (wired or not) — presence triggers model preload so
-    /// wiring it into Point Display never freezes on a cold model build.
+    /// True when a Still Image / Video Source node is IN the graph — presence switches the render
+    /// to the imported clip (the cloud outputs live on the Depth node now, so there is no display
+    /// node to wire into; delete the source node to return to the live camera).
+    var importedSourceWired: Bool { usesImportedMedia }
+    /// Any Live Depth Model node in the graph — presence triggers model preload so adding it never
+    /// freezes on a cold model build.
     var firstLiveDepthNode: GraphNode? { graph.nodes.first { $0.specID == "live-depth" } }
-    /// The Live Depth Model node feeding Point Display (to read its model/lens choice), or nil.
-    /// Followed TRANSITIVELY: the docs tell users to insert FILTER nodes (Grazing Cull → Despeckle →
-    /// EMA…) between a source and Point Display — a direct-wire-only check silently killed the whole
-    /// live-model branch (camera never started, lens switcher dead) whenever a filter sat in between.
-    var liveDepthNode: GraphNode? {
-        guard let pd = graph.nodes.first(where: { $0.specID == "point-display" }) else { return nil }
-        return upstreamNode(from: pd.id, where: { $0.specID == "live-depth" })
-    }
-    /// First node upstream of `startID` (breadth-first through every input wire) matching `pred`.
-    private func upstreamNode(from startID: String, where pred: (GraphNode) -> Bool) -> GraphNode? {
-        var queue = [startID]
-        var seen: Set<String> = [startID]
-        var i = 0
-        while i < queue.count {
-            let id = queue[i]; i += 1
-            for w in graph.wires where w.toNode == id {
-                guard seen.insert(w.fromNode).inserted, let n = graph.node(w.fromNode) else { continue }
-                if pred(n) { return n }
-                queue.append(w.fromNode)
-            }
-        }
-        return nil
-    }
+    /// The active Live Depth Model node (to read its model/lens choice), or nil. PRESENCE-based:
+    /// the node existing in the graph takes over the camera — no wiring required (wire checks kept
+    /// silently killing the branch when filters or nothing sat between it and the display).
+    var liveDepthNode: GraphNode? { firstLiveDepthNode }
 
     // Control-graph evaluation: topo order over control nodes, per-frame value memo,
     // and persistent per-node state (envelopes/counters/S&H).
@@ -208,15 +187,13 @@ final class GraphRuntime {
         // never overlapping. Self-plumbed nodes (shockwave/freeze) are placed clear at runtime.
         g.nodes = [
             n("d1", "depth", 60, 130),
-            n("pd", "point-display", 330, 110),
             n("sz", "size", 330, 410),
             n("cam", "camera", 620, 60),
             n("out", "output", 620, 320),
         ]
         g.wires = [
-            Wire(fromNode: "d1", fromPort: "depth", toNode: "pd", toPort: "depth"),
-            Wire(fromNode: "pd", fromPort: "position", toNode: "out", toPort: "position"),
-            Wire(fromNode: "pd", fromPort: "z", toNode: "out", toPort: "z"),
+            Wire(fromNode: "d1", fromPort: "position", toNode: "out", toPort: "position"),
+            Wire(fromNode: "d1", fromPort: "z", toNode: "out", toPort: "z"),
             Wire(fromNode: "sz", fromPort: "out", toNode: "out", toPort: "size"),
         ]
         return g
@@ -236,27 +213,28 @@ final class GraphRuntime {
         switch name {
         case "Comet Trails":                                   // peak-hold afterimages on Z
             node("tr", "trail", 470, 300, ["decay": .float(3)])
-            wire("pd", "z", "tr", "in"); wire("tr", "out", "out", "z")
+            wire("d1", "z", "tr", "in"); wire("tr", "out", "out", "z")
         case "Arm Fire":                                       // stems ON + fire palette by depth
-            if let i = g.nodes.firstIndex(where: { $0.id == "pd" }) { g.nodes[i].params["arms"] = .bool(true) }
+            if let i = g.nodes.firstIndex(where: { $0.id == "d1" }) { g.nodes[i].params["arms"] = .bool(true) }
             node("pl", "palette", 470, 60, ["map": .option("fire")])
-            wire("pd", "z", "pl", "t"); wire("pl", "color", "out", "color")
+            wire("d1", "z", "pl", "t"); wire("pl", "color", "out", "color")
         case "Beat Strobe":                                    // 8 Hz square LFO → size
             node("lf", "lfo", 90, 560, ["rate": .float(8), "shape": .option("square")])
             wire("lf", "out", "sz", "size")
         case "Kick Shatter":                                   // depth-driven scatter of the grid
             node("sc", "scatter", 470, 380, ["amount": .float(0.5), "seed": .float(5)])
-            wire("pd", "z", "sc", "amount"); wire("sc", "offset", "out", "position")
+            wire("d1", "z", "sc", "amount"); wire("sc", "offset", "out", "position")
         case "Device Test":                                    // on-device checklist — Sticky Notes narrate each check
             func note(_ id: String, _ x: Float, _ y: Float, _ text: String) {
                 node(id, "comment", x, y, ["text": .option(text)])
             }
-            // depth cleanup chain: Depth → Grazing Cull → Despeckle → EMA → Point Display
+            // depth cleanup chain: Grazing Cull culls via its op (wired through the palette tap);
+            // Despeckle / EMA act on the depth texture by presence.
             node("gz", "grazing-cull", 60, 300, ["cull": .float(0.25), "edge": .float(0.1)])
             node("ds", "despeckle-voxel", 60, 430)
             node("em", "ema-smooth", 60, 560, ["amount": .float(0.3)])
             wire("d1", "depth", "gz", "depth"); wire("gz", "out", "ds", "depth")
-            wire("ds", "out", "em", "depth"); wire("em", "out", "pd", "depth")
+            wire("ds", "out", "em", "depth")
             note("n1", 60, 700, "1 DEPTH: cleanup chain live. Check no dust around your silhouette (Despeckle) and no shimmer (EMA). Free mode should match TDLidar.")
 
             // colour: thermal palette by depth
@@ -308,13 +286,13 @@ final class GraphRuntime {
         editActive { $0.setParam(nodeID, name, .float(value)) }
     }
 
-    /// Option/segment path (e.g. Point Display FREE ↔ PINOUT).
+    /// Option/segment path (e.g. Depth FREE ↔ METRIC).
     func setOption(_ nodeID: String, _ name: String, _ value: String) {
         guard activeGraph.node(nodeID) != nil else { return }
         pushUndo()
         editActive(recompileAfter: false) { $0.setParam(nodeID, name, .option(value)) }
-        // Point Display mode is a root-scope preset (it also nudges the shared camera).
-        if editScopeNodeID == nil, graph.node(nodeID)?.specID == "point-display", name == "mode" {
+        // Depth-node cloud mode is a root-scope preset (it also nudges the shared camera).
+        if editScopeNodeID == nil, graph.node(nodeID)?.specID == "depth", name == "mode" {
             applyDisplayMode(nodeID, value)
         }
         recompile()
@@ -323,24 +301,19 @@ final class GraphRuntime {
     private func applyDisplayMode(_ pdID: String, _ mode: String) {
         func p(_ id: String, _ k: String, _ v: Float) { graph.setParam(id, k, .float(v)) }
         let hasCam = graph.node("cam") != nil
-        if mode == "pinout" {
-            // Pin-art toy: XY LOCKED to the grid (separation 1 = exact pitch, no fan/volume/wobble),
-            // depth pushes each pin straight out, ARMS draw the rods. Long lens + full parallax
-            // flatten the view into the classic pin-screen relief.
-            p(pdID, "separation", 1); p(pdID, "volume", 0); p(pdID, "wobble", 0)
-            p(pdID, "gain", 0.8); p(pdID, "focus", 1); p(pdID, "gamma", 1.2); p(pdID, "zFlatten", 1)
-            graph.setParam(pdID, "arms", .bool(true))
+        if mode == "free" {
+            // Intrinsic-free TDLidar fan: sep 1 = the classic framing, gain 2.5 keeps the Z
+            // recession uniform with the lateral scale so perspective still reads true.
+            p(pdID, "separation", 1); p(pdID, "gain", 2.5); p(pdID, "focus", 1)
             if hasCam {
-                p("cam", "fov", 15); p("cam", "zoom", 2); p("cam", "parallax", 1); p("cam", "depthPush", 3)
+                p("cam", "fov", 60); p("cam", "zoom", 1); p("cam", "parallax", 0.5); p("cam", "depthPush", 1)
                 p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
             }
-        } else {   // free = the TDLidar metric cloud (registry defaults)
-            // SEPARATION = metres→view scale (2.5 ≈ TDLidar framing), FOCUS = reference depth at the
-            // wall (raise to ~3 for room-scale LiDAR). DEPTHPUSH must stay 1 — it scales Z only, so
-            // any other value breaks the uniform metric geometry. FOV 60 = the TDLidar viewer lens.
-            p(pdID, "separation", 2.5); p(pdID, "volume", 0); p(pdID, "wobble", 0)
-            p(pdID, "gain", 1.2); p(pdID, "focus", 1); p(pdID, "gamma", 1); p(pdID, "zFlatten", 1)
-            graph.setParam(pdID, "arms", .bool(false))
+        } else {   // metric — the registry defaults (TDLidar 1:1)
+            // SEPARATION = metres→view scale (2.5 ≈ TDLidar framing), FOCUS = reference depth at
+            // the wall. DEPTHPUSH must stay 1 — any other value stretches Z only and breaks the
+            // uniform metric geometry. FOV 60 = the TDLidar viewer lens.
+            p(pdID, "separation", 2.5); p(pdID, "focus", 1)
             if hasCam {
                 p("cam", "fov", 60); p("cam", "zoom", 1); p("cam", "parallax", 0.3); p("cam", "depthPush", 1)
                 p("cam", "centerX", 0); p("cam", "centerY", 0); p("cam", "orbitX", 0); p("cam", "orbitY", 0)
@@ -1010,7 +983,7 @@ final class GraphRuntime {
     /// Set an option param + recompile without pushing undo — used by option-port driving each flip frame.
     private func driveOption(_ nodeID: String, _ param: String, _ value: String) {
         graph.setParam(nodeID, param, .option(value))
-        if graph.node(nodeID)?.specID == "point-display", param == "mode" { applyDisplayMode(nodeID, value) }
+        if graph.node(nodeID)?.specID == "depth", param == "mode" { applyDisplayMode(nodeID, value) }
         recompile()
     }
 
@@ -1179,8 +1152,7 @@ final class GraphRuntime {
         }
         // FILTER nodes configure capture/EMA by presence (their wires pass depth through).
         let ema = graph.nodes.first { $0.specID == "ema-smooth" }
-        let fill = graph.nodes.first { $0.specID == "fill-holes" }
-        let stems = graph.node("pd")?.float("arms", 0) ?? 0
+        let stems = graph.nodes.first(where: { $0.specID == "depth" })?.float("arms", 0) ?? 0
         let despeckle = graph.nodes.first { $0.specID == "despeckle-voxel" }?.float("size", 0.02) ?? 0
         let smoothR = graph.nodes.first { $0.specID == "smooth-surface" }?.float("radius", 1) ?? 0
         let accum = graph.nodes.first { $0.specID == "accumulate" }?.float("frames", 8) ?? 0
@@ -1262,7 +1234,10 @@ final class GraphRuntime {
                             waveT: wt, waveCA: ca, waveCB: cb,
                             camera: cam,
                             depthStabilize: ema?.float("amount", 0.3) ?? 0,
-                            holePersist: fill.map { $0.float("persist", 1) > 0.5 } ?? false,
+                            // ALWAYS persist holes (TDLidar free-cloud behaviour). The retract path
+                            // (depth *= 0.9/frame) slid hole pixels along the view ray toward the
+                            // principal point — the "giant points travelling to the centre" bug.
+                            holePersist: true,
                             stems: stems > 0.5,
                             background: bg,
                             lights: lights,

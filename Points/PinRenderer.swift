@@ -227,7 +227,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
     func resetFilter() { lock.lock(); pendingReset = true; lock.unlock() }
     func setPinCount(_ n: Int) { lock.lock(); _pinCount = max(64, min(n, Self.maxPins)); lock.unlock() }
     func setOrient(_ o: UInt32) { lock.lock(); _orient = o & 7; lock.unlock() }
-    /// Normalized camera intrinsics (fx/W, fy/H, cx/W, cy/H) for Point Display METRIC unprojection.
+    /// Normalized camera intrinsics (fx/W, fy/H, cx/W, cy/H) for the Depth node's METRIC unprojection.
     func setIntrinsics(_ v: SIMD4<Float>) { lock.lock(); _camIntrin = v; lock.unlock() }
     func setZGain(_ g: Float) { lock.lock(); _zGain = max(0, min(g, 3)); lock.unlock() }
     func setPinScale(_ s: Float) { lock.lock(); _pinScale = max(0.2, min(s, 3)); lock.unlock() }
@@ -486,7 +486,7 @@ nonisolated final class PinRenderer: NSObject, MTKViewDelegate {
         //    into the drawable. NDI/Record repeat the same path at their own sizes.
         let hiDetail = actual <= 100_000
         let capMesh = hiDetail ? sphereHi! : sphereLo!
-        // arms = Point Display node param (graph is the truth); menu cube toggles that param
+        // arms = Depth node param (graph is the truth)
         let drawStems = frame.stems && stemsNow && actual <= 150_000
 
         ensureSceneTargets(&mainTargets, w: max(Int(dsize.width), 4), h: max(Int(dsize.height), 4))

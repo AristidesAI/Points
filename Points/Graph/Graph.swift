@@ -7,7 +7,7 @@ nonisolated struct GraphNode: Identifiable, Codable, Sendable {
     let specID: String                   // NodeRegistry key
     var params: [String: ParamValue]
     var position: SIMD2<Float> = .zero   // canvas placement (editor)
-    // Flat model — folded params (Depth near/far, Size min/max, Point Display's 7, options…) that the
+    // Flat model — folded params (Depth near/far/mode/separation, Size min/max, options…) that the
     // user has "exposed" as real input ports on this card. Wire a Signal node into one → it drives that
     // param. Decodes to [] when the key is absent (old graphs). Undo covered by whole-Graph snapshots.
     var exposedParams: [String] = []

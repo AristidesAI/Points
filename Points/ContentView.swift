@@ -34,7 +34,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var sources: SourceManager?
     @State private var nodesOn = false
-    @State private var selection: Set<String> = ["pd"]   // node ids in the live graph
+    @State private var selection: Set<String> = ["d1"]   // node ids in the live graph
     @State private var selectedWire: Wire?
     @State private var editorCamera = EditorCamera()
     @State private var menuOpen = false
@@ -277,12 +277,12 @@ struct ContentView: View {
             if runtime.hasRecordNode, !askedPhotos { askedPhotos = true; recorder.requestAuthorization() }
             // Vision runs only while a body/hand node is in the graph.
             sources?.vision.setRunning(runtime.usesBodyNodes)
-            // Depth source is chosen by what's WIRED into Point Display:
+            // Depth source is chosen by node PRESENCE (priority order):
             //  • Live Depth Model node → run the RGB camera through the chosen CoreML model
             //  • Still Image / Video Source → play the baked clip
             //  • Depth (or nothing) → live TrueDepth / LiDAR
             // Live Depth lifecycle: preload the model as soon as the NODE EXISTS (async, warm cache)
-            // so wiring it into Point Display never freezes on a cold ViT build; free every model
+            // so adding it never freezes on a cold ViT build; free every model
             // when the last node is deleted. `load` re-runs here whenever the model option changes.
             if let node = runtime.firstLiveDepthNode {
                 let model = LiveModel.named(node.option("model", "Metric Video DA S"))
@@ -426,7 +426,7 @@ struct ContentView: View {
 
     // MARK: add node (with TouchDesigner-style insert on the selected wire)
 
-    /// After a bake: drop a Still Image / Video Source node and wire it into Point Display's depth
+    /// After a bake: drop a Still Image / Video Source node — its presence switches the feed.
     /// input, so the imported baked depth renders as the point cloud (and the DepthPlayer starts).
     /// Show the "switching camera" overlay until the new lens delivers its first frame
     /// (`rgbCam.onFirstFrame` clears it). 4 s timeout so a dead switch never wedges the UI.
@@ -448,14 +448,11 @@ struct ContentView: View {
 
     private func addImportedNode(_ isVideo: Bool) {
         let specID = isVideo ? "clip-transport" : "still-image"
-        let reg = NodeRegistry.shared
-        let pd = runtime.activeGraph.nodes.first { $0.specID == "point-display" }
-        let at = pd.map { $0.position + [-Float(NodeMetrics.width) - 40, 0] } ?? .zero
+        // Presence-based source switch: the node existing takes over the depth feed — no wire
+        // needed (the cloud outputs live on the Depth node). Drop it left of the Depth node.
+        let d = runtime.activeGraph.nodes.first { $0.specID == "depth" }
+        let at = d.map { $0.position + [-Float(NodeMetrics.width) - 40, 0] } ?? .zero
         guard let nid = runtime.addNode(specID, at: at) else { return }
-        if let pd, let outPort = reg.spec(specID)?.outputs.first?.name,
-           let inPort = reg.spec(pd.specID)?.inputs.first(where: { $0.name == "depth" || $0.type == .fieldFloat })?.name {
-            _ = runtime.connect(from: nid, fromPort: outPort, to: pd.id, toPort: inPort)
-        }
         selection = [nid]
     }
 

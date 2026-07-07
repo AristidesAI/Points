@@ -6,7 +6,7 @@ import simd
 
 /// Normalized camera intrinsics (fx/W, fy/H, cx/W, cy/H) from a 3×3 intrinsic matrix + its reference
 /// dimensions. Resolution-independent, so it transfers to any (same-aspect) depth-map size — feeds
-/// Point Display METRIC mode. Identity fallback if calibration is missing.
+/// the Depth node's METRIC mode. Identity fallback if calibration is missing.
 nonisolated func normIntrinsics(_ m: matrix_float3x3, _ w: CGFloat, _ h: CGFloat) -> SIMD4<Float> {
     let W = max(Float(w), 1), H = max(Float(h), 1)
     return SIMD4(m.columns.0.x / W, m.columns.1.y / H, m.columns.2.x / W, m.columns.2.y / H)

@@ -171,7 +171,7 @@ struct MicroJoystickPad: View {
 }
 
 // MARK: - Camera deck: CONTEXTUAL paged sliders — one page per graph node that has
-// float params. A fresh (minimal) project shows only Camera / Depth / Point Display /
+// float params. A fresh (minimal) project shows only Camera / Depth /
 // Size; every node you add in the editor grows the deck. No orphan sliders, ever.
 
 /// Vertical slider bound to a live graph param (deck flavor of ParamSliderRow).
@@ -395,7 +395,7 @@ struct CornerMenu: View {
     @Binding var open: Bool
     @State private var pinIndex = 0
     private let pinSteps = [30_000, 77_000, 150_000, 307_200]
-    // Stems are the Point Display node's ARMS param (edit it in that node's settings) — no menu button.
+    // Stems are the Depth node's ARMS param (edit it in that node's settings) — no menu button.
 
     var body: some View {
         // Output-sink status: record = red, NDI = blue, both = purple. Colours the toggle icon

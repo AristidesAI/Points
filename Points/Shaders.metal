@@ -14,7 +14,7 @@ struct Uniforms {
     float4 lookAt;         // Look At node: xyz target (view units), w amount (0 = off)
     float4 stemParams;     // Stem node: x profile (0 square / 1 round / 2 blade), y taper, z thickness×, w unused
     float4 eyePos;         // camera eye (world/view units) — real view dir for speculars under orbit
-    float4 camIntrin;      // Point Display METRIC mode: fx_n, fy_n, cx_n, cy_n (normalized intrinsics)
+    float4 camIntrin;      // Depth-node METRIC mode: fx_n, fy_n, cx_n, cy_n (normalized intrinsics)
 };
 
 // Field order MUST match VMParams in PinRenderer.swift.
@@ -309,29 +309,7 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 r = float4(max(dx, dy));
                 break;
             }
-            case 41: {                                                          // pinFieldXY (Point Display)
-                // imm = (separation, volume, wobble, edgeLock); A.x = depth nearness 0..1.
-                float t = A.x;
-                float2 rel = baseXY;                              // center of the pinout = origin
-                float2 off = rel * (ins.imm.x - 1.0);            // SEPARATION: bunch/spread the grid
-                off += rel * (t * ins.imm.y);                    // VOLUME: pins open outward with depth (TDLidar cloud)
-                float2 wob = float2(hash01(float(gid) * 0.618) * 2.0 - 1.0,
-                                    hash01(float(gid) * 1.113 + 31.7) * 2.0 - 1.0);
-                off += wob * (t * ins.imm.z);                    // WOBBLE: depth-driven lateral jitter
-                bool edgeP = (col == 0u || col == U.cols - 1u || row == 0u || row == U.rows - 1u);
-                if (ins.imm.w > 0.5 && edgeP) off = float2(0.0); // EDGE LOCK: outer ring pinned to frame
-                r = float4(off, 0.0, 0.0);
-                break;
-            }
-            case 42: {                                                          // pinFieldZ (Point Display)
-                // imm = (gain, gamma, zFlatten, edgeLock); A.x = depth nearness.
-                float t = pow(max(A.x, 0.0), ins.imm.y) * ins.imm.x * ins.imm.z;
-                bool edgeP = (col == 0u || col == U.cols - 1u || row == 0u || row == U.rows - 1u);
-                if (ins.imm.w > 0.5 && edgeP) t = 0.0;
-                r = float4(t);
-                break;
-            }
-            case 44: {                                                          // freeXY (Point Display FREE mode)
+            case 44: {                                                          // freeXY (Depth node FREE mode)
                 // TDLidar front point-cloud fan, intrinsic-free: XY spreads with z/focus so the
                 // cloud sits on the pinout grid at the focus depth and fans into a frustum off it.
                 // imm = (separation, focusM, 0, 0). Culls live in the Grazing Cull FILTER node (op 45).
@@ -462,9 +440,8 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
         }
     }
 
-    // No Z clamp: metric/free clouds extend BOTH ways off the wall (points farther than FOCUS
-    // go behind it) — clamping pancaked everything beyond ~1 m flat, killing TDLidar perspective.
-    // Pinout's pinFieldZ is already ≥ 0, so the pinned-grid look is unchanged.
+    // No Z clamp: the cloud extends BOTH ways off the wall (points farther than FOCUS go
+    // behind it) — clamping pancaked everything beyond ~1 m flat, killing TDLidar perspective.
     outBuf[gid].posSize = float4(baseXY + posOff.xy, posOff.z, sizeMul * keep);
     outBuf[gid].color = color;
     outBuf[gid].rot = float4(rotAcc, clamp(shapeMorph, 0.0, 1.0));
@@ -719,7 +696,7 @@ kernel void bloom_brightpass(texture2d<float, access::sample> scene [[texture(0)
 // ---- Temporal depth filter — TDLidar temporalDepthEMA port. Deadband HYSTERESIS HOLD
 //      (zero jitter on static scenes) + velocity-adaptive alpha (motion pushes alpha → 1,
 //      so movement never lags). State ping-pong: .r = emaZ, .g = jitter-energy velocity.
-//      Point Display's "stabilize" s drives: alpha = 1-0.9s, deadband = 0.008s + 0.012s/m. ----
+//      the EMA Smooth node's "stabilize" s drives: alpha = 1-0.9s, deadband = 0.008s + 0.012s/m. ----
 struct EmaParams {
     float alpha;          // base EMA gain; 1 = passthrough
     float deadband;       // metres, absolute hold threshold
