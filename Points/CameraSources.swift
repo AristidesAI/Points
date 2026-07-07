@@ -226,14 +226,23 @@ final class SourceManager {
     init(renderer: PinRenderer) {
         self.renderer = renderer
         let r = renderer, v = vision, gate = mediaGate
+        nonisolated(unsafe) var loggedFront = false, loggedBack = false   // one-shot triage logs
         front.onFrame = { depth, color, luma, intr in
             guard !gate.isOn else { return }   // media owns the feed — drop live frames (jitter fix)
+            if !loggedFront {
+                loggedFront = true
+                print("[Points] first TrueDepth frame \(CVPixelBufferGetWidth(depth))×\(CVPixelBufferGetHeight(depth))")
+            }
             r.setIntrinsics(intr)                            // METRIC-mode unprojection
             r.ingest(depth: depth, color: color, lumaOnly: luma)
             if let c = color { v.process(c, front: true) }
         }
         back.onFrame = { depth, color, luma, intr in
             guard !gate.isOn else { return }
+            if !loggedBack {
+                loggedBack = true
+                print("[Points] first LiDAR frame \(CVPixelBufferGetWidth(depth))×\(CVPixelBufferGetHeight(depth))")
+            }
             r.setIntrinsics(intr)
             r.ingest(depth: depth, color: color, lumaOnly: luma)
             if let c = color { v.process(c, front: false) }
