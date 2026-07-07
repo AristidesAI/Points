@@ -687,3 +687,81 @@ preset (SEPARATION = metres→view scale, FOCUS = reference depth, DEPTHPUSH 1 =
   orbits the frame centre. If you'd rather the cube sit AT the pivot, say so (one-line change).
 - Sign check: is **up = look up** on the joystick, and does **preset 90°** turn the way you expect? Either
   is a one-line flip if inverted.
+
+---
+
+### Round — Vision Model notes:
+Camera switch in Live Depth node still doesnt work when you are using a model. I think the live depth
+node is causing too much trouble - revert to having the models only for still images and videos. Bug:
+imported still image point cloud is fine, but the truedepth point cloud outputs jittery single frames
+horizontally over the still image point cloud. Remove Video Depth Anything and DepthAnythingV2S — only
+MoGe-2 remains. Universal reset switch in the menu bar (reset ALL parameters to fresh-install state).
+Capture all default parameters into a table below these notes. Lower depthPush max to 2. Video/image
+processing: selecting media starts processing immediately, remove the done/close page, return straight
+to the app. Remove the live depth node and all its code + the other models (smaller install). Remove the
+image/video process button from the main menu → make it a node ("Vision Model") with depth/position/z
+outputs like the Depth node, media button + X, wire-driven output.
+
+### Round — Vision Model feedback (commit `6cb87fb`)
+
+All items done. Build green.
+
+- **Live Depth node DELETED** — the whole stack: `LiveDepthEngine`, `RGBCameraSource`, the
+  camera-switch overlay, the node spec, its node-bar controls, the loading overlays. Its unresolved
+  camera-switch bug is gone with it. **Models: MoGe-2 only** — Metric Video DA S, DA v2 S and the two
+  DA2 Metric packages deleted from `DepthImport/` (≈150–200 MB off the install). `DepthModelRunner`
+  is now the metric-only bake path (the relative/percentile normalisation code is removed).
+- **Jitter over the still image — root-caused + fixed.** Live TrueDepth frames were reaching the
+  renderer after media playback started (in-flight frames on the capture queue + the session's
+  auto-recovery restart), and since the renderer orient is 0 for media, each stray frame stamped a
+  sideways (horizontal) cloud over the still. Capture callbacks now drop every frame through a
+  cross-queue **MediaGate** the moment imported media owns the feed — nothing can leak through.
+- **New Vision Model node** (SOURCE) — replaces Still Image, Video Source AND the menu import button:
+  - Image/video button → gallery → picking starts the **MoGe-2 bake immediately** behind the
+    clockwise edge-loop screen — the model-select page and the done/close page are gone; it returns
+    straight to where you were.
+  - Outputs **depth + position + z** (same free/metric cloud as the Depth node, shared emitter).
+  - **Wire-driven**: nothing appears until you wire its outputs; the **X** next to the button discards
+    the media and blanks the output (zero depth texture — no points) until a new pick.
+- **Universal reset** — the menu ⟳ button is now a factory reset: default graph file, cleared imported
+  media, colour off, 30k pins, front camera, EMA/filter state cleared, app defaults wiped — the table
+  below is exactly the state it restores.
+- **DEPTHPUSH max 3 → 2.**
+
+### Default starting file — all parameters (fresh install / after ⟳ reset)
+
+| Node (id) | Parameter | Default | Range |
+|---|---|---|---|
+| **Depth** (`d1`) | near | 0.1 m | 0.05–5 |
+| | far | 2.5 m | 0.2–8 |
+| | invert | off | on/off |
+| | mode | **metric** | free / metric |
+| | separation | 2.5 | 0–4 |
+| | focus | 1.0 m | 0.3–3 |
+| | gain (free-mode Z) | 2.5 | 0–3 |
+| | arms | off | on/off |
+| **Size** (`sz`) | base | 1 | 0–4 |
+| | min | 0 | 0–2 |
+| | max | 3 | 0.1–6 |
+| **Camera** (`cam`) | fov | 60° | 15–110 |
+| | zoom | 1 | 0.5–2 |
+| | parallax | 0.5 | 0–1 |
+| | depthPush | 1 | 0–**2** |
+| | centerX / centerY | 0 / 0 | −1–1 |
+| | orbitX | 0 | −100–100 (unbound turns) |
+| | orbitY | 0 | −1.5–1.5 (~±86°) |
+| | smooth | 0 (off) | 0–1 |
+| **Output** (`out`) | — (sink: position/z/size/color/rotation/shape/stretch inputs) | | |
+| **Wires** | Depth.position → Output.position · Depth.z → Output.z · Size.out → Output.size | | |
+| **Global** | point count | 30,000 | 30k/77k/150k/307k menu steps |
+| | point scale | 1.0 | 0.2–3 |
+| | colour | OFF | menu toggle |
+| | camera facing | FRONT (TrueDepth) | front/back |
+| | Apple depth filter | OFF | Filter node presence |
+| | depth EMA / stabilize | 0 (raw) | EMA Smooth node presence |
+| | selected node | `d1` | |
+
+⚠ **Verify on-device:** (1) Vision Model node → button → pick photo → edge-loop → back in node view →
+wire position/z → Output → still-image cloud with NO live-frame jitter over it; (2) X → points vanish;
+(3) menu ⟳ → everything in the table above restored; (4) DEPTHPUSH slider tops out at 2; (5) install
+size noticeably smaller.
