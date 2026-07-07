@@ -357,8 +357,12 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 r = A;
                 float rawZ = depthTex.sample(smp, duv).r;
                 if (!(rawZ > 0.05) || !isfinite(rawZ)) break;
-                float2 texel = float2(1.0 / float(depthTex.get_width()),
-                                      1.0 / float(depthTex.get_height()));
+                // 2-texel baseline: per-pixel sensor noise over a 1-texel step (~1 mm lateral at
+                // 0.5 m) swung the normal wildly, so flat frontal areas culled random flickering
+                // dots. Doubling the baseline halves the slope noise; the noise gate below does
+                // the rest — edge LINES still read a big spread, so they still cull.
+                float2 texel = 2.0 * float2(1.0 / float(depthTex.get_width()),
+                                            1.0 / float(depthTex.get_height()));
                 float zL = depthTex.sample(smp, duv - float2(texel.x, 0)).r;
                 float zR = depthTex.sample(smp, duv + float2(texel.x, 0)).r;
                 float zU = depthTex.sample(smp, duv - float2(0, texel.y)).r;
@@ -370,6 +374,11 @@ kernel void pin_program(constant Uniforms &U [[buffer(0)]],
                 float hi = max(max(zL, zR), max(zU, zD));
                 if (ins.imm.y > 0.0001 && hi - lo > ins.imm.y) { keep = 0.0; break; }
                 if (ins.imm.x > 0.001) {
+                    // Noise gate: the grazing cull fires only where the local depth spread is a
+                    // REAL change (~6 mm + 1.2 %/m covers TrueDepth noise). Solid frontal areas
+                    // (face, chest) sit under the floor → never culled, no jitter; silhouette
+                    // edges and steep cheek/side surfaces far exceed it → cull as before.
+                    if (hi - lo < 0.006 + 0.012 * rawZ) break;
                     const float span = 1.2;
                     float2 cen = duv - 0.5;
                     float3 pL = float3((cen - float2(texel.x, 0)) * span * zL, zL);
