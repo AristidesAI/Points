@@ -43,6 +43,10 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
     /// capture queue. The buffer may arrive LANDSCAPE when the connection rotation didn't take —
     /// the consumer is responsible for uprighting it (LiveDepthEngine does, per lens).
     var onFrame: (@Sendable (CVPixelBuffer, SIMD4<Float>, Bool) -> Void)?
+    /// Fires ONCE on the capture queue when the first frame after a start/lens-switch arrives —
+    /// i.e. the new camera feed is genuinely live. Drives the "switching camera" overlay.
+    var onFirstFrame: (@Sendable () -> Void)?
+    private var awaitingFirstFrame = false
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "points.rgbcam", qos: .userInitiated)
@@ -61,6 +65,7 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
             // actually makes the lens switcher change the feed.
             let switching = session.isRunning
             self.lens = lens
+            awaitingFirstFrame = true
             if switching { session.stopRunning() }
             let ok = configure()
             session.startRunning()
@@ -122,6 +127,7 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard running, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        if awaitingFirstFrame { awaitingFirstFrame = false; onFirstFrame?() }
         onFrame?(pb, Self.intrinsics(sampleBuffer), lens == .front)
     }
 

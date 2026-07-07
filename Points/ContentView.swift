@@ -49,6 +49,9 @@ struct ContentView: View {
     @State private var liveDepthLoading = false      // model warming up → show the loading overlay
     @State private var hadLiveDepthNode = false      // track presence so delete can free the models
     @State private var liveCamOn = false             // RGB session live → lens changes reconfigure in place
+    @State private var cameraSwitching = false       // lens switch in flight → overlay until the new feed's first frame
+    @State private var liveLens: RGBCameraSource.Lens?   // lens the live session is (being) started on
+    @State private var switchToken = 0               // stale-timeout guard for the switching overlay
     @State private var importCover = false           // the bake screen — a FULL-screen cover (not a sheet)
                                                      // so the edge-loop progress can wrap the very top.
     @State private var palette: PaletteContext?
@@ -227,7 +230,14 @@ struct ContentView: View {
         }
         .background(Theme.bg)   // paints the home-indicator gap — bar keeps the normal bottom space
         .preferredColorScheme(.dark)
-        .overlay { if liveDepthLoading { LiveDepthLoadingOverlay() } }
+        .overlay {
+            if liveDepthLoading {
+                LiveDepthLoadingOverlay()
+            } else if cameraSwitching {
+                LiveDepthLoadingOverlay(title: "Switching camera…",
+                                        subtitle: "Restarting the capture session on the new lens.")
+            }
+        }
         .sheet(item: $sheet) { which in
             switch which {
             case .importMedia: EmptyView()   // presented as a full-screen cover below, not a sheet
@@ -289,15 +299,17 @@ struct ContentView: View {
                 sources?.setMediaMode(true)                          // pause TrueDepth/LiDAR (shares the camera)
                 if ln.bool("media") && !ImportedDepthStore.shared.isEmpty {
                     liveCamOn = false; rgbCam?.stop(); player?.start()   // loop the baked media through this node's model
+                    endCameraSwitch()
                 } else {
                     player?.stop()
-                    let model = LiveModel.named(ln.option("model", "Metric Video DA S"))
                     renderer.setOrient(0)                            // live-model feed is upright 3:4 — no remap
                     let lens = RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide
                     if liveCamOn {
+                        if lens != liveLens { beginCameraSwitch(to: lens) }   // overlay until the new feed's first frame
                         rgbCam?.start(lens: lens)                    // already live → just switch the lens
                     } else {
                         liveCamOn = true
+                        beginCameraSwitch(to: lens)
                         // Handoff: TrueDepth/LiDAR and the RGB session can't share the physical camera —
                         // let the depth session release before RGB grabs it, or RGB comes up on a
                         // contested camera (garble / wrong lens). ~0.45 s matches the sibling app.
@@ -310,10 +322,11 @@ struct ContentView: View {
                     }
                 }
             } else if runtime.importedSourceWired && !ImportedDepthStore.shared.isEmpty {
-                liveCamOn = false; rgbCam?.stop()
+                liveCamOn = false; rgbCam?.stop(); endCameraSwitch()
                 sources?.setMediaMode(true); player?.start()
             } else {
                 liveCamOn = false; rgbCam?.stop(); player?.stop(); sources?.setMediaMode(false)
+                endCameraSwitch()
             }
             // NDI streams only while the NDI node's START is active (asks Local Network on first send).
             if runtime.ndiStreaming {
@@ -344,6 +357,8 @@ struct ContentView: View {
                 liveEngine = eng
                 let cam = RGBCameraSource()
                 cam.onFrame = { pb, intr, front in eng.process(pb, intrinsics: intr, front: front) }   // RGB frame + intrinsics → model → cloud
+                // First frame after a start/lens-switch = the new feed is genuinely live → drop the overlay.
+                cam.onFirstFrame = { Task { @MainActor in cameraSwitching = false; switchToken += 1 } }
                 rgbCam = cam
                 runtime.requestMedia = { nodeID in importForLiveNode = nodeID; importCover = true }
                 let rt = runtime
@@ -413,6 +428,24 @@ struct ContentView: View {
 
     /// After a bake: drop a Still Image / Video Source node and wire it into Point Display's depth
     /// input, so the imported baked depth renders as the point cloud (and the DepthPlayer starts).
+    /// Show the "switching camera" overlay until the new lens delivers its first frame
+    /// (`rgbCam.onFirstFrame` clears it). 4 s timeout so a dead switch never wedges the UI.
+    private func beginCameraSwitch(to lens: RGBCameraSource.Lens) {
+        liveLens = lens
+        cameraSwitching = true
+        switchToken += 1
+        let token = switchToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            if switchToken == token { cameraSwitching = false }
+        }
+    }
+
+    private func endCameraSwitch() {
+        liveLens = nil
+        cameraSwitching = false
+        switchToken += 1   // invalidate any pending timeout
+    }
+
     private func addImportedNode(_ isVideo: Bool) {
         let specID = isVideo ? "clip-transport" : "still-image"
         let reg = NodeRegistry.shared
@@ -515,17 +548,19 @@ private struct EdgeSwitchHandle: View {
     }
 }
 
-/// Shown while a Live Depth model is warming up (a cold ViT is ~1–9 s). Blocks the "wraps around
-/// itself" garbage that a not-yet-ready model would otherwise flash. Warm switches skip this.
+/// Shown while a Live Depth model is warming up (a cold ViT is ~1–9 s) or a camera switch is in
+/// flight. Blocks the "wraps around itself" garbage / stale-lens frames that would otherwise flash.
 private struct LiveDepthLoadingOverlay: View {
+    var title = "Loading depth model…"
+    var subtitle = "First load compiles for the Neural Engine — a few seconds."
     var body: some View {
         ZStack {
             Color.black.opacity(0.72).ignoresSafeArea()
             VStack(spacing: 14) {
                 ProgressView().controlSize(.large).tint(.white)
-                Text("Loading depth model…")
+                Text(title)
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                Text("First load compiles for the Neural Engine — a few seconds.")
+                Text(subtitle)
                     .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
             }
         }
