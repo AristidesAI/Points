@@ -370,7 +370,7 @@ struct NodePaletteView: View {
     var producesType: PortType? = nil         // set when adding onto a dropped input wire (needs a matching output)
     var onAdd: ((NodeSpec) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("paletteGrid") private var gridMode = false   // list ↔ TouchDesigner OP-grid
+    @AppStorage("paletteGrid") private var gridMode = true    // list ↔ TouchDesigner OP-grid (grid = default)
     @AppStorage("recentNodeIDs") private var recentCSV = ""   // last-added spec ids (most-recent first, ≤6)
     @AppStorage("favNodeIDs") private var favCSV = ""         // starred spec ids (set in the detail card)
     @State private var search = ""

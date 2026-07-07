@@ -1236,10 +1236,11 @@ final class GraphRuntime {
                             waveT: wt, waveCA: ca, waveCB: cb,
                             camera: cam,
                             depthStabilize: ema?.float("amount", 0.3) ?? 0,
-                            // ALWAYS persist holes (TDLidar free-cloud behaviour). The retract path
-                            // (depth *= 0.9/frame) slid hole pixels along the view ray toward the
-                            // principal point — the "giant points travelling to the centre" bug.
-                            holePersist: true,
+                            // Holes persist only while EMA Smooth is active (points shouldn't
+                            // blink under smoothing). RAW mode (no node) matches TDLidar's
+                            // bit-exact bypass — holes stay holes, so a moving edge's IR shadow
+                            // can't leave trailing "aftereffect" strands of stale depth.
+                            holePersist: (ema?.float("amount", 0.3) ?? 0) > 0.001,
                             stems: stems > 0.5,
                             background: bg,
                             lights: lights,

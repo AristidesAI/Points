@@ -309,15 +309,13 @@ final class SourceManager {
         }
     }
 
-    /// Factory reset: back to the fresh-install camera state (front TrueDepth, colour off), then
-    /// restart the capture engine.
+    /// Parameter reset (menu ⟳): colour off + media released; the camera facing is left alone
+    /// (switching cameras isn't a "parameter") and the capture engine restarts in place.
     func resetToDefaults() {
         colorEnabled = false
         renderer.setColorEnabled(false)
         mediaMode = false
         mediaGate.set(false)
-        if facing != .front { facing = .front; back.stop() }
-        renderer.setOrient(Self.frontOrient)
         restart()
     }
 

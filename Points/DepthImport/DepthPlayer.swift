@@ -15,6 +15,10 @@ import CoreVideo
     private(set) var isVideo = false
     private(set) var playbackFPS: Double = 30    // play back at the rate frames were sampled
     private(set) var orient: UInt32 = 0          // the baking model's sensor→grid orientation bits
+    /// Bumped whenever the media changes (new bake / clear) — lets the player's start() be
+    /// idempotent for the SAME media (re-running it every graph tick restarted the loop and
+    /// flashed the cloud black on every slider/orbit step).
+    private(set) var generation = 0
     var isEmpty: Bool { frames.isEmpty }
     var count: Int { frames.count }
 
@@ -23,10 +27,11 @@ import CoreVideo
         self.width = width; self.height = height; self.isVideo = isVideo
         self.playbackFPS = fps > 0 ? fps : 30
         self.orient = orient
+        generation += 1
     }
     func append(_ metres: [Float]) { if frames.count < 600 { frames.append(metres) } }   // ~600MB ceiling at 504²
-    /// Vision Model node's X button / factory reset — discard the media entirely.
-    func clear() { frames.removeAll(); width = 0; height = 0; isVideo = false }
+    /// Vision Model node's X button — discard the media entirely.
+    func clear() { frames.removeAll(); width = 0; height = 0; isVideo = false; generation += 1 }
 }
 
 /// Loops the store's frames into the renderer at ≤30 fps. Video advances + wraps; a photo repeats
@@ -37,17 +42,29 @@ import CoreVideo
     private var idx = 0
     private var pool: CVPixelBufferPool?
     private var poolW = 0, poolH = 0
+    private var startedGeneration = -1   // media generation the running loop was started for
 
     init(renderer: PinRenderer) { self.renderer = renderer }
 
     func start() {
+        let store = ImportedDepthStore.shared
+        guard !store.isEmpty else { return }
+        // Idempotent for the same media: start() re-runs on EVERY graph change (slider drags,
+        // orbit steps), and restarting the loop + resetting the filter each time drew one frame
+        // with no depth = the black flash per step. Only a NEW bake / clear restarts the loop.
+        if timer != nil && startedGeneration == store.generation { return }
         stop()
-        guard !ImportedDepthStore.shared.isEmpty else { return }
+        startedGeneration = store.generation
         idx = 0
-        renderer.setOrient(ImportedDepthStore.shared.orient)   // the baking model's orientation
+        renderer.setOrient(store.orient)                       // the baking model's orientation
+        // Imported media has no camera calibration — assume a ~60° hFOV lens at the media's own
+        // aspect so METRIC mode unprojects it unsquashed (fx_n = 0.5/tan(30°); fy_n scales by W/H).
+        let fxn: Float = 0.866
+        let fyn: Float = store.height > 0 ? fxn * Float(store.width) / Float(store.height) : fxn
+        renderer.setIntrinsics(SIMD4(fxn, fyn, 0.5, 0.5))
         renderer.resetFilter()
         // Fires on the main runloop (scheduled from the main actor) → assumeIsolated is valid.
-        let interval = 1.0 / max(ImportedDepthStore.shared.playbackFPS, 1)
+        let interval = 1.0 / max(store.playbackFPS, 1)
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }

@@ -76,23 +76,58 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
     }
 
     /// CGImage → metre depth (row-major) + (w, h). Nil if not loaded or inference fails.
-    /// Metric models return RAW metres (EMA-smoothed); relative models are normalised for display.
+    /// ANY aspect ratio: the model's input shape is fixed (square), so a non-square image is
+    /// letterboxed onto a centred black square for inference and the depth is cropped back to
+    /// the content region — the returned map keeps the source aspect, nothing is squashed.
     func depth(_ cg: CGImage) -> ([Float], Int, Int)? {
         lock.lock()
         guard let model else { lock.unlock(); return nil }
         let inName = inputName, outName = outputName, iw = inputW, ih = inputH
         lock.unlock()
-        guard let feat = try? MLFeatureValue(cgImage: cg, pixelsWide: iw, pixelsHigh: ih,
+        var input = cg
+        var contentFrac: (x: Float, y: Float, w: Float, h: Float)? = nil   // of the square, 0-1
+        let sw = cg.width, sh = cg.height
+        if sw != sh, sw > 0, sh > 0 {
+            let side = max(sw, sh)
+            if let ctx = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8,
+                                   bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+                ctx.fill(CGRect(x: 0, y: 0, width: side, height: side))
+                ctx.draw(cg, in: CGRect(x: (side - sw) / 2, y: (side - sh) / 2, width: sw, height: sh))
+                if let sq = ctx.makeImage() {
+                    input = sq
+                    // Centred padding → symmetric, so CG's y-flip doesn't matter.
+                    contentFrac = (x: Float(side - sw) / (2 * Float(side)),
+                                   y: Float(side - sh) / (2 * Float(side)),
+                                   w: Float(sw) / Float(side), h: Float(sh) / Float(side))
+                }
+            }
+        }
+        guard let feat = try? MLFeatureValue(cgImage: input, pixelsWide: iw, pixelsHigh: ih,
                                              pixelFormatType: kCVPixelFormatType_32ARGB, options: nil),
               let provider = try? MLDictionaryFeatureProvider(dictionary: [inName: feat]),
               let out = try? model.prediction(from: provider),
               let dv = out.featureValue(for: outName) else { return nil }
         // MoGe-2 extras: `mask` marks valid pixels (depth is arbitrary garbage where mask == 0 —
         // rendering it unmasked was the "garbled" cloud), `metric_scale` lifts its relative depth
-        // to metres. Both nil for every other model.
+        // to metres.
         let mask = out.featureValue(for: "mask")?.multiArrayValue
         let mScale = out.featureValue(for: "metric_scale")?.multiArrayValue
-        return metres(dv, mask: mask, metricScale: mScale)
+        guard let (m, mw, mh) = metres(dv, mask: mask, metricScale: mScale) else { return nil }
+        guard let f = contentFrac else { return (m, mw, mh) }
+        // Crop the letterbox back off (fractions → output pixels; the model output can differ
+        // from the input dims, so scale by the ACTUAL mw/mh).
+        let cx = min(max(Int((f.x * Float(mw)).rounded()), 0), mw - 1)
+        let cy = min(max(Int((f.y * Float(mh)).rounded()), 0), mh - 1)
+        let cw = min(max(Int((f.w * Float(mw)).rounded()), 1), mw - cx)
+        let ch = min(max(Int((f.h * Float(mh)).rounded()), 1), mh - cy)
+        if cw == mw, ch == mh { return (m, mw, mh) }
+        var cropped = [Float](); cropped.reserveCapacity(cw * ch)
+        for y in cy..<(cy + ch) {
+            cropped.append(contentsOf: m[(y * mw + cx)..<(y * mw + cx + cw)])
+        }
+        return (cropped, cw, ch)
     }
 
     // MARK: depth feature → metres

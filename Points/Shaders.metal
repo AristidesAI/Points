@@ -873,8 +873,10 @@ kernel void depth_ema(texture2d<float, access::read> cur [[texture(0)]],
     bool prevValid = d0 > 0.05 && isfinite(d0);
     float dOut, velOut = vel;
     if (!curValid) {
-        // hole: FREE persists (TDLidar — points never blink); pinout retracts to the wall
-        dOut = prevValid ? (P.holePersist > 0.5 ? d0 : d0 * 0.90) : 0.0;
+        // Hole: persist ONLY under EMA Smooth (P.holePersist), else drop to 0 — TDLidar's raw
+        // bypass. Persisting always left stale depth trailing off moving silhouettes (the
+        // "aftereffect" strands); the old ×0.9 retract slid points toward the principal point.
+        dOut = (P.holePersist > 0.5 && prevValid) ? d0 : 0.0;
         velOut = prevValid ? vel : 0.0;
     } else if (!prevValid) {
         dOut = d;                              // first sight: seed, no smoothing

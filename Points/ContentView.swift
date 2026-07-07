@@ -363,14 +363,13 @@ struct ContentView: View {
 
     /// After a bake: drop a Still Image / Video Source node — its presence switches the feed.
     /// input, so the imported baked depth renders as the point cloud (and the DepthPlayer starts).
-    /// Universal reset (menu ⟳): every parameter back to its fresh-install default — the default
-    /// graph file, cleared imported media, renderer state, colour/pin-count, and app defaults.
+    /// Menu ⟳ — PARAMETER reset: the graph back to the default file (every node parameter at its
+    /// default) + renderer state. Does NOT wipe app preferences, imported media, or flip the camera.
     private func factoryReset() {
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         recorder.finishIfRecording()
         ndi.stop()
         player?.stop()
-        ImportedDepthStore.shared.clear()
         runtime.resetToDefault()
         runtime.setColorMode(.none)
         renderer.setPinCount(30_000)
@@ -379,10 +378,6 @@ struct ContentView: View {
         renderer.setOrient(sources?.facing == .back ? SourceManager.backOrient : SourceManager.frontOrient)
         renderer.resetFilter()
         selection = ["d1"]
-        // First-launch app defaults (user aids etc.). @AppStorage falls back to its defaults.
-        if let bid = Bundle.main.bundleIdentifier {
-            UserDefaults.standard.removePersistentDomain(forName: bid)
-        }
         sources?.resetToDefaults()
     }
 
