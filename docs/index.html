@@ -58,8 +58,8 @@ th,td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--line)}
 th{font-family:var(--fm);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text2)}
 tr:hover td{background:rgba(255,255,255,.02)}
 
-.mermaid{background:transparent;margin:16px 0;position:relative}
-.mermaid svg{max-width:100%}
+.mermaid{background:transparent;margin:20px 0;position:relative}
+.mermaid svg{max-width:100%;min-height:80px}
 .mermaid .node rect,.mermaid .node circle,.mermaid .node polygon{transition:stroke .15s;cursor:pointer}
 .mermaid .node:hover rect,.mermaid .node:hover circle,.mermaid .node:hover polygon{stroke:var(--accent)!important;stroke-width:2px!important}
 
@@ -204,70 +204,177 @@ graph TD
     remap --> size[Size<br/>base exposed]
     beat[Beat Detect] --> shockwave[Shockwave<br/>fire port]
 </div>
+
+<h2>Wires and Ports</h2>
+<p>Understanding how data flows through wires is essential to building effective patches. Every port has a <strong>type</strong> and a <strong>direction</strong>, and every wire carries exactly one type of data from an output to an input.</p>
+
+<h3>Port Types</h3>
+<table>
+<tr><th>Type</th><th>Scope</th><th>Wire Color</th><th>What It Carries</th></tr>
+<tr><td><code>fieldFloat</code></td><td>Per-pin (GPU)</td><td><span style="color:#aaa">Grey</span></td><td>A single float computed for every point in the cloud simultaneously. 200,000 independent values per frame. Used for depth nearness, size, noise, masks.</td></tr>
+<tr><td><code>fieldVec3</code></td><td>Per-pin (GPU)</td><td><span style="color:#6FCE7D">Green</span></td><td>A 3D vector per point. Carries position offsets (xyz displacement from pin home), rotation (euler turns), stretch (per-axis scale).</td></tr>
+<tr><td><code>fieldColor</code></td><td>Per-pin (GPU)</td><td><span style="color:#D86FC0">Pink</span></td><td>RGBA color per point. Routed through palette lookups, duotone, contrast, fog — then into Output.color.</td></tr>
+<tr><td><code>signal</code></td><td>Per-frame (CPU)</td><td><span style="color:#CFCFCF">White</span></td><td>A single float value computed once per frame on the CPU. Used for LFOs, audio volume, hand position, MIDI CC. Broadcasts to every pin when wired into a fieldFloat input.</td></tr>
+<tr><td><code>trigger</code></td><td>Per-frame (CPU)</td><td><span style="color:#E0995F">Orange</span></td><td>An event pulse — 1 on the frame it fires, 0 otherwise. Beat detection, gesture recognition, threshold crossing. Drives Shockwave fire, Freeze hold, Envelope input.</td></tr>
+<tr><td><code>vec3</code></td><td>Per-frame (CPU)</td><td><span style="color:#6F9FDD">Blue</span></td><td>A 3D vector computed once per frame. Used for hand position, head pose.</td></tr>
+<tr><td><code>color</code></td><td>Per-frame (CPU)</td><td><span style="color:#D86FC0">Pink</span></td><td>RGBA color computed once per frame.</td></tr>
+</table>
+
+<h3>Input vs Output Squares</h3>
+<p>On every node card, ports are shown as small squares:</p>
+<table>
+<tr><th>Square</th><th>Position</th><th>Meaning</th></tr>
+<tr><td>Output</td><td>Right side of node</td><td>Data this node produces. Drag FROM here to start a wire. One output can feed many inputs.</td></tr>
+<tr><td>Input</td><td>Left side of node</td><td>Data this node consumes. Drag TO here to complete a wire. Each input accepts exactly ONE wire. If unwired, the port uses its default value (shown in the port table).</td></tr>
+</table>
+
+<h3>Auto-Adapt Rules</h3>
+<p>You can wire between compatible types without converters. The system automatically adapts:</p>
+<table>
+<tr><th>From</th><th>To</th><th>Behavior</th></tr>
+<tr><td><code>signal</code></td><td><code>fieldFloat</code></td><td><strong>Broadcast.</strong> The single CPU value is copied to all 200,000 pins. Wire Audio Volume into Size and every point scales together.</td></tr>
+<tr><td><code>signal</code></td><td><code>fieldVec3</code></td><td><strong>Splat.</strong> The float is copied into x, y, and z. Wire an LFO into a position input for uniform push.</td></tr>
+<tr><td><code>fieldFloat</code></td><td><code>fieldVec3</code></td><td><strong>Splat.</strong> Each pin's float becomes a vec3 with that value in all channels.</td></tr>
+<tr><td><code>fieldVec3</code></td><td><code>fieldFloat</code></td><td><strong>Take .x</strong> The first component is extracted per pin.</td></tr>
+<tr><td><code>vec3</code> &#8596; <code>color</code></td><td>Both directions</td><td><strong>Direct map.</strong> xyz maps to rgb, w is ignored/set to 1.</td></tr>
+<tr><td><code>fieldVec3</code> &#8596; <code>fieldColor</code></td><td>Both directions</td><td><strong>Per-pin map.</strong> Same as vec3&#8596;color but per-point.</td></tr>
+<tr><td><code>signal</code> &#8594; <code>trigger</code></td><td>One direction</td><td><strong>Rising-edge.</strong> A signal crossing 0.5 upward fires a trigger pulse. Use this to turn audio volume into beat-like events.</td></tr>
+<tr><td><code>trigger</code> &#8594; <code>signal</code></td><td>One direction</td><td><strong>Value as signal.</strong> The trigger's 0/1 value can be read as a plain signal for displays and gates.</td></tr>
+</table>
+
+<h3>The depth vs z distinction</h3>
+<p>The Depth node produces two fundamentally different outputs that are easily confused:</p>
+<table>
+<tr><th>Output</th><th>Type</th><th>What It Is</th><th>Use For</th></tr>
+<tr><td><code>depth</code></td><td>fieldFloat</td><td><strong>Nearness.</strong> A normalized 0–1 modulation signal. Computed as (far − raw_metres) / (far − near). 1 = at NEAR, 0 = at FAR or beyond. Holes read 0. No scale or sign — pure "how close is this pixel."</td><td>Palette.t, Size modulation, Shape-by-Depth, Gate thresholds, mask inputs</td></tr>
+<tr><td><code>z</code></td><td>fieldFloat</td><td><strong>Geometry.</strong> The point's actual forward displacement in view units. Computed as (FOCUS − raw_metres) × SEPARATION. Signed — negative behind the wall for things farther than FOCUS. Metrically scaled so the cloud is 1:1 with reality.</td><td>Output.z pin placement, Echo/Lag/Trail/Spring/Velocity motion processing</td></tr>
+</table>
+<p><strong>Concrete example:</strong> A point at 4 metres with FAR = 2.5 reads <code>depth = 0</code> (clamped — "far away, color it cold") but <code>z = −7.5 view units</code> (a real position behind the wall). Wire depth into Output.z by mistake and the entire scene compresses into a flat 0–1 push. Wire z into Palette.t and colors won't map sensibly because z is signed and unbounded.</p>
+<p><strong>Rule:</strong> depth feeds effects. z builds the cloud. Never cross them.</p>
 </section>
 
 <section id="integrations">
 <h1>Integrations</h1>
-<h2>MIDI</h2>
-<p>Connect a MIDI controller via USB or Bluetooth. Points auto-detects devices.</p>
-<table>
-<tr><th>Node</th><th>Reads</th><th>Output</th></tr>
-<tr><td>MIDI CC</td><td>Control Change 0-127</td><td>signal 0-1</td></tr>
-<tr><td>MIDI Note</td><td>Note-on velocity</td><td>trigger + velocity</td></tr>
-<tr><td>MIDI Pitch Bend</td><td>Pitch wheel</td><td>signal -1 to +1</td></tr>
-</table>
-<div class="mermaid">
-graph LR
-    midi[MIDI CC 21] --> remap[t-Remap<br/>outMin:0.02 outMax:1]
-    remap --> noise[Noise<br/>period exposed]
-</div>
 
-<h2>OSC</h2>
-<p>Points listens on port 9000. Send to <code>/points/param nodeID param value</code>.</p>
+<h2>MIDI Controllers</h2>
+<p>Connect any MIDI controller via USB or Bluetooth MIDI. Points auto-detects devices — no pairing step needed. MIDI data arrives as control-rate signals (CPU, once per frame) which you wire into exposed params on GPU nodes.</p>
 <table>
-<tr><th>Address</th><th>Effect</th></tr>
-<tr><td>/points/param nodeID param float</td><td>Set slider</td></tr>
-<tr><td>/points/shockwave x y</td><td>Fire shockwave</td></tr>
-<tr><td>/points/bpm float</td><td>Set BPM</td></tr>
+<tr><th>Node</th><th>What It Reads</th><th>Output Type</th><th>Output Range</th><th>Typical Use</th></tr>
+<tr><td>MIDI CC</td><td>Control Change number (0–127)</td><td>signal</td><td>0 – 1</td><td>Knobs and faders. Wire through t-Remap to set the exact parameter range you need.</td></tr>
+<tr><td>MIDI Note</td><td>Note-on velocity for a specific note number</td><td>trigger + velocity</td><td>0 – 1 velocity</td><td>Drum pads. Each pad fires a trigger. Velocity scales the effect intensity.</td></tr>
+<tr><td>MIDI Pitch Bend</td><td>Pitch wheel position</td><td>signal</td><td>−1 to +1</td><td>Continuous expression. Wire to Twist.angle or Palette.shift for sweeping modulation.</td></tr>
+<tr><td>MIDI Clock</td><td>BPM from external clock</td><td>sync</td><td>—</td><td>Sync all LFOs, Spin rates, and the Clock node to an external sequencer.</td></tr>
 </table>
 
-<h2>NDI Output</h2>
-<p>Add an NDI node. Streams viewport with alpha channel to OBS, vMix, or TouchDesigner.</p>
+<h3>Pattern: MIDI Knob to Parameter</h3>
+<div class="mermaid">graph LR
+    midi[MIDI CC 21<br/>knob] --> remap[t-Remap<br/>inMin:0 inMax:1<br/>outMin:0.02 outMax:1.5]
+    remap --> noise[Noise<br/>period exposed]</div>
+<p>The t-Remap is essential — MIDI always outputs 0–1, but Noise.period wants 0.02–1.5. Remap bridges the gap.</p>
 
-<h2>MP4 Recording</h2>
-<p>Add a Record node. H.264 MP4 saved to Photos library.</p>
+<h3>Full MIDI Performance Setup</h3>
+<div class="mermaid">graph TD
+    cc21[MIDI CC 21<br/>knob 1] --> remap_period[t-Remap<br/>outMin:0.05 outMax:2]
+    remap_period --> noise[Noise<br/>period exposed]
+    cc22[MIDI CC 22<br/>knob 2] --> remap_rough[t-Remap<br/>outMin:0 outMax:1]
+    remap_rough --> noise2[Noise<br/>roughness exposed]
+    cc23[MIDI CC 23<br/>fader] --> remap_gain[t-Remap<br/>outMin:0.2 outMax:3]
+    remap_gain --> dd[Depth Drive<br/>gain exposed]
+    note60[MIDI Note 60<br/>kick pad] --> sw[Shockwave<br/>fire port]
+    note64[MIDI Note 64<br/>snare pad] --> freeze[Freeze<br/>hold exposed]</div>
+
+<h2>OSC (Open Sound Control)</h2>
+<p>Points runs an OSC server on port 9000. Send messages from TouchDesigner, Max/MSP, Processing, or any OSC-capable application on the same network.</p>
+<table>
+<tr><th>Address Pattern</th><th>Arguments</th><th>Effect</th></tr>
+<tr><td><code>/points/param nodeID param value</code></td><td>string, string, float</td><td>Set any node slider in real time. Example: <code>/points/param twist angle 0.25</code></td></tr>
+<tr><td><code>/points/trigger nodeID port</code></td><td>string, string</td><td>Fire a trigger port. Example: <code>/points/trigger shockwave fire</code></td></tr>
+<tr><td><code>/points/shockwave x y</code></td><td>float, float</td><td>Fire a shockwave at a specific UV position (0–1). Example: <code>/points/shockwave 0.5 0.3</code></td></tr>
+<tr><td><code>/points/bpm value</code></td><td>float</td><td>Set global BPM for all clock-synced nodes.</td></tr>
+</table>
 
 <h2>Audio Analysis</h2>
+<p>Points captures the device microphone and runs real-time FFT analysis using Apple's Accelerate framework. Audio nodes only activate the mic when they're in the graph — permission is requested on first use.</p>
 <table>
-<tr><th>Node</th><th>Output</th></tr>
-<tr><td>Audio Volume</td><td>volume signal 0-1</td></tr>
-<tr><td>Audio FFT</td><td>low mid high bands</td></tr>
-<tr><td>Beat Detect</td><td>beat trigger</td></tr>
+<tr><th>Node</th><th>Output</th><th>Range</th><th>Description</th></tr>
+<tr><td>Audio Volume</td><td>volume (signal)</td><td>0 – 1</td><td>RMS loudness. Auto-gained — adapts to quiet and loud environments.</td></tr>
+<tr><td>Audio FFT</td><td>low / mid / high (signal)</td><td>0 – 1</td><td>Three-band split: low (40–250Hz), mid (250–2kHz), high (2–8kHz). Independent outputs.</td></tr>
+<tr><td>Beat Detect</td><td>beat (trigger)</td><td>0 or 1</td><td>Fires on detected transients. Three bands: low (kick), mid (snare), high (hi-hat).</td></tr>
+<tr><td>FFT Band</td><td>band (signal)</td><td>0 – 1</td><td>20 log-spaced frequency bands from 40Hz to 8kHz. BAND param selects which one.</td></tr>
 </table>
-<div class="mermaid">
-graph TD
-    volume[Audio Volume] --> threshold[t-Threshold<br/>rise:0.6]
-    threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.3]
-    envelope --> depth[Depth<br/>gain exposed]
-</div>
-</section>
+
+<h3>The Audio Modulation Chain</h3>
+<p>Raw audio is noisy — always shape it before driving visuals:</p>
+<div class="mermaid">graph TD
+    volume[Audio Volume<br/>RMS 0-1] --> threshold[t-Threshold<br/>rise:0.6 fall:0.4<br/>cooldown:0.08]
+    threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.35]
+    envelope --> curve[t-Curve<br/>curve:quadOut]
+    curve --> spring[t-Spring<br/>stiffness:80 damping:18]
+    spring --> param[Exposed Param<br/>on target node]</div>
+<p>Each stage refines the signal: Threshold removes noise floor. Envelope smooths the on/off. Curve shapes the response. Spring adds physical bounce.</p>
+
+<h2>NDI Video Output</h2>
+<p>Add an NDI node (Output family). The rendered viewport streams as an NDI source with alpha channel — usable as a key/fill in OBS, vMix, or TouchDesigner. The stream appears on the local network with the name you configure.</p>
+<table><tr><th>Param</th><th>Default</th><th>Description</th></tr><tr><td>streamName</td><td>Points</td><td>Name visible to NDI receivers on the network</td></tr><tr><td>fps</td><td>30</td><td>Stream frame rate (30 or 60)</td></tr><tr><td>alphaKey</td><td>true</td><td>Transparent background — composited over other video sources</td></tr></table>
+
+<h2>MP4 Recording</h2>
+<p>Add a Record node. Tap to start/stop. H.264 MP4 saved to the Photos library at the configured quality and frame rate.</p>
+
+<h2>Vision Body Tracking</h2>
+<p>Uses Apple's Vision framework via the front TrueDepth camera. Runs at ~13fps on a background queue. Only active while a Body node is in the graph.</p>
+<table>
+<tr><th>Node</th><th>Output</th><th>Type</th><th>Description</th></tr>
+<tr><td>Hand Position</td><td>x, y</td><td>signal (0–1)</td><td>Normalized hand position. Variants: Left, Right, First detected. Falls back to wrist when hand is unseen.</td></tr>
+<tr><td>Pinch</td><td>distance</td><td>signal (0–10)</td><td>Index-to-thumb distance. 0 = touching. Default outMax is 10 — lower it when driving 0–1 params.</td></tr>
+<tr><td>Hand Openness</td><td>openness</td><td>signal (0–1)</td><td>Continuous finger extension. 0 = closed fist, 1 = fully open.</td></tr>
+<tr><td>Gestures</td><td>palm, fist, peace, point</td><td>trigger</td><td>Recognized hand gestures fire their respective trigger ports while held.</td></tr>
+<tr><td>Head Pose</td><td>yaw, pitch, roll</td><td>signal (radians)</td><td>Head orientation. Wire yaw/pitch into Camera.orbitX/orbitY to look around the cloud.</td></tr>
+<tr><td>Face Blendshapes</td><td>jawOpen, mouthSmile, etc.</td><td>signal (0–1)</td><td>52 ARKit coefficients. jawOpen → Size, mouthSmile → Palette shift.</td></tr>
+</table></section>
 
 <!-- ====== NODE SECTIONS ====== -->
 
-<section id="source-depth"><h1>Depth</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. The primary sensor. Reads depth camera and produces per-pin nearness, 3D position, and Z push.</p>
-<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>Description</th></tr><tr><td>near</td><td>0.05-5</td><td>0.1</td><td>Closest depth (metres)</td></tr><tr><td>far</td><td>0.2-8</td><td>2.5</td><td>Farthest depth (metres)</td></tr><tr><td>mode</td><td>free/metric</td><td>metric</td><td>Metric = real intrinsics. Free = intrinsic-free fan</td></tr><tr><td>separation</td><td>0-4</td><td>2.5</td><td>Metres to view scale</td></tr><tr><td>gain</td><td>0-3</td><td>2.5</td><td>Z zoom (FREE mode)</td></tr><tr><td>arms</td><td>bool</td><td>false</td><td>Pull points to Z-origin pins</td></tr><tr><td>edgeCull</td><td>0-0.3</td><td>0.06</td><td>Silhouette flying-pixel reject (metres)</td></tr></table>
-<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>depth</td><td>output</td><td>fieldFloat</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td></tr></table>
-<h2>Standard Use</h2><div class="mermaid">graph LR
-    depth[Depth<br/>mode:metric] -->|position| pinout[Pinout]
+<section id="source-depth"><h1>Depth</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. The primary sensor — reads the depth camera and produces three outputs that form the foundation of every patch. This is the only node that talks to the hardware. Without it (or Vision Model), there are no points.</p>
+
+<h2>How It Works</h2>
+<p>The Depth node sits at the boundary between the physical world and the GPU. Every frame, the depth sensor (LiDAR, TrueDepth, or RGB luma) produces a texture where each pixel holds a distance in metres. The node reads that texture and computes three things per pin:</p>
+<p><strong>1. Nearness (the <code>depth</code> output):</strong> Remaps raw metres into a clean 0–1 signal. The formula is <code>(far − raw) / (far − near)</code>. A point at the NEAR distance reads 1.0. A point at or beyond FAR reads 0.0. Sensor holes also read 0. This is your modulation signal — wire it into Palette.t to color by distance, into Size to scale by distance, into a Gate's threshold to trigger on proximity.</p>
+<p><strong>2. Position offset (the <code>position</code> output):</strong> A 3D vector per pin in view space. In METRIC mode this uses the real camera intrinsics — objects keep true size and shrink as they move away, exactly like your eyes see them. In FREE mode it's a simpler fan projection controlled by GAIN. This feeds Pinout.position, and from there Output.position.</p>
+<p><strong>3. Z push (the <code>z</code> output):</strong> A signed scalar — the point's forward displacement from the wall. Computed as <code>(FOCUS − raw) × SEPARATION</code>. Positive = in front of the wall (closer than FOCUS). Negative = behind the wall (farther than FOCUS). This is the geometry signal — feed it into Output.z, or process it through Lag/Trail/Echo/Spring/Velocity before it reaches the renderer.</p>
+
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>What It Does</th></tr>
+<tr><td>near</td><td>0.05 – 5</td><td>0.1</td><td>Distance in metres that maps to depth=1. TrueDepth reads down to ~10cm — set higher to avoid the "flat face" plateau when too close.</td></tr>
+<tr><td>far</td><td>0.2 – 8</td><td>2.5</td><td>Distance in metres that maps to depth=0. Everything at or beyond this reads as "far away."</td></tr>
+<tr><td>invert</td><td>bool</td><td>false</td><td>Flips the nearness signal: far→1, near→0. Useful when you want background emphasis instead of foreground.</td></tr>
+<tr><td>mode</td><td>free / metric</td><td>metric</td><td><strong>METRIC:</strong> Uses real camera intrinsics (fx,fy,cx,cy). Objects keep their true relative size at any distance — 1:1 with physical reality. <strong>FREE:</strong> Simpler fan projection controlled by GAIN. No intrinsics needed.</td></tr>
+<tr><td>separation</td><td>0 – 4</td><td>2.5</td><td>How many view units one real-world metre maps to. At 2.5, a point 1m in front of FOCUS appears 2.5 units forward. Higher = more exaggerated depth.</td></tr>
+<tr><td>focus</td><td>0.3 – 3</td><td>1.0</td><td>The depth (in metres) that sits exactly at the Z-wall — no push, no pull. Things closer than FOCUS push forward. Things farther push backward.</td></tr>
+<tr><td>gain</td><td>0 – 3</td><td>2.5</td><td>Z zoom strength in FREE mode. Higher = deeper push for the same nearness.</td></tr>
+<tr><td>arms</td><td>bool</td><td>false</td><td>Pulls every point back to its Z-origin pin. Creates the "rod" effect — each pin has a visible stem connecting the point to the wall. Style the stems with the Stem node.</td></tr>
+<tr><td>edgeCull</td><td>0 – 0.3</td><td>0.06</td><td>Built-in silhouette flying-pixel rejection. Depth edges are noisy — points near object boundaries jitter. This rejects points whose depth differs too much from their neighbors. Higher = cleaner silhouettes but may clip thin objects.</td></tr></table>
+
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th><th>Wire To</th></tr><tr><td>depth</td><td>output</td><td>fieldFloat</td><td>Palette.t, Size.size, Remap.in, Gate threshold — any effect node that needs "how close"</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td><td>Pinout.position — the primary path to Output. Also Displace, Twist, Scatter for position warps</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td><td>Pinout.z, Depth Drive.depth, Lag.in, Trail.in — the geometry path</td></tr></table>
+
+<h2>Standard Chain</h2>
+<p>The canonical pipeline. Depth produces the data, Pinout locks XY to the grid, Palette colors it:</p>
+<div class="mermaid">graph LR
+    depth[Depth<br/>mode: metric<br/>near:0.1 far:2.5<br/>focus:1.0 sep:2.5] -->|position| pinout[Pinout<br/>morph:0 gain:1]
     depth -->|z| pinout
+    pinout -->|position| output[Output]
     depth -->|depth| palette[Palette<br/>map:thermal]
-    palette -->|color| output[Output.color]
-    pinout -->|position| output[Output.position]</div>
-<h2>Trigger Modulation</h2><div class="mermaid">graph TD
-    volume[Audio Volume] --> threshold[t-Threshold<br/>rise:0.6]
+    palette -->|color| output</div>
+
+<h2>Common Mistakes</h2>
+<p><strong>Wire depth into Output.z:</strong> The scene compresses into a flat 0–1 slab. depth is nearness (0-1), Output.z expects signed geometry (−n to +n). Always wire z → Output.z, not depth.</p>
+<p><strong>Wire z into Palette:</strong> Colors become meaningless because z is signed and unbounded (−7.5 at 4m). Palette expects 0–1. Always wire depth → Palette.t.</p>
+<p><strong>NEAR too low on TrueDepth:</strong> The front camera reads down to ~10cm. At NEAR=0.05, close surfaces plateau into a flat cap because depth resolution saturates. Set NEAR ≥ 0.1 for TrueDepth.</p>
+
+<h2>Trigger Modulation</h2>
+<p>Audio drives the ARMS parameter. When volume crosses threshold, arms snap on — rods pulse with the beat:</p>
+<div class="mermaid">graph TD
+    volume[Audio Volume<br/>RMS 0-1] --> threshold[t-Threshold<br/>rise:0.6 fall:0.4<br/>cooldown:0.08]
     threshold --> envelope[t-Envelope<br/>attack:0.05 release:0.5]
-    envelope --> depth[Depth<br/>arms exposed]</div>
-<p>Audio above threshold snaps arms on for 0.5s. Rods pulse with the beat.</p></section>
+    envelope --> depth[Depth<br/>arms exposed]</div></section>
 
 <section id="source-video-color"><h1>Video Color</h1><p><span class="tag" style="border-color:var(--src);color:var(--src)">SOURCE</span> GPU node. Samples camera RGB at each pin UV.</p>
 <h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>exposure</td><td>-2 to 2</td><td>0</td></tr></table>
@@ -299,12 +406,32 @@ graph TD
     prox[Proximity<br/>near:0.4 far:2.5] -->|nearness| size[Size<br/>base exposed]
     prox -->|entered| sw[Shockwave<br/>fire port]</div></section>
 
-<section id="grid-pinout"><h1>Pinout</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> GPU node. Pin-screen display. XY snaps to fixed grid. Z push = pin-screen relief.</p>
-<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>morph</td><td>0-1</td><td>0</td></tr><tr><td>gain</td><td>0-2</td><td>1</td></tr></table>
-<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>position</td><td>input</td><td>fieldVec3</td></tr><tr><td>z</td><td>input</td><td>fieldFloat</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td></tr></table>
-<h2>Trigger</h2><div class="mermaid">graph TD
-    lfo[t-LFO<br/>rate:0.2] --> remap[t-Remap<br/>outMin:0 outMax:1]
-    remap --> pinout[Pinout<br/>morph exposed]</div></section>
+<section id="grid-pinout"><h1>Pinout</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> GPU node. The pin-screen display — this is where your cloud becomes visible. XY snaps every point back to its fixed home grid position. Only the Z push (real metric depth) remains, creating a physical pin-screen toy relief.</p>
+
+<h2>How It Works</h2>
+<p>Every point in the cloud has a "home" — a fixed XY position on the grid determined by the Domain topology. The Depth node produces <code>position</code> offsets that displace points from home. Pinout lets you control how much of that offset reaches Output:</p>
+<p><strong>MORPH = 0:</strong> The classic pin-screen. XY is locked to the grid — points cannot move sideways. Only Z extends. This is the clean, architectural look.</p>
+<p><strong>MORPH = 1:</strong> The raw cloud. Points keep their full 3D offsets from Depth. The cloud floats freely in space. Use this for immersive, volumetric looks.</p>
+<p><strong>MORPH between 0 and 1:</strong> A blend. The cloud hovers near the grid, partially constrained. Wire an LFO into morph and the cloud breathes between rigid and free.</p>
+<p><strong>GAIN:</strong> Scales the Z push. At 1, the metric depth passes through unchanged. At 2, depth is doubled — more dramatic relief. At 0, the cloud goes completely flat against the wall.</p>
+
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>What It Does</th></tr><tr><td>morph</td><td>0 – 1</td><td>0</td><td>0 = grid-locked pin-screen. 1 = free-floating cloud. Blend between for hybrid looks.</td></tr><tr><td>gain</td><td>0 – 2</td><td>1</td><td>Z push multiplier. 0 = flat wall. 1 = true metric depth. 2 = exaggerated relief.</td></tr></table>
+
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th><th>Wire From / To</th></tr><tr><td>position</td><td>input</td><td>fieldVec3</td><td>Depth.position — the primary path. Also Twist, Scatter, Displace outputs for warped positions.</td></tr><tr><td>z</td><td>input</td><td>fieldFloat</td><td>Depth.z or Depth Drive.z — the geometry push.</td></tr><tr><td>position</td><td>output</td><td>fieldVec3</td><td>Output.position — final pin-screen positions.</td></tr><tr><td>z</td><td>output</td><td>fieldFloat</td><td>Output.z — passthrough of the Z push.</td></tr></table>
+
+<h2>Standard Chain with FX</h2>
+<div class="mermaid">graph LR
+    depth[Depth] -->|position| twist[Twist<br/>angle:0.15]
+    twist -->|offset| pinout[Pinout<br/>morph:0.2 gain:1.2]
+    depth -->|z| dd[Depth Drive<br/>gain:1.5 gamma:0.8]
+    dd -->|z| pinout
+    pinout -->|position| output[Output]</div>
+
+<h2>Trigger: LFO breathes the grid</h2>
+<div class="mermaid">graph TD
+    lfo[t-LFO<br/>type:sine rate:0.15] --> remap[t-Remap<br/>outMin:0 outMax:1]
+    remap --> pinout[Pinout<br/>morph exposed]</div>
+<p>A slow sine wave smoothly transitions between rigid pin-screen and free-floating cloud every ~7 seconds.</p></section>
 
 <section id="grid-domain"><h1>Domain</h1><p><span class="tag" style="border-color:var(--grd);color:var(--grd)">GRID</span> Render node. Pin lattice topology: rect, hex, radial, spiral, scatter, perspective.</p>
 <h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>topologyA</td><td>rect/hex/radial/spiral/scatter/perspective</td><td>rect</td></tr><tr><td>topologyB</td><td>rect/hex/radial/spiral/scatter/perspective</td><td>radial</td></tr><tr><td>morphAmount</td><td>0-1</td><td>0</td></tr></table>
@@ -353,17 +480,31 @@ graph TD
 <section id="filter-smooth-surface"><h1>Smooth Surface</h1><p><span class="tag" style="border-color:var(--flt);color:var(--flt)">FILTER</span> GPU node. Bilateral smoothing. Flattens noise without bleeding edges.</p>
 <h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>radius</td><td>0-4</td><td>1</td></tr><tr><td>sigma</td><td>0.01-0.2</td><td>0.05</td></tr></table></section>
 
-<section id="shape-size"><h1>Size</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Final pin size = base x input, clamped. Size 0 hides pin.</p>
-<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>base</td><td>0-4</td><td>1</td></tr><tr><td>min</td><td>0-2</td><td>0</td></tr><tr><td>max</td><td>0.1-6</td><td>3</td></tr></table>
-<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>size</td><td>input</td><td>fieldFloat</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td></tr></table>
+<section id="shape-size"><h1>Size</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Controls how large each point appears on screen. Final size = base × input, clamped to [min, max]. Size 0 hides the pin entirely — use this for visibility masking.</p>
+
+<h2>How It Works</h2>
+<p>Size is the final multiplier before the vertex shader draws each point. The formula is simple: <code>output = clamp(base × input, min, max)</code>. But the consequences are rich:</p>
+<p><strong>Constant size:</strong> Leave the size input unwired. Every pin uses the BASE value. A uniform cloud.</p>
+<p><strong>Depth-driven size:</strong> Wire Depth.depth into the size input. Near points are big, far points are small — natural perspective scaling. But depth alone gives a limited range; use a Remap node between them to set the exact size range you want (e.g., Remap outMin:0.1 outMax:3 → Size).</p>
+<p><strong>Audio-driven size:</strong> Wire Audio Volume through t-Remap into the size input. Points pulse with the music.</p>
+<p><strong>Masking:</strong> Wire a Hide node output, or a Region node mask directly into size. Pins outside the mask get size 0 → invisible. This is how you create spotlights, vignettes, and selective reveals.</p>
+
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>What It Does</th></tr><tr><td>base</td><td>0 – 4</td><td>1</td><td>Multiplier applied before clamping. At base=2, the same input produces twice the size.</td></tr><tr><td>min</td><td>0 – 2</td><td>0</td><td>Floor. Size never goes below this. At min=0.1, even "hidden" pins leave a faint speck.</td></tr><tr><td>max</td><td>0.1 – 6</td><td>3</td><td>Ceiling. Size never exceeds this. Prevents runaway sizes from loud audio or extreme depth.</td></tr></table>
+
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th><th>Typical Source</th></tr><tr><td>size</td><td>input</td><td>fieldFloat</td><td>Depth.depth (perspective), Noise.out (organic), Remap.out (custom range), Hide.size (masked), Audio Volume→t-Remap (reactive)</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td><td>Output.size</td></tr></table>
+
+<h2>Depth-Driven Size with Custom Range</h2>
 <div class="mermaid">graph LR
-    depth[Depth] -->|depth| remap[Remap<br/>outMin:0.2 outMax:3]
-    remap -->|out| size[Size<br/>base:1]
+    depth[Depth] -->|depth| remap[Remap<br/>inMin:0 inMax:1<br/>outMin:0.15 outMax:3.5]
+    remap -->|out| size[Size<br/>base:1.2 min:0.05 max:4]
     size -->|out| output[Output.size]</div>
-<h2>Trigger</h2><div class="mermaid">graph TD
-    beat[Beat Detect] --> envelope[t-Envelope<br/>attack:0.02 release:0.15]
-    envelope --> remap[t-Remap<br/>outMin:1 outMax:4]
-    remap --> size[Size<br/>base exposed]</div></section>
+
+<h2>Trigger: Beat Detection creates size explosions</h2>
+<div class="mermaid">graph TD
+    beat[Beat Detect<br/>onset trigger] --> envelope[t-Envelope<br/>attack:0.02 release:0.25]
+    envelope --> remap[t-Remap<br/>outMin:1 outMax:5]
+    remap --> size[Size<br/>base exposed]</div>
+<p>Each drum hit fires an envelope that peaks at size=5, then decays over 0.25 seconds. Points explode on each beat.</p></section>
 
 <section id="shape-shape"><h1>Shape</h1><p><span class="tag" style="border-color:var(--shp);color:var(--shp)">SHAPE</span> GPU node. Pin cap geometry: sphere, cube, tube, slab, cone, ring, disc, spike, diamond.</p>
 <div class="mermaid">graph LR
@@ -429,24 +570,70 @@ graph TD
 <section id="move-twist"><h1>Twist</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Whirlpools positions around view center.</p>
 <h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>angle</td><td>-0.5 to 0.5</td><td>0</td></tr><tr><td>falloff</td><td>0-4</td><td>0.8</td></tr></table></section>
 
-<section id="move-shockwave"><h1>Shockwave</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Expanding rings fired by triggers. Up to 4 active waves.</p>
-<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>speed</td><td>0-4</td><td>1.2</td></tr><tr><td>width</td><td>0-0.6</td><td>0.12</td></tr><tr><td>damping</td><td>0-6</td><td>1.2</td></tr></table>
-<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>fire</td><td>input</td><td>trigger</td></tr><tr><td>pulse</td><td>output</td><td>fieldFloat</td></tr></table>
+<section id="move-shockwave"><h1>Shockwave</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Expanding rings fired by triggers. Up to 4 waves alive simultaneously — each ring travels outward from its birth point, pushing points as it passes. Pure math — zero per-pin state.</p>
+
+<h2>How It Works</h2>
+<p>When the <code>fire</code> port receives a trigger pulse (1 on a frame), a new wave is born at the current center position. The wave expands outward over time: at each pin, the shader computes the distance from the wave center and checks if the ring front has reached that pin yet. If the pin is inside the active ring band, it gets displaced. The displacement is strongest at the ring center and falls off toward the edges of the ring width.</p>
+<p>Up to 4 waves can be alive at once. When a 5th fires, the oldest wave is replaced. Each wave decays naturally — DAMPING controls how fast the ring amplitude fades as it travels.</p>
+<p><strong>Common pattern:</strong> Beat Detect → Shockwave.fire. Shockwave.pulse → Depth Drive.gain (exposed). Every kick drum sends a ripple through the cloud.</p>
+<p><strong>Multiple triggers:</strong> Wire Gestures.fist AND Gestures.palm both into Shockwave.fire (via t-Or). Different gestures fire waves from different screen positions.</p>
+
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>What It Does</th></tr><tr><td>speed</td><td>0 – 4</td><td>1.2</td><td>How fast the ring expands outward. At 1.2, a wave crosses the frame in about 0.4 seconds.</td></tr><tr><td>width</td><td>0 – 0.6</td><td>0.12</td><td>Ring thickness. At 0.12, the displacement band is about 12% of the frame width. Thinner = sharper shock. Wider = softer push.</td></tr><tr><td>damping</td><td>0 – 6</td><td>1.2</td><td>How fast the wave amplitude decays. Low damping = rings travel far before fading. High damping = quick localized pulse.</td></tr></table>
+
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th><th>Wire From / To</th></tr><tr><td>fire</td><td>input</td><td>trigger</td><td>Beat Detect.beat, Gestures.fist, Gestures.palm, Clock.beat, t-Threshold.fired, Proximity.entered</td></tr><tr><td>pulse</td><td>output</td><td>fieldFloat</td><td>Depth Drive.gain (exposed), Size.base (exposed), Twist.angle (exposed) — any param you want to pulse</td></tr></table>
+
+<h2>Standard Use: Audio Beat → Shockwave → Depth</h2>
 <div class="mermaid">graph TD
-    beat[Beat Detect] --> sw[Shockwave<br/>fire port]
-    sw -->|pulse| dd[Depth Drive<br/>gain exposed]</div></section>
+    beat[Beat Detect<br/>onset trigger] --> sw[Shockwave<br/>speed:1.2 width:0.12<br/>damping:1.2]
+    sw -->|pulse| dd[Depth Drive<br/>gain exposed]
+    depth[Depth] -->|depth| dd
+    dd -->|z| pinout[Pinout]</div>
+
+<h2>Multi-Source Trigger Chain</h2>
+<div class="mermaid">graph TD
+    beat[Beat Detect] --> or_gate[t-Or]
+    fist[Gestures.fist] --> or_gate
+    or_gate --> sw[Shockwave<br/>fire port]
+    sw -->|pulse| size[Size<br/>base exposed]</div>
+<p>Both drum hits AND fist gestures fire shockwaves into the Size parameter.</p></section>
 
 <section id="move-freeze"><h1>Freeze</h1><p><span class="tag" style="border-color:var(--mov);color:var(--mov)">MOVE</span> GPU node. Holds captured values while hold is up. Melts to live.</p>
 <h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>hold</td><td>0-1</td><td>0</td></tr></table>
 <div class="mermaid">graph TD
     fist[Gestures.fist] --> freeze[Freeze<br/>hold exposed]</div></section>
 
-<section id="color-palette"><h1>Palette</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Maps 0-1 value through color lookup table. Primary colorization.</p>
-<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th></tr><tr><td>map</td><td>thermal/viridis/plasma/inferno/magma/cividis/turbo/coolwarm</td><td>thermal</td></tr><tr><td>shift</td><td>-1 to 1</td><td>0</td></tr></table>
-<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>t</td><td>input</td><td>fieldFloat</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td></tr></table>
+<section id="color-palette"><h1>Palette</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Maps a 0–1 value through a color lookup table. The primary colorization node — without it, all points render white.</p>
+
+<h2>How It Works</h2>
+<p>The Palette node takes any fieldFloat input (typically Depth.depth, which is 0–1 nearness) and uses it as an index into a color gradient. At t=0 you get the leftmost color of the gradient. At t=1 you get the rightmost. The SHIFT parameter offsets this lookup — at shift=0.5, what was red becomes green (wrapping around the gradient).</p>
+<p><strong>Common pattern:</strong> Depth.depth → Palette.t → Output.color. Near objects (depth=1) get hot colors. Far objects (depth=0) get cold colors. This is the classic thermal LiDAR look.</p>
+<p><strong>Beyond depth:</strong> Wire anything 0–1 into Palette.t. Noise.out for organic color fields. Sine.out for pulsing color cycles. Remap.out to compress or expand the color range. Audio Volume through t-Remap for sound-reactive palette shifts.</p>
+
+<h2>Parameters</h2><table><tr><th>Param</th><th>Options</th><th>Default</th><th>What It Does</th></tr><tr><td>map</td><td>thermal / viridis / plasma / inferno / magma / cividis / turbo / coolwarm / twilight / rainbow</td><td>thermal</td><td>The color gradient. Thermal = black→red→yellow→white (classic heatmap). Viridis = blue→green→yellow (perceptually uniform). Plasma = purple→pink→yellow. Turbo = full spectrum with high contrast.</td></tr><tr><td>shift</td><td>−1 to 1</td><td>0</td><td>Offsets the color lookup. At 0.5, the entire gradient shifts halfway — what was red becomes green. Wire Audio FFT or an LFO for sweeping color shifts.</td></tr></table>
+
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th><th>Typical Source</th></tr><tr><td>t</td><td>input</td><td>fieldFloat</td><td>Depth.depth (nearness coloring), Noise.out (organic), Remap.out (custom range), Sine.out (pulsing)</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td><td>Output.color — the final render color</td></tr></table>
+
+<h2>Standard Use: Depth Coloring</h2>
+<div class="mermaid">graph LR
+    depth[Depth<br/>near:0.1 far:2.5] -->|depth| palette[Palette<br/>map:viridis]
+    palette -->|color| output[Output.color]
+    depth -->|position| pinout[Pinout]
+    depth -->|z| pinout
+    pinout -->|position| output</div>
+
+<h2>Color Pipeline: Video Color → Processed → Fog</h2>
+<div class="mermaid">graph LR
+    vc[Video Color<br/>exposure:0] --> contrast[Contrast<br/>amount:1.4]
+    contrast --> levels[Color Levels<br/>gamma:1.1 gain:1.2]
+    levels --> fog[Depth Fog<br/>density:0.5]
+    depth[Depth] -->|depth| fog
+    fog -->|color| output[Output.color]</div>
+
+<h2>Trigger: Audio shifts the palette</h2>
 <div class="mermaid">graph TD
-    fft[Audio FFT<br/>low band] --> remap[t-Remap<br/>outMin:-0.5 outMax:0.5]
-    remap --> palette[Palette<br/>shift exposed]</div></section>
+    fft[Audio FFT<br/>low band 40-250Hz] --> remap[t-Remap<br/>outMin:-0.5 outMax:0.5]
+    remap --> palette[Palette<br/>shift exposed]</div>
+<p>Bass frequencies shift the entire color gradient. Kick drum = palette jumps. Quiet = palette rests at its default position.</p></section>
 
 <section id="color-duotone"><h1>Duotone</h1><p><span class="tag" style="border-color:var(--col);color:var(--col)">COLOR</span> GPU node. Dark pins = shadow color. Bright = light color. Risograph look.</p>
 <h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>shadowR/G/B</td><td>0-1</td><td>0.1/0.05/0.3</td></tr><tr><td>lightR/G/B</td><td>0-1</td><td>1/0.85/0.4</td></tr></table></section>
@@ -475,15 +662,28 @@ graph TD
     remap -->|out| palette[Palette<br/>map:plasma]
     palette -->|color| output[Output.color]</div></section>
 
-<section id="signal-noise"><h1>Noise</h1><p><span class="tag" style="border-color:var(--sig);color:var(--sig)">SIGNAL</span> GPU node. Animated 3D noise per pin. Multiple types with fractal layering.</p>
-<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th></tr><tr><td>type</td><td>perlin/simplex/random/sparse/hermite/harmonic</td><td>perlin</td></tr><tr><td>period</td><td>0.02-4</td><td>0.5</td></tr><tr><td>harmonics</td><td>1-6</td><td>3</td></tr><tr><td>amplitude</td><td>0-4</td><td>1</td></tr><tr><td>moveRate</td><td>-4 to 4</td><td>0.3</td></tr></table>
-<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th></tr><tr><td>z</td><td>input</td><td>fieldFloat</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td></tr></table>
+<section id="signal-noise"><h1>Noise</h1><p><span class="tag" style="border-color:var(--sig);color:var(--sig)">SIGNAL</span> GPU node. Animated 3D noise field computed per-pin on the GPU. Six noise types with fractal octave layering. Produces both a scalar output (0–1) and an optional color output through a palette map. The most versatile modulation source after Depth.</p>
+
+<h2>How It Works</h2>
+<p>Noise samples a coherent 3D field using each pin's grid position plus time. Because the field is continuous, neighboring pins get similar values — creating organic, flowing patterns rather than random static. The field "moves" along one axis driven by time, producing smooth animation without any per-pin state.</p>
+<p><strong>Fractal layering:</strong> HARMONICS controls how many octaves are summed. Each octave is higher frequency (by HARMONICSPREAD) and lower amplitude (by HARMONICGAIN). ROUGHNESS blends toward more high-frequency energy. The result: from smooth clouds (1 harmonic) to detailed turbulence (6 harmonics, high roughness).</p>
+
+<h2>Parameters</h2><table><tr><th>Param</th><th>Range</th><th>Default</th><th>What It Does</th></tr><tr><td>type</td><td>perlin / simplex / random / sparse / hermite / harmonic</td><td>perlin</td><td><strong>Perlin:</strong> Classic smooth gradient noise. <strong>Simplex:</strong> Less directional artifacts. <strong>Random:</strong> White noise per pin. <strong>Sparse:</strong> Clustered pockets of activity. <strong>Hermite:</strong> Smoother interpolation. <strong>Harmonic:</strong> Sum-of-sines — periodic and musical.</td></tr><tr><td>period</td><td>0.02 – 4</td><td>0.5</td><td>Feature size. 0.02 = fine grain like sand. 4 = broad sweeping waves across the whole frame.</td></tr><tr><td>harmonics</td><td>1 – 6</td><td>3</td><td>Octave count. 1 = smooth and simple. 6 = rich detailed turbulence (more GPU cost).</td></tr><tr><td>harmonicSpread</td><td>1 – 4</td><td>2</td><td>Frequency multiplier per octave. 2 = each octave doubles frequency (standard).</td></tr><tr><td>harmonicGain</td><td>0 – 1</td><td>0.5</td><td>Amplitude per octave. 0.5 = each octave is half as strong (standard fractal).</td></tr><tr><td>roughness</td><td>0 – 1</td><td>0.5</td><td>Blends toward high-frequency energy. 0 = smooth, dominated by first octave. 1 = rough, all octaves nearly equal.</td></tr><tr><td>amplitude</td><td>0 – 4</td><td>1</td><td>Output scale. The raw noise is 0–1; amplitude multiplies it. Clamped after.</td></tr><tr><td>moveRate</td><td>−4 to 4</td><td>0.3</td><td>Animation speed. Higher = faster field evolution. Negative = reverse direction.</td></tr><tr><td>map</td><td>mono / palette names</td><td>mono</td><td>mono = greyscale color output. Any palette = noise mapped through that gradient.</td></tr></table>
+
+<h2>Ports</h2><table><tr><th>Port</th><th>Direction</th><th>Type</th><th>Use</th></tr><tr><td>z</td><td>input</td><td>fieldFloat</td><td>Optional Z-drive. Wire a Time or another field to offset the noise sample plane. Unwired = uses pin grid position.</td></tr><tr><td>out</td><td>output</td><td>fieldFloat</td><td>0–1 noise value. Wire to Size, Displace, Twist, Depth Drive — any float param.</td></tr><tr><td>color</td><td>output</td><td>fieldColor</td><td>Mapped through the selected palette. Wire directly to Output.color for colored noise visuals.</td></tr></table>
+
+<h2>Standard Use: Noise drives Size + Color</h2>
 <div class="mermaid">graph LR
-    noise[Noise<br/>type:perlin period:0.3] -->|out| size[Size<br/>base exposed]
+    noise[Noise<br/>type:perlin period:0.4<br/>harmonics:3 amplitude:0.7] -->|out| size[Size<br/>base exposed]
     noise -->|color| output[Output.color]</div>
-<h2>Trigger</h2><div class="mermaid">graph TD
-    midi[MIDI CC 21] --> remap[t-Remap<br/>outMin:0.05 outMax:2]
-    remap --> noise[Noise<br/>period exposed]</div></section>
+
+<h2>Trigger: MIDI knob sweeps noise character</h2>
+<div class="mermaid">graph TD
+    midi[MIDI CC 21<br/>knob 0-1] --> remap_period[t-Remap<br/>outMin:0.05 outMax:2]
+    remap_period --> noise[Noise<br/>period exposed]
+    midi2[MIDI CC 22<br/>knob 0-1] --> remap_rough[t-Remap<br/>outMin:0 outMax:1]
+    remap_rough --> noise2[Noise<br/>roughness exposed]</div>
+<p>One knob sweeps noise from fine grain to broad waves. The other blends from smooth to rough.</p></section>
 
 <section id="signal-trigger"><h1>Trigger Nodes</h1><p><span class="tag" style="border-color:var(--sig);color:var(--sig)">SIGNAL</span> CPU control-rate. Process signals and generate events. Wire into exposed params.</p>
 <table><tr><th>Node</th><th>ID</th><th>Description</th></tr><tr><td>If / Then</td><td>t-if</td><td>COND > 0.5 pass A, else B</td></tr><tr><td>And</td><td>t-and</td><td>Both > 0.5 = 1</td></tr><tr><td>Or</td><td>t-or</td><td>Either > 0.5 = 1</td></tr><tr><td>Not</td><td>t-not</td><td>Invert: 1 - A</td></tr><tr><td>Xor</td><td>t-xor</td><td>Exactly one > 0.5</td></tr><tr><td>Threshold</td><td>t-threshold</td><td>Schmitt trigger. Rise/fall/cooldown</td></tr><tr><td>Envelope</td><td>t-envelope</td><td>Trigger to smooth 0-1. Attack/release</td></tr><tr><td>Curve</td><td>t-curve</td><td>Easing curves. quad/cubic/back/bounce/elastic</td></tr><tr><td>Spring</td><td>t-spring</td><td>Physical follow. Stiffness/damping</td></tr><tr><td>Remap</td><td>t-remap</td><td>Linear range mapping</td></tr></table>
@@ -577,7 +777,7 @@ function expandForHash(){
 }
 
 // Mermaid init with click and hover handlers
-mermaid.initialize({startOnLoad:false,theme:'dark',securityLevel:'loose',themeVariables:{primaryColor:'#181818',primaryBorderColor:'#2E2E2E',primaryTextColor:'#F2F2F2',lineColor:'#3A3A3A',fontSize:'12px',fontFamily:'SF Mono,Menlo,Consolas,monospace'}});
+mermaid.initialize({startOnLoad:false,theme:'dark',securityLevel:'loose',fontSize:16,themeVariables:{primaryColor:'#181818',primaryBorderColor:'#2E2E2E',primaryTextColor:'#F2F2F2',lineColor:'#3A3A3A',fontSize:'15px',fontFamily:'SF Mono,Menlo,Consolas,monospace',edgeLabelBackground:'#0E0E0E',nodeBorder:'#2E2E2E',nodeTextSize:'15px'});
 
 var nodeData={
   'Depth':'Source node. Reads LiDAR/TrueDepth/RGB depth. Produces per-pin nearness and 3D position.',
