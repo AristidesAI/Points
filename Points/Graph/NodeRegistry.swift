@@ -121,6 +121,34 @@ final class NodeRegistry: @unchecked Sendable {
             }))
 
         register(NodeSpec(
+            id: "pinout", name: "Pinout", family: .grid,
+            inputs: [PortSpec("position", .fieldVec3), PortSpec("z", .fieldFloat)],
+            outputs: [PortSpec("position", .fieldVec3), PortSpec("z", .fieldFloat)],
+            params: [.float("morph", 0...1, 0), .float("gain", 0...2, 1)],
+            execution: .interpreterOp,
+            description: "Pin-art display with REAL 3D depth: Depth.position/z → in, both outs → Output. XY snaps every point back to its fixed home grid — only the Z push (the true metric depth) remains, like a pin-screen relief. MORPH blends back toward the cloud (0 = locked grid, 1 = untouched cloud); GAIN scales the push. Turn ARMS on in the Depth node for the rods.",
+            emit: { b, inputs, node in
+                let xyIn = b.materialize(inputs[0], default: .zero)
+                let zIn = b.materialize(inputs[1], default: .zero)
+                // Grid-locked XY = zero positional offset (the cloud ops return screen − baseXY,
+                // so 0 means "stay on your home pin"). MORPH mixes the cloud offset back in.
+                let zero = b.reg()
+                b.emit(PinInstruction(.constant, dst: zero))
+                let xy = b.reg()
+                b.emitPatched(PinInstruction(.mix, dst: xy, a: zero, b: xyIn,
+                                             imm: [node.float("morph", 0), 0, 0, 0]),
+                              key: "\(node.id).xy", lanes: [0])
+                b.addPatchKey("\(node.id).morph", lane: 0)
+                // Z passes through untouched at GAIN 1 — the pins extend by the real metric depth.
+                let z = b.reg()
+                b.emitPatched(PinInstruction(.madd, dst: z, a: zIn,
+                                             imm: [node.float("gain", 1), 0, 0, 0]),
+                              key: "\(node.id).z", lanes: [0])
+                b.addPatchKey("\(node.id).gain", lane: 0)
+                return [xy, z]
+            }))
+
+        register(NodeSpec(
             id: "region-ellipse", name: "Ellipse Region", family: .grid,
             inputs: [PortSpec("center", .vec2, default: [0.5, 0.5, 0, 0])],
             outputs: [PortSpec("mask", .fieldFloat)],
