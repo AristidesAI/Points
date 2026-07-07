@@ -39,8 +39,10 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
         return found.isEmpty ? [.wide, .front] : found
     }
 
-    /// (bgra frame, normalized intrinsics fx/fy/cx/cy for METRIC mode). Called on the capture queue.
-    var onFrame: (@Sendable (CVPixelBuffer, SIMD4<Float>) -> Void)?
+    /// (bgra frame, normalized intrinsics fx/fy/cx/cy for METRIC mode, front lens?). Called on the
+    /// capture queue. The buffer may arrive LANDSCAPE when the connection rotation didn't take —
+    /// the consumer is responsible for uprighting it (LiveDepthEngine does, per lens).
+    var onFrame: (@Sendable (CVPixelBuffer, SIMD4<Float>, Bool) -> Void)?
 
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "points.rgbcam", qos: .userInitiated)
@@ -102,9 +104,11 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
             output.setSampleBufferDelegate(self, queue: queue)
             if session.canAddOutput(output) { session.addOutput(output) }
         }
-        // Upright portrait: all lenses need 90°. Do NOT mirror the front lens — a mirrored frame
-        // gives mirrored depth (left/right handedness flips), which read as the front-lens "flipped"
-        // artifacts. A point cloud wants the true, un-mirrored scene.
+        // Ask for upright portrait (90°) on every lens — but do NOT trust it: the front connection
+        // delivered landscape anyway on-device (the −90° clouds). LiveDepthEngine self-heals by
+        // rotating any landscape buffer itself, per lens. Do NOT mirror the front lens — a mirrored
+        // frame gives mirrored depth (left/right handedness flips), which read as the front-lens
+        // "flipped" artifacts. A point cloud wants the true, un-mirrored scene.
         if let c = output.connection(with: .video) {
             if c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
             if c.isVideoMirroringSupported { c.automaticallyAdjustsVideoMirroring = false; c.isVideoMirrored = false }
@@ -118,7 +122,7 @@ nonisolated final class RGBCameraSource: NSObject, AVCaptureVideoDataOutputSampl
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard running, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrame?(pb, Self.intrinsics(sampleBuffer))   // connection already rotates the buffer to upright
+        onFrame?(pb, Self.intrinsics(sampleBuffer), lens == .front)
     }
 
     /// Normalized intrinsics (fx/W, fy/H, cx/W, cy/H) from the frame's camera-intrinsic-matrix

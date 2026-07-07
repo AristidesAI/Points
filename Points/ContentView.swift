@@ -292,7 +292,7 @@ struct ContentView: View {
                 } else {
                     player?.stop()
                     let model = LiveModel.named(ln.option("model", "Metric Video DA S"))
-                    renderer.setOrient(model.orient)                 // model orient ONLY while RGB drives the display
+                    renderer.setOrient(0)                            // live-model feed is upright 3:4 — no remap
                     let lens = RGBCameraSource.Lens(rawValue: ln.option("lens", "Wide")) ?? .wide
                     if liveCamOn {
                         rgbCam?.start(lens: lens)                    // already live → just switch the lens
@@ -343,7 +343,7 @@ struct ContentView: View {
                 let eng = LiveDepthEngine(renderer: renderer)
                 liveEngine = eng
                 let cam = RGBCameraSource()
-                cam.onFrame = { pb, intr in eng.process(pb, intrinsics: intr) }   // RGB frame + intrinsics → model → cloud
+                cam.onFrame = { pb, intr, front in eng.process(pb, intrinsics: intr, front: front) }   // RGB frame + intrinsics → model → cloud
                 rgbCam = cam
                 runtime.requestMedia = { nodeID in importForLiveNode = nodeID; importCover = true }
                 let rt = runtime

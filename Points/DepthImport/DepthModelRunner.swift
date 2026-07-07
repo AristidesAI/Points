@@ -14,14 +14,16 @@ struct LiveModel: Sendable, Equatable {
     var resource: String    // compiled .mlmodelc bundle resource
     var inverse: Bool       // model emits inverse/disparity depth (near = large) → flip
     var metric: Bool = false // METRIC models output true metres (kept for reference; still normalised)
-    var orient: UInt32 = 0  // per-model sensor→grid orientation bits (1 swapUV, 2 flipU, 4 flipV) —
-                            // some conversions come out rotated/180°; calibration knob (see below).
+    // NO per-model orientation bits: every model gets the same upright 3:4 input and is
+    // layout-preserving, so grid orient is always 0. The old per-model 180° flips (DA v2 S /
+    // MoGe-2 = 6) were mis-calibration — they CAUSED the upside-down clouds, and free/metric
+    // un-flipped XY while pinout didn't, which is why modes looked rotated differently.
     // Dropped the two slow scene-specific metric models (DA2 Metric Indoor/Outdoor) and DA v3
     // (removed per testing). Kept the fast general ones + MoGe-2 (per testing — wanted back).
     static let all: [LiveModel] = [
-        LiveModel(name: "Metric Video DA S",   resource: "MetricVideoDA_S",           inverse: false, metric: true, orient: 0),
-        LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",    inverse: true,  orient: 6),
-        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",      inverse: false, metric: true, orient: 6),
+        LiveModel(name: "Metric Video DA S",   resource: "MetricVideoDA_S",           inverse: false, metric: true),
+        LiveModel(name: "Depth Anything V2 S", resource: "DepthAnythingV2SmallF16",    inverse: true),
+        LiveModel(name: "MoGe-2",              resource: "MoGe2_ViTB_Normal_504",      inverse: false, metric: true),
     ]
     static func named(_ n: String) -> LiveModel { all.first { $0.name == n } ?? all[0] }
     /// The models offered in the import page + live node pickers (display names).
@@ -165,7 +167,10 @@ nonisolated final class DepthModelRunner: @unchecked Sendable {
         smHi = smHi.isFinite ? smHi + (hiP - smHi) * 0.15 : hiP
         let lo = smLo, hi = smHi
         lock.unlock()
-        let span = max(hi - lo, 1e-4)
+        // Span floor at 5% of the far bound: a near-flat scene (tele lens on a wall/object) has a
+        // tiny percentile span, and dividing by it blew sensor noise up to the full display band —
+        // the "hydraulic press garble" on tele. Flat scenes now render flat instead.
+        let span = max(hi - lo, max(hi * 0.05, 1e-4))
         let n = Self.nearM, f = Self.farM
         // Map + temporal EMA in ONE pass. Monocular depth is noisy frame-to-frame and the renderer's
         // EMA is off by default, so the raw jitter rendered as the "breathing/cloth" vortex; new frame

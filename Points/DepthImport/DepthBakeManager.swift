@@ -62,14 +62,12 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
 
     private let runner = DepthModelRunner()
     private var bakeTask: Task<Void, Never>?
-    private var bakeOrient: UInt32 = 0        // the chosen model's orientation → carried to the player
 
     // MARK: control
 
     func start(url: URL, isVideo: Bool, options: BakeOptions, model: LiveModel) {
         guard !isRunning else { return }
         sourceName = url.lastPathComponent
-        bakeOrient = model.orient
         stage = .preparing; progress = 0; currentFrame = 0; totalFrames = 0; fps = 0; previewImage = nil
         BakeShared.snapshot.reset()
         DepthBakeActivity.start(sourceName: url.lastPathComponent, total: 0)   // Timer-style Dynamic Island
@@ -91,7 +89,7 @@ struct DepthPreview: Sendable { var pixels: [UInt8]; var width: Int; var height:
     /// hops cleanly from the off-main bake loop.
     private func record(metres: [Float], w: Int, h: Int, frame: Int, total: Int, fps: Double,
                         playbackFPS: Double, isVideo: Bool, first: Bool, preview: DepthPreview?) {
-        if first { ImportedDepthStore.shared.begin(width: w, height: h, isVideo: isVideo, fps: playbackFPS, orient: bakeOrient) }
+        if first { ImportedDepthStore.shared.begin(width: w, height: h, isVideo: isVideo, fps: playbackFPS, orient: 0) }
         ImportedDepthStore.shared.append(metres)
         currentFrame = frame; totalFrames = total; self.fps = fps
         progress = total > 0 ? Double(frame) / Double(total) : 0

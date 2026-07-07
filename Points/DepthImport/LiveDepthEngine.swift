@@ -37,13 +37,38 @@ nonisolated final class LiveDepthEngine: @unchecked Sendable {
 
     /// One BGRA camera frame (+ its real normalized intrinsics) → depth → renderer. Drops frames
     /// while an inference is in flight.
-    func process(_ bgra: CVPixelBuffer, intrinsics: SIMD4<Float>) {
+    func process(_ bgra: CVPixelBuffer, intrinsics: SIMD4<Float>, front: Bool) {
         lock.lock(); if busy || !runner.isLoaded { lock.unlock(); return }; busy = true; lock.unlock()
         defer { lock.lock(); busy = false; lock.unlock() }
-        let src = CIImage(cvPixelBuffer: bgra)
-        guard let cg = ci.createCGImage(src, from: src.extent),
+        var src = CIImage(cvPixelBuffer: bgra)
+        // Self-heal orientation: the connection's 90° rotation can silently not take (the front
+        // lens did exactly that on-device → −90° clouds). A landscape buffer here means sideways
+        // content — upright it per lens. The intrinsics fx/fy swap upstream assumes exactly one 90°
+        // turn, which stays true whichever layer does it. Knob: if the front cloud reads
+        // upside-down on-device, swap .left ↔ .right.
+        if src.extent.width > src.extent.height {
+            src = src.oriented(front ? .left : .right)
+        }
+        // Centre-crop to the pin wall's 3:4 aspect BEFORE inference. The camera delivers 9:16;
+        // scale-filling that to the model's square input and painting it on the 3:4 wall squashed
+        // everything vertically ("too wide / hydraulic press"). The TrueDepth path never had this
+        // because its capture format is native 4:3. Intrinsics re-normalise to the cropped extent.
+        var rect = src.extent
+        var intr = intrinsics
+        let targetH = rect.width * 4 / 3
+        if rect.height > targetH + 1 {                 // portrait feed taller than 3:4 → crop height
+            rect = CGRect(x: rect.minX, y: rect.midY - targetH / 2, width: rect.width, height: targetH)
+            intr.y *= Float(src.extent.height / targetH)
+        } else {
+            let targetW = rect.height * 3 / 4          // (landscape safety net — feed should be portrait)
+            if rect.width > targetW + 1 {
+                rect = CGRect(x: rect.midX - targetW / 2, y: rect.minY, width: targetW, height: rect.height)
+                intr.x *= Float(src.extent.width / targetW)
+            }
+        }
+        guard let cg = ci.createCGImage(src, from: rect),
               let (metres, w, h) = runner.depth(cg), let pb = buffer(metres, w, h) else { return }
-        renderer.setIntrinsics(intrinsics)   // real per-frame camera intrinsics → METRIC mode
+        renderer.setIntrinsics(intr)   // real per-frame camera intrinsics → METRIC mode
         renderer.ingest(depth: pb, color: nil, lumaOnly: false)
     }
 
