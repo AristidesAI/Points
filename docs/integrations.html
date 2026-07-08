@@ -5,7 +5,8 @@
 <table><tr><th>Node</th><th>Reads</th><th>Output</th><th>Range</th></tr><tr><td>MIDI CC</td><td>Control Change 0-127</td><td>signal</td><td>0-1</td></tr><tr><td>MIDI Note</td><td>Note-on velocity</td><td>trigger + velocity</td><td>0-1</td></tr><tr><td>MIDI Pitch Bend</td><td>Pitch wheel</td><td>signal</td><td>-1 to +1</td></tr><tr><td>MIDI Clock</td><td>External BPM</td><td>sync</td><td>-</td></tr></table>
 <p>Pattern: MIDI CC -> t-Remap (scale range) -> exposed param on target node.</p>
 
-<h2>OSC</h2>
+<h3>MIDI Performance Setup</h3>
+<div class="mermaid">graph TD; cc21[MIDI CC 21<br/>knob] --> remap[t-Remap<br/>outMin:0.02 outMax:1.5]; remap --> noise[Noise<br/>period exposed]; cc22[MIDI CC 22<br/>knob] --> remap2[t-Remap<br/>outMin:0 outMax:1]; remap2 --> noise2[Noise<br/>roughness exposed]; note60[MIDI Note 60<br/>kick pad] --> sw[Shockwave<br/>fire port]</div><h2>OSC</h2>
 <p>Points listens on port 9000.</p>
 <table><tr><th>Address</th><th>Arguments</th><th>Effect</th></tr><tr><td>/points/param nodeID param float</td><td>string, string, float</td><td>Set any slider</td></tr><tr><td>/points/shockwave x y</td><td>float, float</td><td>Fire shockwave at UV position</td></tr><tr><td>/points/bpm float</td><td>float</td><td>Set global BPM</td></tr></table>
 
@@ -14,13 +15,15 @@
 <table><tr><th>Node</th><th>Output</th><th>Range</th></tr><tr><td>Audio Volume</td><td>volume (signal)</td><td>0-1 RMS</td></tr><tr><td>Audio FFT</td><td>low/mid/high (signal)</td><td>0-1 per band</td></tr><tr><td>Beat Detect</td><td>beat (trigger)</td><td>0 or 1</td></tr><tr><td>FFT Band</td><td>band (signal)</td><td>0-1, 20 log-spaced bands</td></tr></table>
 <p>The modulation chain: Audio -> Threshold -> Envelope -> Curve -> Spring -> exposed param.</p>
 
-<h2>NDI Output</h2>
+<h3>Audio Modulation Chain</h3>
+<div class="mermaid">graph TD; volume[Audio Volume<br/>RMS 0-1] --> threshold[t-Threshold<br/>rise:0.6 fall:0.4]; threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.35]; envelope --> curve[t-Curve<br/>curve:quadOut]; curve --> spring[t-Spring<br/>stiffness:80 damping:18]; spring --> dd[Depth Drive<br/>gain exposed]</div><h2>NDI Output</h2>
 <p>Add NDI node. Streams viewport with alpha channel to OBS, vMix, TouchDesigner.</p>
 <table><tr><th>Param</th><th>Default</th></tr><tr><td>streamName</td><td>Points</td></tr><tr><td>fps</td><td>30</td></tr><tr><td>alphaKey</td><td>true</td></tr></table>
 
 <h2>MP4 Recording</h2>
 <p>Add Record node. H.264 MP4 saved to Photos.</p>
 
-<h2>Vision Body Tracking</h2>
+<h3>Body Tracking Example</h3>
+<div class="mermaid">graph TD; hand[Hand Position] -->|x| twist[Twist<br/>angle exposed]; hand -->|y| size[Size<br/>base exposed]; pinch[Pinch] --> scatter[Scatter<br/>amount exposed]; fist[Gestures.fist] --> sw[Shockwave<br/>fire port]</div><h2>Vision Body Tracking</h2>
 <p>Apple Vision framework via front TrueDepth. ~13fps on background queue.</p>
-<table><tr><th>Node</th><th>Output</th><th>Type</th></tr><tr><td>Hand Position</td><td>x,y</td><td>signal 0-1</td></tr><tr><td>Pinch</td><td>distance</td><td>signal 0-10</td></tr><tr><td>Hand Openness</td><td>openness</td><td>signal 0-1</td></tr><tr><td>Gestures</td><td>palm/fist/peace/point</td><td>trigger</td></tr><tr><td>Head Pose</td><td>yaw/pitch/roll</td><td>signal</td></tr><tr><td>Face Blendshapes</td><td>52 coefficients</td><td>signal 0-1</td></tr></table></main></div><div class="tooltip" id="tt"></div><script src="./assets/boids.js"></script></body></html>
+<table><tr><th>Node</th><th>Output</th><th>Type</th></tr><tr><td>Hand Position</td><td>x,y</td><td>signal 0-1</td></tr><tr><td>Pinch</td><td>distance</td><td>signal 0-10</td></tr><tr><td>Hand Openness</td><td>openness</td><td>signal 0-1</td></tr><tr><td>Gestures</td><td>palm/fist/peace/point</td><td>trigger</td></tr><tr><td>Head Pose</td><td>yaw/pitch/roll</td><td>signal</td></tr><tr><td>Face Blendshapes</td><td>52 coefficients</td><td>signal 0-1</td></tr></table></main></div><div class="tooltip" id="tt"></div><script src="./assets/boids.js"></script><script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,theme:"dark",securityLevel:"loose",themeVariables:{primaryColor:"#181818",primaryBorderColor:"#2E2E2E",primaryTextColor:"#F2F2F2",lineColor:"#3A3A3A",fontSize:"15px",fontFamily:"SF Mono,Menlo,Consolas,monospace",edgeLabelBackground:"#0E0E0E"}});</script></body></html>
