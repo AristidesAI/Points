@@ -12,11 +12,11 @@
 
 <h2>Audio Analysis</h2>
 <p>Real-time microphone FFT via Accelerate. Mic activates only when audio nodes are in the graph.</p>
-<table><tr><th>Node</th><th>Output</th><th>Range</th></tr><tr><td>Audio Volume</td><td>volume (signal)</td><td>0-1 RMS</td></tr><tr><td>Audio FFT</td><td>low/mid/high (signal)</td><td>0-1 per band</td></tr><tr><td>Beat Detect</td><td>beat (trigger)</td><td>0 or 1</td></tr><tr><td>FFT Band</td><td>band (signal)</td><td>0-1, 20 log-spaced bands</td></tr></table>
+<table><tr><th>Node</th><th>Output</th><th>Range</th></tr><tr><td>Audio Levels</td><td>volume (signal)</td><td>0-1 RMS</td></tr><tr><td>Audio Levels</td><td>low/mid/high (signal)</td><td>0-1 per band</td></tr><tr><td>Beat Trigger</td><td>beat (trigger)</td><td>0 or 1</td></tr><tr><td>FFT Band</td><td>band (signal)</td><td>0-1, 20 log-spaced bands</td></tr></table>
 <p>The modulation chain: Audio -> Threshold -> Envelope -> Curve -> Spring -> exposed param.</p>
 
 <h3>Audio Modulation Chain</h3>
-<div class="mermaid">graph TD; volume[Audio Volume<br/>RMS 0-1] --> threshold[t-Threshold<br/>rise:0.6 fall:0.4]; threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.35]; envelope --> curve[t-Curve<br/>curve:quadOut]; curve --> spring[t-Spring<br/>stiffness:80 damping:18]; spring --> dd[Depth Drive<br/>gain exposed]</div><h2>NDI Output</h2>
+<div class="mermaid">graph TD; volume[Audio Levels<br/>RMS 0-1] --> threshold[t-Threshold<br/>rise:0.6 fall:0.4]; threshold --> envelope[t-Envelope<br/>attack:0.02 release:0.35]; envelope --> curve[t-Curve<br/>curve:quadOut]; curve --> spring[t-Spring<br/>stiffness:80 damping:18]; spring --> dd[Depth Drive<br/>gain exposed]</div><h2>NDI Output</h2>
 <p>Add NDI node. Streams viewport with alpha channel to OBS, vMix, TouchDesigner.</p>
 <table><tr><th>Param</th><th>Default</th></tr><tr><td>streamName</td><td>Points</td></tr><tr><td>fps</td><td>30</td></tr><tr><td>alphaKey</td><td>true</td></tr></table>
 
@@ -24,6 +24,6 @@
 <p>Add Record node. H.264 MP4 saved to Photos.</p>
 
 <h3>Body Tracking Example</h3>
-<div class="mermaid">graph TD; hand[Hand Position] -->|x| twist[Twist<br/>angle exposed]; hand -->|y| size[Size<br/>base exposed]; pinch[Pinch] --> scatter[Scatter<br/>amount exposed]; fist[Gestures.fist] --> sw[Shockwave<br/>fire port]</div><h2>Vision Body Tracking</h2>
+<div class="mermaid">graph TD; hand[Hand Position] -->|x| twist[Twist<br/>angle exposed]; hand -->|y| size[Size<br/>base exposed]; pinch[Pinch] --> scatter[Scatter<br/>amount exposed]; fist[Gestures] --> sw[Shockwave<br/>fire port]</div><h2>Vision Body Tracking</h2>
 <p>Apple Vision framework via front TrueDepth. ~13fps on background queue.</p>
 <table><tr><th>Node</th><th>Output</th><th>Type</th></tr><tr><td>Hand Position</td><td>x,y</td><td>signal 0-1</td></tr><tr><td>Pinch</td><td>distance</td><td>signal 0-10</td></tr><tr><td>Hand Openness</td><td>openness</td><td>signal 0-1</td></tr><tr><td>Gestures</td><td>palm/fist/peace/point</td><td>trigger</td></tr><tr><td>Head Pose</td><td>yaw/pitch/roll</td><td>signal</td></tr><tr><td>Face Blendshapes</td><td>52 coefficients</td><td>signal 0-1</td></tr></table></main></div><div class="tooltip" id="tt"></div><script src="./assets/boids.js"></script><script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,theme:"dark",securityLevel:"loose",themeVariables:{primaryColor:"#181818",primaryBorderColor:"#2E2E2E",primaryTextColor:"#F2F2F2",lineColor:"#3A3A3A",fontSize:"15px",fontFamily:"SF Mono,Menlo,Consolas,monospace",edgeLabelBackground:"#0E0E0E"}});</script></body></html>
